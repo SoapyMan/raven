@@ -47,6 +47,22 @@ static DWORD WINAPI tls_reader(LPVOID parameter)
 	return TlsGetValue(tls_slot)==(LPVOID)(ULONG_PTR)77 ? 0 : 2;
 }
 
+static SLIST_HEADER list;
+static SLIST_ENTRY list_entries[16];
+
+static DWORD WINAPI list_worker(LPVOID parameter)
+{
+	// Each thread only pushes entries it owns, the ones it pushed or popped last, so no entry is ever in the list twice.
+	PSLIST_ENTRY owned[4];
+	for(int i=0;i<4;++i) owned[i]=&list_entries[(ULONG_PTR)parameter*4+i];
+	for(int round=0;round<500;++round) {
+		for(int i=0;i<4;++i) InterlockedPushEntrySList(&list,owned[i]);
+		if(!(round&15)) Sleep(0);
+		for(int i=0;i<4;++i) if(!(owned[i]=InterlockedPopEntrySList(&list))) return 1;
+	}
+	return 0;
+}
+
 static DWORD WINAPI producer(LPVOID parameter)
 {
 	(void)parameter;
@@ -156,6 +172,23 @@ int raven_entry(void)
 	CHECK(14,TlsGetValue(tls_slot)==(LPVOID)(ULONG_PTR)5);
 	CloseHandle(reader);
 	TlsFree(tls_slot);
+
+	InitializeSListHead(&list);
+	CHECK(90,!InterlockedPopEntrySList(&list) && !InterlockedFlushSList(&list) && QueryDepthSList(&list)==0);
+	CHECK(91,!InterlockedPushEntrySList(&list,&list_entries[0]) && InterlockedPushEntrySList(&list,&list_entries[1])==&list_entries[0]);
+	CHECK(92,QueryDepthSList(&list)==2 && InterlockedPopEntrySList(&list)==&list_entries[1] && QueryDepthSList(&list)==1);
+	CHECK(93,InterlockedPushEntrySList(&list,&list_entries[2])==&list_entries[0] && InterlockedFlushSList(&list)==&list_entries[2] &&
+		list_entries[2].Next==&list_entries[0] && !list_entries[0].Next && QueryDepthSList(&list)==0 && !InterlockedPopEntrySList(&list));
+	for(int i=0;i<4;++i) {
+		workers[i]=CreateThread(0,0,list_worker,(LPVOID)(ULONG_PTR)i,0,0);
+		CHECK(94,workers[i]!=0);
+	}
+	CHECK(95,WaitForMultipleObjects(4,workers,TRUE,10000)==WAIT_OBJECT_0);
+	for(int i=0;i<4;++i) {
+		CHECK(96,GetExitCodeThread(workers[i],&code) && code==0);
+		CloseHandle(workers[i]);
+	}
+	CHECK(97,QueryDepthSList(&list)==0 && !InterlockedPopEntrySList(&list));
 
 	InitializeSRWLock(&lock);
 	InitializeConditionVariable(&ready_variable);
