@@ -703,11 +703,7 @@ void NativeWindows::receive(const DesktopEvent &event)
 	else if (event.kind!=DesktopEventKind::keyboard_focus) settle_focus_leave(false);
 	if (menu_event(event)) return;
 	if (event.kind==DesktopEventKind::message) { post(event.window,event.message,event.wparam,event.lparam); return; }
-	if (event.kind==DesktopEventKind::keymap) {
-		if (std::any_of(key_down.begin(),key_down.end(),[](bool down) { return down; }))
-			throw std::runtime_error("keyboard map change with held keys requires qualification");
-		keyboard_map.load(event.keymap); key_translation.reset(); return;
-	}
+	if (event.kind==DesktopEventKind::keymap) { keyboard_map.load(event.keymap); key_translation.reset(); return; }
 	if (event.kind==DesktopEventKind::modifiers) {
 		keyboard_map.modifiers(event.message,uint32_t(event.wparam),uint32_t(event.lparam),uint32_t(event.lparam>>32));
 		// A virtual keyboard reports modifiers without key events; the guest still sees them go down and up.
@@ -793,10 +789,11 @@ void NativeWindows::receive(const DesktopEvent &event)
 		}
 		if (event.wparam>1 || event.message>=key_down.size() || messages.size()>=10000)
 			throw std::runtime_error("invalid native keyboard event or queue exhaustion");
-		const auto key=keyboard_map.decode(event.message);
 		const bool pressed=event.wparam!=0,previous=key_down[event.message];
 		if (!pressed && !previous) return;
+		const auto key=pressed || !key_pressed[event.message].code ? keyboard_map.decode(event.message) : key_pressed[event.message];
 		key_down[event.message]=pressed;
+		key_pressed[event.message]=pressed ? key : KeyboardKey{};
 		if (!key.code) return;
 		const bool modifier=key.code>=0x10 && key.code<=0x12;
 		// A modifier already reported through the keymap state is not announced twice.

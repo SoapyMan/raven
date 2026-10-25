@@ -1115,6 +1115,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             endforeach()
             add_test(NAME native_keyboard_client COMMAND keyboard_client_test $<TARGET_FILE:raven-bootstrap> ${KEYBOARD_FIXTURE})
             set_tests_properties(native_keyboard_client PROPERTIES TIMEOUT 15)
+            add_test(NAME native_keyboard_remap COMMAND keyboard_client_test $<TARGET_FILE:raven-bootstrap> ${KEYBOARD_FIXTURE} remap)
+            set_tests_properties(native_keyboard_remap PROPERTIES TIMEOUT 15)
         endif()
         set(BITBLT_PAINT ${CMAKE_CURRENT_BINARY_DIR}/bitblt-paint.exe)
         add_custom_command(OUTPUT ${BITBLT_PAINT}

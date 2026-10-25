@@ -237,6 +237,8 @@ private:
 	void place_host_surface(uint64_t root);
 	KeyboardMap keyboard_map;
 	std::array<bool,256> key_down{};
+	// The key each held key went down as, so its release matches its press after a keymap change.
+	std::array<KeyboardKey,256> key_pressed{};
 	std::optional<Message> key_translation;
 	void activate(uint64_t window);
 	uint64_t set_focus(uint64_t window);

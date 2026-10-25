@@ -20,9 +20,15 @@ int main(int argc,char **argv)
 		check(bool(file.read(reinterpret_cast<char *>(bytes.data()),std::streamsize(bytes.size()))),"short keyboard fixture");
 		auto *context=xkb_context_new(XKB_CONTEXT_NO_FLAGS); check(context,"cannot create reference keyboard context");
 		xkb_rule_names names{}; names.layout="us";
-		auto *map=xkb_keymap_new_from_names(context,&names,XKB_KEYMAP_COMPILE_NO_FLAGS); check(map,"cannot create reference keyboard map");
-		auto *text=xkb_keymap_get_as_string(map,XKB_KEYMAP_FORMAT_TEXT_V1); check(text,"cannot serialize keyboard map");
-		const std::string keymap(text); std::free(text); xkb_keymap_unref(map); xkb_context_unref(context);
+		const auto serialize=[&] {
+			auto *map=xkb_keymap_new_from_names(context,&names,XKB_KEYMAP_COMPILE_NO_FLAGS); check(map,"cannot create reference keyboard map");
+			auto *text=xkb_keymap_get_as_string(map,XKB_KEYMAP_FORMAT_TEXT_V1); check(text,"cannot serialize keyboard map");
+			const std::string serialized(text); std::free(text); xkb_keymap_unref(map); return serialized;
+		};
+		const std::string keymap=serialize();
+		// The same keys under another layout: the held g key becomes i, and its release still has to end the g press.
+		names.variant="dvorak";
+		const std::string remapped=serialize(); xkb_context_unref(context);
 		raven::ModuleSet modules; auto &entry=modules.add("keyboard.exe",bytes);
 		unsigned frames=0,removed=0;
 		uint64_t window=0;
@@ -44,7 +50,7 @@ int main(int argc,char **argv)
 				typed=true; raven::DesktopEvent layout{0,0}; layout.kind=raven::DesktopEventKind::keymap; layout.keymap=keymap;
 				events.push_back(std::move(layout));
 				raven::DesktopEvent focused{window,0,0,0,raven::DesktopEventKind::keyboard_focus};
-				if (mode!="normal") focused.held_keys={34,125};
+				if (mode!="normal" && mode!="remap") focused.held_keys={34,125};
 				if (mode=="duplicate") focused.held_keys={34,34};
 				if (mode=="outofrange") focused.held_keys={256};
 				if (mode=="nofocus") focused.window=0;
@@ -55,11 +61,15 @@ int main(int argc,char **argv)
 					events.push_back({window,125,0,0,raven::DesktopEventKind::key});
 				}
 				events.push_back({window,34,1,0,raven::DesktopEventKind::key});
+				if (mode=="remap") {
+					raven::DesktopEvent change{0,0}; change.kind=raven::DesktopEventKind::keymap; change.keymap=remapped;
+					events.push_back(std::move(change));
+				}
 				events.push_back({window,34,0,0,raven::DesktopEventKind::key});
 			} else if (frames==3 && !closed) { closed=true; events.push_back({window,0x10}); }
 			return events;
 		};
-		if (mode!="normal" && mode!="held") {
+		if (mode!="normal" && mode!="held" && mode!="remap") {
 			bool rejected=false;
 			try { raven::run_native_process(modules,entry,argv[1],std::chrono::seconds(5),{},{},presentation); }
 			catch (const std::runtime_error &error) {
