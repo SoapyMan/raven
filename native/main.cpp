@@ -277,6 +277,17 @@ int main(int argc, char **argv)
 							character = char(character + ('a' - 'A'));
 					raven::set_process_noninteractive(noninteractive || (program == "msiexec.exe" && command_line_text &&
 						command_line_text->find("-Embedding") != std::string::npos));
+					// RAVEN_PARALLEL_PROGRAM runs only the named program's threads in parallel; each program it starts decides again.
+					if (const char *parallel = std::getenv("RAVEN_PARALLEL_PROGRAM")) {
+						std::string wanted = parallel;
+						for (auto &character : wanted)
+							if (character >= 'A' && character <= 'Z')
+								character = char(character + ('a' - 'A'));
+						if (program == wanted)
+							::setenv("RAVEN_PARALLEL", "1", 1);
+						else
+							::unsetenv("RAVEN_PARALLEL");
+					}
 				}
 			}
 			if (run_modules || run_process) {
