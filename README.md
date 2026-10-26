@@ -36,6 +36,26 @@ export RAVEN_PREFIX="$HOME/.local/share/raven/my-app"
 build/native/raven --run-process --execution=native --timeout-ms=600000 --desktop=wayland setup.exe
 ```
 
+This minimal build runs console programs and simple windows. Installers and most desktop programs also need the common controls, the shell dialogs and the installer services, which Raven builds from pinned ReactOS sources, for both 64-bit and 32-bit programs. Without them a program stops at its first call into them, such as `InitCommonControls`:
+
+```sh
+python3 scripts/provision-rtl.py --output components/rtl
+python3 scripts/provision-controls.py --output components/controls
+python3 scripts/provision-controls.py --arch x86 --output components/controls32
+python3 scripts/provision-installer.py --output components/installer
+python3 scripts/provision-installer.py --arch x86 --output components/installer32
+python3 scripts/provision-graphics.py --destination components/graphics
+cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DRAVEN_RTL_COMPONENT_PATH=$PWD/components/rtl/raven-rtl.dll \
+    -DRAVEN_CONTROLS_COMPONENT_DIR=$PWD/components/controls -DRAVEN_CONTROLS32_COMPONENT_DIR=$PWD/components/controls32 \
+    -DRAVEN_INSTALLER_COMPONENT_DIR=$PWD/components/installer -DRAVEN_INSTALLER32_COMPONENT_DIR=$PWD/components/installer32 \
+    -DRAVEN_DXVK_PE64_DIR=$PWD/components/graphics/dxvk/pe64 -DRAVEN_DXVK_PE32_DIR=$PWD/components/graphics/dxvk/pe32 \
+    -DRAVEN_VKD3D_PE64_DIR=$PWD/components/graphics/vkd3d-proton/pe64
+cmake --build build -j2
+```
+
+DXVK and vkd3d-proton are only needed for Direct3D programs and games.
+
 On an X11 session, `--desktop=x11` takes the place of `--desktop=wayland`. The X11 desktop is experimental; `-DRAVEN_DESKTOP_WAYLAND=OFF` builds Raven without Wayland at all.
 
 `RAVEN_PREFIX` is the Windows installation the program sees, with its own `C:` drive and registry; give each application its own. Raven takes a snapshot of the prefix before every installer, and `build/native/raven --restore-prefix` brings it back.

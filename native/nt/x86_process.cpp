@@ -1077,6 +1077,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				!shared_api.dispatch(process, environment, api, true) && !desktop.dispatch(api) && !windows.dispatch(api) && !profile.dispatch(api) &&
 				!crt.dispatch(api) && !unsupported_library(process, environment, api)) {
 				std::cerr << "raven: unimplemented native x86 API " << api << '\n';
+				if (api.starts_with("InitCommonControls") || api.starts_with("ImageList_"))
+					std::cerr << "raven: 32-bit programs take the common controls from the component built by scripts/provision-controls.py --arch x86;"
+						" configure Raven with RAVEN_CONTROLS32_COMPONENT_DIR\n";
 				// RAVEN_CONTINUE_UNIMPLEMENTED lists every missing function of a run: each call fails with ERROR_CALL_NOT_IMPLEMENTED instead.
 				if (!std::getenv("RAVEN_CONTINUE_UNIMPLEMENTED"))
 					return result;
