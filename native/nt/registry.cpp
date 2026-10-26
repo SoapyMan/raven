@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <fstream>
 #include <stdexcept>
+#include <utility>
 
 namespace raven {
 
@@ -119,19 +120,32 @@ NativeRegistry::NativeRegistry(std::filesystem::path file) : file(std::move(file
 	stamp = current_stamp();
 	seed();
 	register_runtime_classes();
+	register_event_logs();
+	register_system_environment();
 }
 
-// The .NET runtime's classes that Windows registers with the system's mscoree in both registry views: the metadata dispensers, the
-// runtime hosts, the meta host and strong names, which programs and the Framework's own libraries create through COM. A hive that lacks
-// them, a new one or one made before they were registered, gets them.
+// The classes Windows registers in both registry views whose libraries the runtime brings: the .NET runtime's metadata dispensers, runtime
+// hosts, meta host and strong names in mscoree, which programs and the Framework's own libraries create through COM, and the Task
+// Scheduler, which installers use to start a program once they finish. A hive that lacks them, a new one or one made before they were
+// registered, gets them.
 void NativeRegistry::register_runtime_classes()
 {
-	static constexpr const char16_t *classes[] = {u"{E5CB7A31-7512-11D2-89CE-0080C792E5D8}", u"{1EC2DE53-75CC-11D2-9775-00A0C9B4D50C}",
-		u"{CB2F6723-AB3A-11D2-9C40-00C04FA30A3E}", u"{90F1A06E-7712-4762-86B5-7A5EBA6BDB02}", u"{9280188D-0E8E-4867-B30C-7FA83884E8DE}",
-		u"{B79B0ACD-F5CD-409B-B5A5-A16244610B92}"};
+	static constexpr std::pair<const char16_t *, const char16_t *> classes[] = {{u"{E5CB7A31-7512-11D2-89CE-0080C792E5D8}", u"mscoree.dll"},
+		{u"{1EC2DE53-75CC-11D2-9775-00A0C9B4D50C}", u"mscoree.dll"}, {u"{CB2F6723-AB3A-11D2-9C40-00C04FA30A3E}", u"mscoree.dll"},
+		{u"{90F1A06E-7712-4762-86B5-7A5EBA6BDB02}", u"mscoree.dll"}, {u"{9280188D-0E8E-4867-B30C-7FA83884E8DE}", u"mscoree.dll"},
+		{u"{B79B0ACD-F5CD-409B-B5A5-A16244610B92}", u"mscoree.dll"}, {u"{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}", u"taskschd.dll"}};
 	register_animation_classes();
+	const auto store = [&](uint64_t key, const char16_t *name, std::u16string_view value) {
+		std::vector<uint8_t> data;
+		for (const auto character : value) {
+			data.push_back(uint8_t(character));
+			data.push_back(uint8_t(character >> 8));
+		}
+		data.insert(data.end(), {0, 0});
+		set(key, name, 1, data);
+	};
 	for (const bool wow : {false, true})
-		for (const auto *clsid : classes) {
+		for (const auto &[clsid, library] : classes) {
 			const std::u16string path = std::u16string(wow ? u"Wow6432Node\\CLSID\\" : u"CLSID\\") + clsid + u"\\InprocServer32";
 			if (keys.contains(fold(u"HKEY_CLASSES_ROOT\\" + path)))
 				continue;
@@ -139,19 +153,70 @@ void NativeRegistry::register_runtime_classes()
 			uint32_t disposition = 0;
 			if (create(0x80000000ULL, path, key, disposition))
 				continue;
-			const auto store = [&](const char16_t *name, std::u16string_view value) {
-				std::vector<uint8_t> data;
-				for (const auto character : value) {
-					data.push_back(uint8_t(character));
-					data.push_back(uint8_t(character >> 8));
-				}
-				data.insert(data.end(), {0, 0});
-				set(key, name, 1, data);
-			};
-			store(u"", wow ? u"C:\\Windows\\SysWOW64\\mscoree.dll" : u"C:\\Windows\\System32\\mscoree.dll");
-			store(u"ThreadingModel", u"Both");
+			store(key, u"", std::u16string(wow ? u"C:\\Windows\\SysWOW64\\" : u"C:\\Windows\\System32\\") + library);
+			store(key, u"ThreadingModel", u"Both");
 			close(key);
 		}
+	// Scripts create the scheduler by its name.
+	if (!keys.contains(fold(u"HKEY_CLASSES_ROOT\\Schedule.Service\\CLSID"))) {
+		uint64_t key = 0;
+		uint32_t disposition = 0;
+		if (!create(0x80000000ULL, u"Schedule.Service\\CLSID", key, disposition)) {
+			store(key, u"", u"{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}");
+			close(key);
+		}
+	}
+}
+
+// The machine's environment, which installers extend (a program's folder added to Path) and the system reads when it starts a session.
+// A hive that lacks the key gets the variables every installation has there.
+void NativeRegistry::register_system_environment()
+{
+	const std::u16string path = u"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment";
+	if (keys.contains(fold(u"HKEY_LOCAL_MACHINE\\" + path)))
+		return;
+	uint64_t key = 0;
+	uint32_t disposition = 0;
+	if (create(0x80000002ULL, path, key, disposition))
+		return;
+	static constexpr std::pair<const char16_t *, const char16_t *> values[] = {{u"ComSpec", u"%SystemRoot%\\system32\\cmd.exe"},
+		{u"OS", u"Windows_NT"}, {u"Path", u"%SystemRoot%\\system32;%SystemRoot%;%SystemRoot%\\System32\\Wbem"},
+		{u"PATHEXT", u".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC"}, {u"PROCESSOR_ARCHITECTURE", u"AMD64"},
+		{u"TEMP", u"%SystemRoot%\\TEMP"}, {u"TMP", u"%SystemRoot%\\TEMP"}, {u"windir", u"%SystemRoot%"}};
+	for (const auto &[name, value] : values) {
+		std::vector<uint8_t> data;
+		for (const char16_t *at = value; *at; ++at) {
+			data.push_back(uint8_t(*at));
+			data.push_back(uint8_t(*at >> 8));
+		}
+		data.insert(data.end(), {0, 0});
+		const std::u16string_view text(value);
+		set(key, name, text.find(u'%') != text.npos ? 2 : 1, data);
+	}
+	close(key);
+}
+
+// The event logs every Windows installation keeps, under the service that writes them: programs register their event sources as subkeys
+// of a log and fail when the log's key is missing. A hive that lacks them, a new one or one made before they were added, gets them.
+void NativeRegistry::register_event_logs()
+{
+	for (const std::u16string log : {u"Application", u"Security", u"System"}) {
+		const auto path = u"SYSTEM\\CurrentControlSet\\Services\\EventLog\\" + log;
+		if (keys.contains(fold(u"HKEY_LOCAL_MACHINE\\" + path)))
+			continue;
+		uint64_t key = 0;
+		uint32_t disposition = 0;
+		if (create(0x80000002ULL, path, key, disposition))
+			continue;
+		std::vector<uint8_t> data;
+		for (const auto character : u"%SystemRoot%\\System32\\Winevt\\Logs\\" + log + u".evtx") {
+			data.push_back(uint8_t(character));
+			data.push_back(uint8_t(character >> 8));
+		}
+		data.insert(data.end(), {0, 0});
+		set(key, u"File", 2, data);
+		close(key);
+	}
 }
 
 // The Windows Animation classes of UIAnimation.dll (the manager, the transition library, the transition factory and the timer), which the runtime's own component

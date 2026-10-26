@@ -248,6 +248,7 @@ void register_child_process_api(ApiRegistry &registry, KernelContext &context)
 		const auto line = call[1] ? call.wide(call[1]) : std::u16string();
 		auto directory = call[7] ? paths.full(call.wide(call[7])) : std::u16string();
 		int standard[3] = {0, 1, 2};
+		uint64_t standard_handles[3] = {};
 		if (call[8]) {
 			// STARTUPINFOW: after the flags come the show command and two reserved fields, then the three standard handles.
 			const size_t width = call.pointer_width();
@@ -265,6 +266,7 @@ void register_child_process_api(ApiRegistry &registry, KernelContext &context)
 						return;
 					}
 					standard[index] = descriptor;
+					standard_handles[index] = widened;
 				}
 		}
 		// Handles the child inherits: the ones the attribute list names, else every inheritable one when the caller asks for inheritance.
@@ -309,6 +311,10 @@ void register_child_process_api(ApiRegistry &registry, KernelContext &context)
 				}
 				record.handle = handle;
 				record.handle_access = objects.access_of(handle);
+				// A standard handle that is inherited too is the same object in the child, under the same value, as on Windows.
+				for (uint32_t index = 0; index < 3; ++index)
+					if (standard_handles[index] == handle)
+						record.standard |= 1U << index;
 				inherited.push_back(std::move(record));
 			}
 		}

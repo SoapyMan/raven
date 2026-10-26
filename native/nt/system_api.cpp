@@ -722,6 +722,28 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		if (call[1])
 			call.write(call[0], std::vector<uint8_t>(size_t(call[1]), 0));
 	});
+	// ntdll's C runtime copies and fills, which some programs import from it rather than from a C runtime; they answer the destination.
+	const auto copy = [](ApiCall &call) {
+		if (call[2])
+			call.write(call[0], call.read(call[1], size_t(call[2])));
+		call.ret(call[0]);
+	};
+	registry.add("memcpy", 3, copy);
+	registry.add("memmove", 3, copy);
+	registry.add("memset", 3, [](ApiCall &call) {
+		if (call[2])
+			call.write(call[0], std::vector<uint8_t>(size_t(call[2]), uint8_t(call[1])));
+		call.ret(call[0]);
+	});
+	registry.add("memcmp", 3, [](ApiCall &call) {
+		if (!call[2]) {
+			call.ret(0);
+			return;
+		}
+		const auto left = call.read(call[0], size_t(call[2])), right = call.read(call[1], size_t(call[2]));
+		const int order = std::memcmp(left.data(), right.data(), left.size());
+		call.ret(uint64_t(int64_t(order < 0 ? -1 : order > 0 ? 1 : 0)));
+	});
 	registry.add("MulDiv", 3, [](ApiCall &call) {
 		const int64_t a = call.i32(0), b = call.i32(1), c = call.i32(2);
 		if (!c) {

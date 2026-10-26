@@ -1324,6 +1324,10 @@ bool NativeWindows::destroy(uint64_t handle)
 	if (!window || window->destroying) throw uint32_t(5);
 	for (const auto owned:objects.window_handles())
 		if (objects.is_child(handle,owned) && objects.window(owned)->destroying) throw uint32_t(120);
+	// HCBT_DESTROYWND comes first and may veto the destruction.
+	if (has_hook(5) && call_hooks(5,4,handle,0)) return false;
+	window=objects.window(handle);
+	if (!window || window->destroying) throw uint32_t(5);
 	window->destroying=true;window->visible=false;window->style&=~0x10000000U;
 	withdraw_window(handle);
 	if (active==handle) activate(0);
@@ -1362,6 +1366,12 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 	}
 	if (message==0x210 && (uint16_t(args[2])==1 || uint16_t(args[2])==2 || uint16_t(args[2])==0x201 || uint16_t(args[2])==0x204 || uint16_t(args[2])==0x207)) return 0;
 	if (message==0x86) return 1;
+	// WM_NOTIFYFORMAT: a window of DefWindowProcW takes Unicode notifications (NFR_UNICODE); NF_REQUERY asks the parent again.
+	if (message==0x55) {
+		if (uint32_t(args[3])==3) return 2;
+		if (uint32_t(args[3])==4 && window->parent) return send(window->parent,0x55,args[0],3);
+		return 0;
+	}
 	if (message==6) { if (uint16_t(args[2]) && !uint16_t(args[2]>>16)) set_focus(args[0]); return 0; }
 	if (message==7 || message==8) return 0;
 	if (message==0x81 || message==0x0c) {
@@ -1591,6 +1601,18 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 		put(bytes,rect_at,uint32_t(x),4); put(bytes,rect_at+4,uint32_t(y),4);
 		put(bytes,rect_at+8,uint32_t(x+width),4); put(bytes,rect_at+12,uint32_t(y+height),4);
 		process.write_memory(scratch,bytes);
+		// A CBT hook sees the window before WM_NCCREATE (HCBT_CREATEWND with a CBT_CREATEWND of the create structure and the window to
+		// insert after); class libraries subclass their windows there, and a nonzero answer cancels the creation.
+		if (has_hook(5)) {
+			std::vector<uint8_t> cbt(narrow ? 8 : 16);
+			put(cbt,0,scratch,narrow ? 4 : 8);
+			const auto at=scratch+rect_at+16;
+			process.write_memory(at,cbt);
+			if (call_hooks(5,3,handle,at) || !objects.window(handle)) {
+				if (objects.window(handle)) { release_surface(handle); objects.erase(handle); }
+				process.unmap_memory(scratch); return 0;
+			}
+		}
 		const auto accepted=send(handle,0x81,0,scratch);
 		if (!objects.window(handle)) { process.unmap_memory(scratch); return 0; }
 		if (!accepted) {
@@ -2238,7 +2260,7 @@ bool NativeWindows::dispatch(std::string_view name)
 	const bool creation=name=="CreateWindowExW";
 	const bool coordinate=name=="ClientToScreen" || name=="ScreenToClient";
 	const bool adjustment=name=="AdjustWindowRect" || name=="AdjustWindowRectEx";
-	if (!adjustment && name!="GetSystemMetrics" && !coordinate && name!="MapWindowPoints" && !info && !data && name!="CallWindowProcW" && !registration && !creation && name!="DestroyWindow" && name!="SendMessageW" && name!="IsWindow" &&
+	if (!adjustment && name!="GetSystemMetrics" && !coordinate && name!="MapWindowPoints" && !info && !data && name!="CallWindowProcW" && !registration && !creation && name!="DestroyWindow" && name!="SendMessageW" && name!="SendMessageTimeoutW" && name!="IsWindow" &&
 		name!="IsWindowUnicode" && name!="UnregisterClassW" && name!="ShowWindow" && name!="GetDC" && name!="GetWindowDC" && name!="WindowFromDC" && name!="ReleaseDC" &&
 		name!="UpdateWindow" && name!="IsWindowVisible" && name!="BeginPaint" && name!="EndPaint" &&
 		name!="PostMessageW" && name!="SendNotifyMessageW" && name!="PostThreadMessageW" && name!="PeekMessageW" && name!="GetMessageW" && name!="DispatchMessageW" &&
@@ -2246,7 +2268,7 @@ bool NativeWindows::dispatch(std::string_view name)
 		name!="GetWindowTextW" && name!="InternalGetWindowText" && name!="GetWindowTextLengthW" && name!="SetWindowTextW" &&
 		name!="GetFocus" && name!="SetFocus" && name!="GetActiveWindow" && name!="GetClientRect" && name!="GetWindowRect" &&
 		name!="InvalidateRect" && name!="ValidateRect" && name!="GetUpdateRect") return false;
-	const auto args=process.api_arguments(adjustment ? (name=="AdjustWindowRectEx" ? 4 : 3) : coordinate ? 2 : name=="MapWindowPoints" ? 4 : info ? 3 : data ? (name.starts_with("Set") ? 3 : 2) : name=="CallWindowProcW" ? 5 : registration ? 1 : creation ? 12 : name=="SendMessageW" ? 4 :
+	const auto args=process.api_arguments(adjustment ? (name=="AdjustWindowRectEx" ? 4 : 3) : coordinate ? 2 : name=="MapWindowPoints" ? 4 : info ? 3 : data ? (name.starts_with("Set") ? 3 : 2) : name=="CallWindowProcW" ? 5 : registration ? 1 : creation ? 12 : name=="SendMessageW" ? 4 : name=="SendMessageTimeoutW" ? 7 :
 		name=="PostMessageW" || name=="SendNotifyMessageW" || name=="PostThreadMessageW" || name=="GetMessageW" || name=="DefWindowProcW" ? 4 : name=="PeekMessageW" ? 5 :
 		name=="GetWindowTextW" || name=="InternalGetWindowText" || name=="InvalidateRect" || name=="GetUpdateRect" ? 3 :
 		name=="SetWindowTextW" || name=="GetClientRect" || name=="GetWindowRect" || name=="ValidateRect" ? 2 :
@@ -2412,6 +2434,22 @@ bool NativeWindows::dispatch(std::string_view name)
 			result=objects.window_class(id)->atom;
 		} else if (creation) result=create(args);
 		else if (name=="SendMessageW") result=send(args[0],uint32_t(args[1]),args[2],args[3]);
+		// A broadcast, such as a changed setting announced to every window, needs no delivery as no other program's windows listen; a
+		// window of the process answers at once, so the time limit never runs out.
+		else if (name=="SendMessageTimeoutW") {
+			uint64_t answer=0;
+			if (args[0]!=0xffff && args[0]!=0xffffffffffffffffULL) {
+				if (!objects.window(args[0])) throw uint32_t(1400);
+				answer=send(args[0],uint32_t(args[1]),args[2],args[3]);
+			}
+			if (args[6]) {
+				const auto width=process.mode()==NativeMode::x86 ? 4 : 8;
+				std::vector<uint8_t> bytes(width);
+				for (size_t at=0;at<bytes.size();++at) bytes[at]=uint8_t(answer>>(8*at));
+				process.write_memory(args[6],bytes);
+			}
+			result=1;
+		}
 		else if (name=="DestroyWindow") result=destroy(args[0]);
 		else if (name=="WindowFromDC") {
 			// The window a device context belongs to: a window's own context names it, the screen's names the desktop, any other has none.

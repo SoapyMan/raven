@@ -545,6 +545,9 @@ void register_actctx_api(ApiRegistry &registry, KernelContext &context)
 		uint64_t handle = call[1];
 		if (flags & 4)
 			handle = contexts.current(thread());
+		// A module handle or an address in one asks for the context of that module; modules share the process's here.
+		else if (flags & 0x18)
+			handle = contexts.process_default_context();
 		if (information != 1) {
 			call.fail(87);
 			return;

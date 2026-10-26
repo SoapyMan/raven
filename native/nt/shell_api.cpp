@@ -97,6 +97,42 @@ std::vector<std::u16string> file_list(ApiCall &call, uint64_t address, bool ansi
 
 }
 
+namespace {
+
+// The icons the shell gives folders and files: a folder and a sheet of paper, drawn on a grid of 16 units at the size asked for, as
+// 0xAARRGGBB pixels from the top row down. Clear pixels are transparent.
+std::vector<uint32_t> shell_icon(bool folder, int32_t size)
+{
+	std::vector<uint32_t> pixels(size_t(size) * size, 0);
+	for (int32_t y = 0; y < size; ++y)
+		for (int32_t x = 0; x < size; ++x) {
+			const int32_t u = x * 16 / size, v = y * 16 / size;
+			uint32_t color = 0;
+			if (folder) {
+				if (v >= 2 && v <= 3 && u >= 1 && u <= 6)
+					color = 0xffd9a53aU;
+				if (v >= 4 && v <= 13 && u >= 1 && u <= 14)
+					color = v == 4 || v == 13 || u == 1 || u == 14 ? 0xffc28a1eU : 0xfff6d26bU;
+			} else if (u >= 3 && u <= 12 && v >= 1 && v <= 14) {
+				// The top right corner is folded over along its diagonal.
+				if (u >= 10 && v <= 3 && u - 10 > v - 1)
+					color = 0;
+				else if (u >= 10 && v <= 3)
+					color = u - 10 == v - 1 ? 0xff8c8c8cU : 0xffd6d6d6U;
+				else if (u == 3 || u == 12 || v == 1 || v == 14)
+					color = 0xff8c8c8cU;
+				else if ((v == 6 || v == 8 || v == 10 || v == 12) && u >= 5 && u <= 10)
+					color = 0xffb4b4b4U;
+				else
+					color = 0xffffffffU;
+			}
+			pixels[size_t(y) * size + x] = color;
+		}
+	return pixels;
+}
+
+}
+
 void register_shell_api(ApiRegistry &registry, KernelContext &context)
 {
 	auto &paths = context.paths;
@@ -347,10 +383,97 @@ void register_shell_api(ApiRegistry &registry, KernelContext &context)
 		if (call[1]) call.store<int32_t>(call[1], int32_t(arguments.size()));
 		call.ret(block);
 	});
-	// The shell cannot show a tray icon or resolve file associations yet; callers see an honest failure.
+	// The shell cannot show a tray icon yet; callers see an honest failure.
 	registry.add("Shell_NotifyIconW", 2, [](ApiCall &call) { call.fail(5); });
-	registry.add("SHGetFileInfoW", 5, [](ApiCall &call) { call.ret(0); });
-	registry.add("SHGetFileInfoA", 5, [](ApiCall &call) { call.ret(0); });
+	// One of the shell icons as an icon handle the caller owns, made by the registry's CreateIcon; zero when it is not there.
+	const auto make_icon = [&registry, &context](ApiCall &call, bool folder, int32_t size) -> uint64_t {
+		const auto create_icon = registry.find("CreateIcon");
+		if (!create_icon)
+			return 0;
+		const auto pixels = shell_icon(folder, size);
+		// The color bits, then an AND mask of zeros: the alpha of the colors decides what shows.
+		const uint64_t mask_bytes = uint64_t(((size + 15) / 16) * 2) * size;
+		const uint64_t block = context.allocator.allocate(pixels.size() * 4 + mask_bytes, true);
+		if (!block)
+			return 0;
+		call.write(block, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(pixels.data()), pixels.size() * 4));
+		ApiCall inner(call.process, call.environment, {0, uint64_t(size), uint64_t(size), 1, 32, block + pixels.size() * 4, block});
+		create_icon->second(inner);
+		context.allocator.release(block);
+		return inner.result;
+	};
+	// SHGetFileInfo answers from the path and its attributes. No file associations are registered, so a file's type is named after its
+	// extension as Windows names one that nothing claims ("TXT File"), and every file has the document icon and every folder the folder.
+	// Item lists (SHGFI_PIDL) and the system image list (SHGFI_SYSICONINDEX) are not provided.
+	const auto file_info = [&paths, make_icon](ApiCall &call, bool wide) {
+		const uint32_t flags = call.u32(4);
+		if (!call[0] || (flags & (0x8 | 0x4000))) {
+			call.ret(0);
+			return;
+		}
+		const auto path = wide ? call.wide(call[0]) : from_utf8(call.narrow(call[0]));
+		bool directory = false;
+		if (flags & 0x10) {
+			directory = call.u32(1) & 0x10;
+		} else {
+			const auto resolved = paths.resolve(path);
+			if (!resolved || !resolved->exists) {
+				call.ret(0);
+				return;
+			}
+			std::error_code error;
+			directory = std::filesystem::is_directory(resolved->host, error);
+		}
+		if (!call[2]) {
+			call.ret(0);
+			return;
+		}
+		std::u16string name = path;
+		while (name.size() > 3 && (name.back() == u'\\' || name.back() == u'/'))
+			name.pop_back();
+		if (const auto slash = name.find_last_of(u"\\/"); slash != std::u16string::npos && slash + 1 < name.size())
+			name.erase(0, slash + 1);
+		std::u16string type = u"File folder";
+		if (!directory) {
+			const auto dot = name.find_last_of(u'.');
+			if (dot == std::u16string::npos || dot + 1 == name.size()) {
+				type = u"File";
+			} else {
+				type.clear();
+				for (size_t index = dot + 1; index < name.size(); ++index)
+					type.push_back(upper_case(name[index]));
+				type += u" File";
+			}
+		}
+		const size_t width = call.pointer_width(), unit = wide ? 2 : 1;
+		const size_t size = (width + 8 + (260 + 80) * unit + width - 1) / width * width;
+		std::vector<uint8_t> bytes(size, 0);
+		uint64_t icon = 0;
+		if (flags & 0x100)
+			icon = make_icon(call, directory, (flags & 1) ? 16 : 32);
+		std::memcpy(bytes.data(), &icon, width);
+		// SFGAO: part of the file system, can be copied, moved, linked, renamed and deleted; a folder also holds other items.
+		const uint32_t attributes = 0x40000000U | 0x37U | (directory ? 0x20000000U : 0U);
+		if (flags & 0x800)
+			std::memcpy(bytes.data() + width + 4, &attributes, 4);
+		const auto put_text = [&](size_t offset, const std::u16string &text, size_t capacity) {
+			if (wide) {
+				const auto count = std::min(text.size(), capacity - 1);
+				std::memcpy(bytes.data() + offset, text.data(), count * 2);
+			} else {
+				const auto narrow = to_utf8(text);
+				std::memcpy(bytes.data() + offset, narrow.data(), std::min(narrow.size(), capacity - 1));
+			}
+		};
+		if (flags & 0x200)
+			put_text(width + 8, name, 260);
+		if (flags & 0x400)
+			put_text(width + 8 + 260 * unit, type, 80);
+		call.write(call[2], std::span<const uint8_t>(bytes.data(), std::min<size_t>(bytes.size(), call.u32(3) ? call.u32(3) : bytes.size())));
+		call.ret(1);
+	};
+	registry.add("SHGetFileInfoW", 5, [file_info](ApiCall &call) { file_info(call, true); });
+	registry.add("SHGetFileInfoA", 5, [file_info](ApiCall &call) { file_info(call, false); });
 	registry.add("SHCreateItemFromParsingName", 4, [](ApiCall &call) {
 		if (call[3]) call.store_pointer(call[3], 0);
 		call.ret(0x80070002U);

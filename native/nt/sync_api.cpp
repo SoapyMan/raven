@@ -6,6 +6,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <tuple>
 
 namespace raven {
 
@@ -16,6 +17,12 @@ constexpr uint64_t lock_count = 8, recursion_count = 12, owning_thread = 16, spi
 
 struct Waiter {
 	bool woken = false;
+};
+
+// A keyed event a program created for itself; its keys are apart from those of the process-wide one and of any other.
+class KeyedEventObject : public KernelObject {
+public:
+	std::u16string_view type_name() const override { return u"KeyedEvent"; }
 };
 
 }
@@ -332,21 +339,24 @@ void register_sync_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("RtlWakeAddressSingle", 1, [](ApiCall &) {});
 	registry.add("RtlWakeAddressAll", 1, [](ApiCall &) {});
 
-	// Keyed events: a release meets one wait on the same key, whichever comes first waiting for the other. Only the process-wide keyed
-	// event (a null handle) exists, which is what critical sections and slim locks use; a key is an address.
+	// Keyed events: a release meets one wait on the same key, whichever comes first waiting for the other. A null handle names the
+	// process-wide keyed event that critical sections and slim locks use; a key is an address within the event it is used on.
 	struct KeyedParty {
 		bool met = false;
 	};
-	auto keyed = std::make_shared<std::map<std::pair<bool, uint64_t>, std::deque<std::shared_ptr<KeyedParty>>>>();
-	const auto rendezvous = [&threads, keyed, nt_timeout](ApiCall &call, bool releasing) {
+	using KeyedSlot = std::tuple<const KernelObject *, bool, uint64_t>;
+	auto keyed = std::make_shared<std::map<KeyedSlot, std::deque<std::shared_ptr<KeyedParty>>>>();
+	const auto rendezvous = [&context, &threads, keyed, nt_timeout](ApiCall &call, bool releasing) {
 		constexpr uint32_t success = 0, timeout = 0x102, invalid_handle = 0xc0000008;
-		if (call[0]) {
+		std::shared_ptr<KeyedEventObject> event;
+		if (call[0] && !(event = context.objects.object_as<KeyedEventObject>(call[0]))) {
 			call.ret(invalid_handle);
 			return;
 		}
+		const KernelObject *space = event.get();
 		const uint64_t key = call[1];
 		// One who arrived on the other side first is met at once.
-		auto &others = (*keyed)[{!releasing, key}];
+		auto &others = (*keyed)[{space, !releasing, key}];
 		if (!others.empty()) {
 			others.front()->met = true;
 			others.pop_front();
@@ -355,11 +365,11 @@ void register_sync_api(ApiRegistry &registry, KernelContext &context)
 		}
 		const auto wake = nt_timeout(call, call[3]);
 		auto party = std::make_shared<KeyedParty>();
-		auto &mine = (*keyed)[{releasing, key}];
+		auto &mine = (*keyed)[{space, releasing, key}];
 		mine.push_back(party);
 		threads.block([party] { return party->met; }, wake);
 		if (!party->met) {
-			auto &list = (*keyed)[{releasing, key}];
+			auto &list = (*keyed)[{space, releasing, key}];
 			list.erase(std::remove(list.begin(), list.end(), party), list.end());
 			call.ret(timeout);
 			return;
@@ -368,6 +378,21 @@ void register_sync_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("NtWaitForKeyedEvent", 4, [rendezvous](ApiCall &call) { rendezvous(call, false); });
 	registry.add("NtReleaseKeyedEvent", 4, [rendezvous](ApiCall &call) { rendezvous(call, true); });
+	// NtCreateKeyedEvent(handle out, access, attributes, flags) and NtOpenKeyedEvent(handle out, access, attributes): named keyed events
+	// belong to the object directory, where the only one is the process-wide event the null handle already names.
+	const auto make_keyed = [&context](ApiCall &call) {
+		const auto made = context.objects.add_object(std::make_shared<KeyedEventObject>());
+		if (made.status) {
+			call.ret(0xc000009a);
+			return;
+		}
+		call.store_pointer(call[0], made.value);
+		call.ret(0);
+	};
+	registry.add("NtCreateKeyedEvent", 4, make_keyed);
+	registry.add("ZwCreateKeyedEvent", 4, make_keyed);
+	registry.add("NtOpenKeyedEvent", 3, make_keyed);
+	registry.add("ZwOpenKeyedEvent", 3, make_keyed);
 }
 
 }

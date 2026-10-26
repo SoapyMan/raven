@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 namespace raven {
 
@@ -24,7 +25,7 @@ constexpr uint32_t sec_ok = 0, sec_continue_needed = 0x00090312, sec_context_exp
 	sec_unsupported_function = 0x80090302, sec_internal_error = 0x80090304, sec_invalid_token = 0x80090308,
 	sec_secpkg_not_found = 0x80090305, sec_buffer_too_small = 0x80090321, sec_incomplete_message = 0x80090318,
 	sec_wrong_principal = 0x80090322, sec_untrusted_root = 0x80090325, sec_illegal_message = 0x80090326,
-	sec_insufficient_memory = 0x80090300;
+	sec_insufficient_memory = 0x80090300, sec_invalid_parameter = 0x8009035d;
 constexpr uint32_t buffer_empty = 0, buffer_data = 1, buffer_token = 2, buffer_missing = 4, buffer_extra = 5, buffer_trailer = 6,
 	buffer_header = 7, buffer_application_protocols = 18;
 constexpr uint32_t request_allocate_memory = 0x100, request_manual_validation = 0x80000;
@@ -208,6 +209,64 @@ void register_schannel_api(ApiRegistry &registry, KernelContext &context)
 		std::lock_guard guard(provider->lock);
 		call.ret(provider->contexts.erase(handle_of(call, call[0])) ? sec_ok : sec_invalid_handle);
 	});
+	// The packages: the TLS provider under its two names, which is all AcquireCredentialsHandle serves. Each SecPkgInfo (capabilities,
+	// version, RPC identifier, largest token, name, comment) sits in one block with its strings, freed by FreeContextBuffer.
+	const auto package_list = [&context](ApiCall &call, bool narrow, std::optional<std::u16string> only) -> uint32_t {
+		static constexpr std::u16string_view names[] = {u"Microsoft Unified Security Protocol Provider", u"Schannel"};
+		static constexpr std::u16string_view comment = u"Schannel Security Package";
+		std::vector<std::u16string_view> chosen;
+		for (const auto name : names)
+			if (!only || equal_fold(*only, name))
+				chosen.push_back(name);
+		if (chosen.empty())
+			return sec_secpkg_not_found;
+		const size_t width = call.pointer_width(), entry = width == 8 ? 32 : 20, unit = narrow ? 1 : 2;
+		size_t size = entry * chosen.size();
+		for (const auto name : chosen)
+			size += (name.size() + 1 + comment.size() + 1) * unit;
+		const uint64_t block = context.allocator.allocate(size, true);
+		if (!block)
+			return sec_insufficient_memory;
+		uint64_t text = block + entry * chosen.size();
+		const auto put = [&](std::u16string_view value) {
+			const uint64_t at = text;
+			if (narrow)
+				call.put_narrow(at, to_utf8(value), value.size() + 1);
+			else
+				call.put_wide(at, value, value.size() + 1);
+			text += (value.size() + 1) * unit;
+			return at;
+		};
+		for (size_t index = 0; index < chosen.size(); ++index) {
+			const uint64_t at = block + entry * index;
+			call.store<uint32_t>(at, 0x107b3);
+			call.store<uint16_t>(at + 4, 1);
+			call.store<uint16_t>(at + 6, 14);
+			call.store<uint32_t>(at + 8, 0x6000);
+			call.store_pointer(at + (width == 8 ? 16 : 12), put(chosen[index]));
+			call.store_pointer(at + (width == 8 ? 24 : 16), put(comment));
+		}
+		if (only) {
+			call.store_pointer(call[1], block);
+		} else {
+			call.store<uint32_t>(call[0], uint32_t(chosen.size()));
+			call.store_pointer(call[1], block);
+		}
+		return sec_ok;
+	};
+	for (const bool narrow : {false, true}) {
+		registry.add(narrow ? "EnumerateSecurityPackagesA" : "EnumerateSecurityPackagesW", 2, [package_list, narrow](ApiCall &call) {
+			call.ret(!call[0] || !call[1] ? sec_invalid_parameter : package_list(call, narrow, std::nullopt));
+		});
+		registry.add(narrow ? "QuerySecurityPackageInfoA" : "QuerySecurityPackageInfoW", 2, [package_list, narrow](ApiCall &call) {
+			if (!call[0] || !call[1]) {
+				call.ret(sec_invalid_parameter);
+				return;
+			}
+			const auto name = narrow ? widen_ascii(call.narrow(call[0], 256)) : call.wide(call[0], 256);
+			call.ret(package_list(call, narrow, name));
+		});
+	}
 	registry.add("FreeContextBuffer", 1, [&context](ApiCall &call) {
 		if (call[0])
 			context.allocator.release(call[0]);

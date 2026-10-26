@@ -50,6 +50,8 @@ struct DesktopBitmap {
 	// DIB sections keep the format their creator asked for: bytes per row, and the color table of indexed depths (COLORREF).
 	uint32_t stride = 0;
 	std::vector<uint32_t> palette{};
+	// The physical size a program records with SetBitmapDimensionEx, in 0.1 mm; GDI keeps it and never uses it.
+	int32_t dimension_x = 0, dimension_y = 0;
 	std::span<uint8_t> pixels() { return shared ? std::span<uint8_t>(shared->data(), shared->size()) : std::span<uint8_t>(bits); }
 	std::span<const uint8_t> pixels() const { return shared ? std::span<const uint8_t>(shared->data(), shared->size()) : std::span<const uint8_t>(bits); }
 };

@@ -16,6 +16,8 @@
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <sys/inotify.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -170,6 +172,32 @@ std::vector<uint8_t> attribute_data(const FindObject::Entry &entry)
 }
 
 }
+
+// A change notification handle: an inotify instance watching a directory, and the directories below it when the caller asked for the
+// tree. It is signaled while changes wait to be taken in by FindNextChangeNotification. Nothing announces a change to a waiter, so a
+// waiter looks again at a short interval.
+class ChangeNotificationObject : public KernelObject {
+public:
+	explicit ChangeNotificationObject(int descriptor) : descriptor(descriptor) {}
+	~ChangeNotificationObject() override { ::close(descriptor); }
+	int signaled(uint32_t thread) const override
+	{
+		(void)thread;
+		pollfd entry{descriptor, POLLIN, 0};
+		return ::poll(&entry, 1, 0) > 0 ? 1 : 0;
+	}
+	std::optional<std::chrono::steady_clock::time_point> wakes_at() const override
+	{
+		return std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+	}
+	void take_changes()
+	{
+		char buffer[4096];
+		while (::read(descriptor, buffer, sizeof buffer) > 0) {
+		}
+	}
+	const int descriptor;
+};
 
 void register_file_api(ApiRegistry &registry, KernelContext &context)
 {
@@ -490,7 +518,8 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 				file->directory_scan = std::move(scan);
 			}
 			const auto &scan = file->directory_scan;
-			size_t next = call.u32(10) ? 0 : scan->next;
+			// ReturnSingleEntry and RestartScan are BOOLEANs: only the low byte of their argument words is set by the caller.
+			size_t next = uint8_t(call[10]) ? 0 : scan->next;
 			if (next == scan->entries.size()) { finish(first ? 0xc000000fU : 0x80000006U); return; }
 			std::vector<uint8_t> bytes;
 			size_t previous = 0;
@@ -517,7 +546,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 				if (copied < size) { status = 0x80000005U; break; }
 				++next;
 				previous = start;
-				if (call.u32(8)) break;
+				if (uint8_t(call[8])) break;
 			}
 			call.write(call[5], bytes);
 			finish(status, bytes.size());
@@ -1557,6 +1586,75 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 	});
 	registry.add("FindClose", 1, [&, resolve, missing, file_of, copy_file, find_first](ApiCall &call) {
 		if (!objects.object_as<FindObject>(call[0])) {
+			call.fail(6);
+			return;
+		}
+		objects.close(call[0]);
+		call.ret(1);
+	});
+	// FILE_NOTIFY_CHANGE_* filters: names (1, 2), attributes (4), size (8), last write (0x10), last access (0x20), creation (0x40) and
+	// security (0x100).
+	registry.add("FindFirstChangeNotificationW", 3, [&, resolve, missing](ApiCall &call) {
+		const uint32_t filter = call.u32(2);
+		call.ret(invalid_handle);
+		if (!filter || (filter & ~0x17fU)) {
+			call.set_last_error(87);
+			return;
+		}
+		const auto resolved = resolve(call, call.wide(call[0]));
+		if (!resolved)
+			return;
+		std::error_code error;
+		if (!std::filesystem::is_directory(resolved->host, error)) {
+			call.set_last_error(resolved->exists ? 267 : missing(*resolved));
+			return;
+		}
+		uint32_t mask = IN_ONLYDIR;
+		if (filter & 3)
+			mask |= IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE_SELF | IN_MOVE_SELF;
+		if (filter & 0x104)
+			mask |= IN_ATTRIB;
+		if (filter & 0x18)
+			mask |= IN_MODIFY | IN_CLOSE_WRITE;
+		if (filter & 0x20)
+			mask |= IN_ACCESS;
+		if (filter & 0x40)
+			mask |= IN_CREATE;
+		const int descriptor = ::inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+		if (descriptor < 0) {
+			call.set_last_error(8);
+			return;
+		}
+		auto object = std::make_shared<ChangeNotificationObject>(descriptor);
+		if (::inotify_add_watch(descriptor, resolved->host.c_str(), mask) < 0) {
+			call.set_last_error(error_of(errno, false));
+			return;
+		}
+		// inotify watches one directory: the tree is the directories found below it now, as many as the host's watch limit leaves room for.
+		if (uint32_t(call[1]) & 0xff) {
+			for (std::filesystem::recursive_directory_iterator walk(resolved->host, std::filesystem::directory_options::skip_permission_denied, error), end;
+				!error && walk != end; walk.increment(error))
+				if (walk->is_directory(error) && !walk->is_symlink(error) && ::inotify_add_watch(descriptor, walk->path().c_str(), mask) < 0)
+					break;
+		}
+		const auto made = objects.add_object(object);
+		if (made.status) {
+			call.set_last_error(4);
+			return;
+		}
+		call.ret(made.value);
+	});
+	registry.add("FindNextChangeNotification", 1, [&](ApiCall &call) {
+		const auto object = objects.object_as<ChangeNotificationObject>(call[0]);
+		if (!object) {
+			call.fail(6);
+			return;
+		}
+		object->take_changes();
+		call.ret(1);
+	});
+	registry.add("FindCloseChangeNotification", 1, [&](ApiCall &call) {
+		if (!objects.object_as<ChangeNotificationObject>(call[0])) {
 			call.fail(6);
 			return;
 		}

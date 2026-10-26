@@ -1160,7 +1160,10 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 			{u"Everyone", u"", make_sid(1, {0}), 5}, {u"SYSTEM", u"NT AUTHORITY", make_sid(5, {18}), 5},
 			{u"Authenticated Users", u"NT AUTHORITY", make_sid(5, {11}), 5}, {u"LOCAL SERVICE", u"NT AUTHORITY", make_sid(5, {19}), 5},
 			{u"NETWORK SERVICE", u"NT AUTHORITY", make_sid(5, {20}), 5}, {u"INTERACTIVE", u"NT AUTHORITY", make_sid(5, {4}), 5},
-			{u"NETWORK", u"NT AUTHORITY", make_sid(5, {2}), 5}, {context.paths.user_name(), from_utf8(netbios), user_sid(), 1}};
+			{u"NETWORK", u"NT AUTHORITY", make_sid(5, {2}), 5}, {u"CREATOR OWNER", u"", make_sid(3, {0}), 5},
+			{u"TrustedInstaller", u"NT SERVICE", make_sid(5, {80, 956008885, 3418522649U, 1831038044, 1853292631, 2271478464U}), 5},
+			{u"ALL APPLICATION PACKAGES", u"APPLICATION PACKAGE AUTHORITY", make_sid(15, {2, 1}), 5},
+			{context.paths.user_name(), from_utf8(netbios), user_sid(), 1}};
 	};
 	// Both lookups fill a SID or name and the domain the same way: sizes first, then the text when the buffers hold it.
 	const auto answer = [](ApiCall &call, const Account &account, bool by_name) {

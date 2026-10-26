@@ -19,6 +19,8 @@ struct InheritedHandle {
 	uint64_t size = 0;
 	std::u16string text;
 	std::string path;
+	// The standard handles (bit 0 input, 1 output, 2 error) the creator named this handle for, which the child takes it as.
+	uint32_t standard = 0;
 };
 
 std::vector<uint8_t> serialize_inherited(const std::vector<InheritedHandle> &handles);

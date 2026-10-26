@@ -652,6 +652,30 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			call.ret(handle);
 		});
 	});
+	registry.add("SetBitmapDimensionEx", 4, [=, this](ApiCall &call) {
+		guarded(call, 0, [&] {
+			auto *bitmap = objects.bitmap(call[0]);
+			if (!bitmap)
+				throw uint32_t(6);
+			if (call[3]) {
+				call.store<int32_t>(call[3], bitmap->dimension_x);
+				call.store<int32_t>(call[3] + 4, bitmap->dimension_y);
+			}
+			bitmap->dimension_x = call.i32(1);
+			bitmap->dimension_y = call.i32(2);
+			call.ret(1);
+		});
+	});
+	registry.add("GetBitmapDimensionEx", 2, [=, this](ApiCall &call) {
+		guarded(call, 0, [&] {
+			const auto *bitmap = objects.bitmap(call[0]);
+			if (!bitmap || !call[1])
+				throw uint32_t(bitmap ? 87 : 6);
+			call.store<int32_t>(call[1], bitmap->dimension_x);
+			call.store<int32_t>(call[1] + 4, bitmap->dimension_y);
+			call.ret(1);
+		});
+	});
 	registry.add("SetBitmapBits", 3, [=, this](ApiCall &call) {
 		guarded(call, 0, [&] {
 			auto *bitmap = objects.bitmap(call[0]);

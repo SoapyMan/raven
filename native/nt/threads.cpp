@@ -464,8 +464,18 @@ bool NativeThreads::block(std::function<bool()> ready, std::optional<std::chrono
 {
 	if (ready())
 		return true;
-	if (wake && std::chrono::steady_clock::now() >= *wake)
-		return false;
+	if (wake && std::chrono::steady_clock::now() >= *wake) {
+		// A wait that does not wait still sees what the host finished meanwhile, such as a pipe read completing: a program that only
+		// polls with a zero timeout would otherwise keep a thread runnable and never let the pumps run. Once a millisecond is enough.
+		const auto now = std::chrono::steady_clock::now();
+		if (now - pumped < std::chrono::milliseconds(1))
+			return false;
+		pumped = now;
+		serve();
+		for (const auto &pump : pumps)
+			pump();
+		return ready();
+	}
 	auto &me = *running;
 	me.ready = std::move(ready);
 	me.wake = wake;

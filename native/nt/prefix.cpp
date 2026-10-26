@@ -15,7 +15,8 @@ NativePrefix::NativePrefix(std::filesystem::path root) : directory(std::move(roo
 	if (directory.empty())
 		throw std::runtime_error("native prefix requires a directory");
 	// The folders every Windows installation has, so that programs can put files in the places they expect.
-	for (const char *folder : {"windows", "windows/system32", "windows/syswow64", "Program Files", "Program Files (x86)", "ProgramData/Microsoft/Windows/Start Menu/Programs",
+	for (const char *folder : {"windows", "windows/system32", "windows/syswow64", "Program Files/Common Files", "Program Files (x86)/Common Files",
+			"ProgramData/Microsoft/Windows/Start Menu/Programs",
 			"Users/Public/Desktop", "Users/Public/Documents"})
 		std::filesystem::create_directories(directory / "drive_c" / folder);
 	// The Fonts folder holds the installed fonts, as on Windows: links to the host's font files, made once when the folder is new.

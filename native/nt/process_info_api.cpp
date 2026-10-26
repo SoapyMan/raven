@@ -16,6 +16,7 @@
 #include <new>
 #include <sstream>
 #include <unistd.h>
+#include <variant>
 
 namespace raven {
 
@@ -912,43 +913,44 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("EnumProcesses", 3, enum_processes);
 	registry.add("K32EnumProcesses", 3, enum_processes);
+	// The program a process runs, as a Win32 path or, native, as the volume device path; or the error that stops the query.
+	const auto image_path = [&context, &objects, is_self, request_process](uint64_t handle, bool native) -> std::variant<std::u16string, uint32_t> {
+		const bool own = is_self(handle);
+		if (!own && !objects.object_as<ProcessObject>(handle))
+			return uint32_t(6);
+		if (handle != current_process && handle != 0xffffffffU && !(objects.access_of(handle) & 0x1400))
+			return uint32_t(5);
+		auto path = context.launch.image_path;
+		if (!own) {
+			InheritedHandle request;
+			request.kind = "process:image";
+			const auto answer = request_process(handle, std::move(request));
+			if (!answer || answer->access || answer->path.size() % sizeof(char16_t))
+				return uint32_t(31);
+			path.resize(answer->path.size() / sizeof(char16_t));
+			std::memcpy(path.data(), answer->path.data(), answer->path.size());
+		}
+		if (native) {
+			if (path.size() < 3 || path[1] != u':')
+				return uint32_t(50);
+			const auto volume = std::to_string(std::max(1, (path[0] & 0x1f) - 2));
+			path = u"\\Device\\HarddiskVolume" + std::u16string(volume.begin(), volume.end()) + path.substr(2);
+		}
+		return path;
+	};
 	for (const bool wide : {true, false})
-		registry.add(wide ? "QueryFullProcessImageNameW" : "QueryFullProcessImageNameA", 4,
-			[&context, &objects, is_self, request_process, wide](ApiCall &call) {
-			const bool own = is_self(call[0]);
-			if (!own && !objects.object_as<ProcessObject>(call[0])) {
-				call.fail(6);
-				return;
-			}
-			if (call[0] != current_process && call[0] != 0xffffffffU && !(objects.access_of(call[0]) & 0x1400)) {
-				call.fail(5);
-				return;
-			}
+		registry.add(wide ? "QueryFullProcessImageNameW" : "QueryFullProcessImageNameA", 4, [&context, image_path, wide](ApiCall &call) {
 			if (call.u32(1) > 1 || !call[2] || !call[3]) {
 				call.fail(87);
 				return;
 			}
+			const auto found = image_path(call[0], call.u32(1) != 0);
+			if (const auto *error = std::get_if<uint32_t>(&found)) {
+				call.fail(*error);
+				return;
+			}
+			const auto &path = std::get<std::u16string>(found);
 			const uint32_t capacity = call.load<uint32_t>(call[3]);
-			auto path = context.launch.image_path;
-			if (!own) {
-				InheritedHandle request;
-				request.kind = "process:image";
-				const auto answer = request_process(call[0], std::move(request));
-				if (!answer || answer->access || answer->path.size() % sizeof(char16_t)) {
-					call.fail(31);
-					return;
-				}
-				path.resize(answer->path.size() / sizeof(char16_t));
-				std::memcpy(path.data(), answer->path.data(), answer->path.size());
-			}
-			if (call.u32(1)) {
-				if (path.size() < 3 || path[1] != u':') {
-					call.fail(50);
-					return;
-				}
-				const auto volume = std::to_string(std::max(1, (path[0] & 0x1f) - 2));
-				path = u"\\Device\\HarddiskVolume" + std::u16string(volume.begin(), volume.end()) + path.substr(2);
-			}
 			const auto narrow = wide ? std::string() : to_ansi(path, context.launch.ansi_code_page);
 			const size_t length = wide ? path.size() : narrow.size();
 			if (capacity <= length) {
@@ -959,6 +961,28 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 			else call.put_narrow(call[2], narrow, length + 1);
 			call.store<uint32_t>(call[3], uint32_t(length));
 			call.ret(1);
+		});
+	// GetProcessImageFileName answers the device path and its length, cut to the buffer as GetModuleFileName does.
+	for (const bool wide : {true, false})
+		registry.add(wide ? "GetProcessImageFileNameW" : "GetProcessImageFileNameA", 3, [&context, image_path, wide](ApiCall &call) {
+			const auto found = image_path(call[0], true);
+			if (const auto *error = std::get_if<uint32_t>(&found)) {
+				call.fail(*error);
+				return;
+			}
+			const auto &path = std::get<std::u16string>(found);
+			const uint32_t capacity = call.u32(2);
+			if (!call[1] || !capacity) {
+				call.fail(122);
+				return;
+			}
+			const auto narrow = wide ? std::string() : to_ansi(path, context.launch.ansi_code_page);
+			const size_t length = std::min<size_t>(wide ? path.size() : narrow.size(), capacity - 1);
+			if (wide) call.put_wide(call[1], path, length + 1);
+			else call.put_narrow(call[1], narrow, length + 1);
+			if (length < (wide ? path.size() : narrow.size()))
+				call.set_last_error(122);
+			call.ret(length);
 		});
 	// Toolhelp lists retain the entries present when the snapshot was taken.
 	registry.add("CreateToolhelp32Snapshot", 2, [&objects, &context, module_list](ApiCall &call) {
@@ -1418,7 +1442,8 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// kernel32 publishes the psapi functions a second time under a K32 prefix, which is what newer programs import.
 	for (const char *name : {"EnumProcessModules", "EnumProcessModulesEx", "GetModuleBaseNameA", "GetModuleBaseNameW", "GetModuleInformation", "GetProcessMemoryInfo",
-		"GetModuleFileNameExW", "GetModuleFileNameExA", "QueryWorkingSetEx", "GetMappedFileNameW", "GetMappedFileNameA"})
+		"GetModuleFileNameExW", "GetModuleFileNameExA", "QueryWorkingSetEx", "GetMappedFileNameW", "GetMappedFileNameA",
+		"GetProcessImageFileNameW", "GetProcessImageFileNameA"})
 		if (const auto entry = registry.find(name))
 			registry.add(std::string("K32") + name, entry->first, entry->second);
 }

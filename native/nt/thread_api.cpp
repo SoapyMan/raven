@@ -199,6 +199,14 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		std::optional<std::chrono::steady_clock::time_point> wake;
 		if (milliseconds != UINT32_MAX)
 			wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
+		const auto ready = [&] {
+			const auto now = states();
+			if (alertable && !me->apcs.empty())
+				return true;
+			return all ? std::all_of(now.begin(), now.end(), [](int state) { return state == 1; }) :
+				std::any_of(now.begin(), now.end(), [](int state) { return state == 1; });
+		};
+		bool looked = false;
 		for (;;) {
 			const auto current = states();
 			for (const auto state : current)
@@ -220,8 +228,16 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 						return uint32_t(index);
 			}
 			if (milliseconds == 0 || (wake && std::chrono::steady_clock::now() >= *wake)) {
-				if (!(alertable && !threads.current().apcs.empty()))
+				if (!(alertable && !threads.current().apcs.empty())) {
+					// A wait that has run out still takes in once what the host finished meanwhile: a program that only polls with a zero
+					// timeout would otherwise never see a pipe or a socket transfer complete.
+					if (!looked) {
+						looked = true;
+						if (threads.block(ready, std::chrono::steady_clock::now()))
+							continue;
+					}
 					return wait_timeout;
+				}
 			}
 			// Running APCs needs the thread stopped, and so does blocking in a serial process, where the guest that spins in the stub holds
 			// the only task. A parallel guest spins in its own task while this host frame blocks, so a wait the other side ends soon never
@@ -240,13 +256,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 				if (const auto object = objects.object(handle))
 					if (const auto due = object->wakes_at(); due && (!until || *due < *until))
 						until = due;
-			threads.block([&] {
-				const auto now = states();
-				if (alertable && !me->apcs.empty())
-					return true;
-				return all ? std::all_of(now.begin(), now.end(), [](int state) { return state == 1; }) :
-					std::any_of(now.begin(), now.end(), [](int state) { return state == 1; });
-			}, until);
+			threads.block(ready, until);
 		}
 	};
 	registry.add("WaitForSingleObject", 2, [wait](ApiCall &call) { call.ret(wait(call, {call[0]}, false, call.u32(1), false)); });

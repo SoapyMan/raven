@@ -26,7 +26,7 @@ constexpr std::array exported{
 	Export{"kernel32.dll", "DeviceIoControl", 8}, Export{"kernel32.dll", "GetProcessAffinityMask", 3},
 	Export{"kernel32.dll", "SetProcessAffinityMask", 2}, Export{"kernel32.dll", "GetSystemInfo", 1}, Export{"kernel32.dll", "VirtualQuery", 3},
 	Export{"kernel32.dll", "DuplicateHandle", 7}, Export{"kernel32.dll", "VirtualQueryEx", 4}, Export{"kernel32.dll", "SetProcessDEPPolicy", 1},
-	Export{"user32.dll", "ChangeDisplaySettingsExW", 5}, Export{"user32.dll", "CreateIconIndirect", 1},
+	Export{"user32.dll", "ChangeDisplaySettingsExW", 5},
 	Export{"user32.dll", "DisplayConfigGetDeviceInfo", 1}, Export{"user32.dll", "EnumDisplayDevicesA", 4},
 	Export{"user32.dll", "SetProcessDPIAware", 0},
 	Export{"gdi32.dll", "D3DKMTCloseAdapter", 1}, Export{"gdi32.dll", "D3DKMTCreateDCFromMemory", 1}, Export{"gdi32.dll", "D3DKMTCreateDevice", 1},
@@ -89,6 +89,7 @@ uint32_t NativeX86System::wait(const std::vector<uint64_t> &handles, bool all, u
 			result.push_back(objects.signaled(handle, id));
 		return result;
 	};
+	bool looked = false;
 	for (;;) {
 		const auto current = states();
 		if (std::any_of(current.begin(), current.end(), [](int state) { return state < 0; })) {
@@ -108,13 +109,27 @@ uint32_t NativeX86System::wait(const std::vector<uint64_t> &handles, bool all, u
 					return uint32_t(index);
 				}
 		}
-		if (milliseconds == 0 || (wake && std::chrono::steady_clock::now() >= *wake))
-			return wait_timeout;
-		threads.block([&] {
+		const auto ready = [&] {
 			const auto now = states();
 			return all ? std::all_of(now.begin(), now.end(), [](int state) { return state == 1; })
 					   : std::any_of(now.begin(), now.end(), [](int state) { return state == 1; });
-		}, wake);
+		};
+		if (milliseconds == 0 || (wake && std::chrono::steady_clock::now() >= *wake)) {
+			// Once, a wait that has run out still takes in what the host finished meanwhile.
+			if (!looked) {
+				looked = true;
+				if (threads.block(ready, std::chrono::steady_clock::now()))
+					continue;
+			}
+			return wait_timeout;
+		}
+		// An object that turns signaled by itself, such as a timer, is looked at again when it says.
+		auto until = wake;
+		for (const auto handle : handles)
+			if (const auto object = objects.object(handle))
+				if (const auto due = object->wakes_at(); due && (!until || *due < *until))
+					until = due;
+		threads.block(ready, until);
 	}
 }
 
@@ -378,8 +393,6 @@ bool NativeX86System::dispatch(std::string_view name)
 	} else if (name == "ChangeDisplaySettingsExW") {
 		// A mode change is accepted without changing anything: the host shows the program's window at its own size.
 		process.return_api(0);
-	} else if (name == "CreateIconIndirect") {
-		fail(50);
 	} else if (name == "DisplayConfigGetDeviceInfo") {
 		process.return_api(50);
 	} else if (name == "EnumDisplayDevicesA") {

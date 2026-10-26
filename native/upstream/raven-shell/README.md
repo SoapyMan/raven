@@ -12,6 +12,8 @@ public Windows headers. It supplies what the system libraries of the guest canno
 - UI Automation's reserved "not supported" and "mixed attribute" values, one object each for the process.
 - the task allocator, through `CoGetMalloc` and the shell's `SHGetMalloc`.
 - streams over registry values (`SHOpenRegStream`, `SHOpenRegStream2`, `OpenRegStream`), written back when a writable one is released.
+- the network address control that `InitNetworkAddressControl` registers (`netaddress.c`): an edit field that reads a host name or an
+  IPv4 or IPv6 address with an optional port.
 
 Its exports replace the same-named exports of `comdlg32.dll`, `ole32.dll`, `shell32.dll` and `uiautomationcore.dll`
 for programs that import those libraries. Setting `RAVEN_TRACE_SHELL` to a guest file path appends one line per

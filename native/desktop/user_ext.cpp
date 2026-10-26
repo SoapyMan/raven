@@ -143,9 +143,14 @@ uint64_t NativeWindows::scratch_allocate(size_t size)
 	return address;
 }
 
+bool NativeWindows::hook_applies(const Hook &hook) const
+{
+	return !hook.thread || hook.thread == environment.thread_id();
+}
+
 bool NativeWindows::has_hook(int32_t id) const
 {
-	return std::any_of(hooks.begin(), hooks.end(), [&](const Hook &hook) { return hook.id == id; });
+	return std::any_of(hooks.begin(), hooks.end(), [&](const Hook &hook) { return hook.id == id && hook_applies(hook); });
 }
 
 // Runs the hook chain of one kind; `after` names the hook whose successors should run (CallNextHookEx).
@@ -153,7 +158,7 @@ uint64_t NativeWindows::call_hooks(int32_t id, int32_t code, uint64_t wparam, ui
 {
 	bool started = after == 0;
 	for (const auto &hook : std::vector<Hook>(hooks)) {
-		if (hook.id != id)
+		if (hook.id != id || !hook_applies(hook))
 			continue;
 		if (!started) {
 			started = hook.handle == after;
@@ -686,7 +691,7 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 			call.fail(87);
 			return;
 		}
-		Hook hook{++next_hook, id, call[1]};
+		Hook hook{++next_hook, id, call[1], call.u32(3)};
 		hooks.insert(hooks.begin(), hook);
 		call.ret(hook.handle);
 	});
@@ -696,9 +701,30 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 			call.fail(87);
 			return;
 		}
-		Hook hook{++next_hook, id, call[1]};
+		Hook hook{++next_hook, id, call[1], call.u32(3)};
 		hooks.insert(hooks.begin(), hook);
 		call.ret(hook.handle);
+	});
+	// AnimateWindow shows or hides at once: the slide, roll and blend effects only change how the transition looks. Showing a visible
+	// window or hiding a hidden one fails, as it does on Windows.
+	registry.add("AnimateWindow", 3, [this](ApiCall &call) {
+		const uint32_t flags = call.u32(2);
+		if (!objects.window(call[0])) {
+			call.fail(1400);
+			return;
+		}
+		const bool hide = flags & 0x10000, visible = objects.window_visible(call[0]);
+		if (hide != visible) {
+			call.ret(0);
+			return;
+		}
+		try {
+			show_window(call[0], hide ? 0 : (flags & 0x20000) ? 5 : 8);
+		} catch (uint32_t error) {
+			call.fail(error);
+			return;
+		}
+		call.ret(1);
 	});
 	registry.add("UnhookWindowsHookEx", 1, [this](ApiCall &call) {
 		const auto before = hooks.size();

@@ -615,6 +615,28 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		}
 		call.ret(found);
 	});
+	// RealChildWindowFromPoint looks through what is transparent to the mouse, as a group box is: a child that answers WM_NCHITTEST with
+	// HTTRANSPARENT gives way to the one below it.
+	registry.add("RealChildWindowFromPoint", 2, [this](ApiCall &call) {
+		const auto *parent = objects.window(call[0]);
+		if (!parent) {
+			call.fail(1400);
+			return;
+		}
+		const int32_t x = int32_t(call[1]) + parent->x, y = int32_t(call[1] >> 32) + parent->y;
+		uint64_t found = call[0];
+		const auto children = objects.child_windows(call[0]);
+		for (auto child = children.rbegin(); child != children.rend(); ++child) {
+			const auto *record = objects.window(*child);
+			if (!record || !record->visible || x < record->outer.left || y < record->outer.top || x >= record->outer.right || y >= record->outer.bottom)
+				continue;
+			if (int32_t(send(*child, 0x84, 0, uint32_t(uint16_t(x)) | uint32_t(uint16_t(y)) << 16)) == -1)
+				continue;
+			found = *child;
+			break;
+		}
+		call.ret(found);
+	});
 	registry.add("WindowFromPoint", 1, [this](ApiCall &call) { call.ret(window_at(int32_t(call[0]), int32_t(call[0] >> 32))); });
 	const auto enumerate = [this](ApiCall &call, const std::vector<uint64_t> &handles, uint64_t procedure, uint64_t parameter) {
 		for (const auto handle : handles) {
@@ -653,48 +675,50 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		enumerate(call, all, call[1], call[2]);
 	});
 
-	registry.add("SetPropW", 3, [this](ApiCall &call) {
-		auto *window = objects.window(call[0]);
-		if (!window) {
-			call.fail(1400);
-			return;
-		}
-		std::u16string key = call[1] <= 0xffff ? u"#" + widen_ascii(std::to_string(call[1])) : call.wide(call[1], 255);
+	// A property is named by an atom or by text, wide or ANSI, compared without case.
+	const auto property_key = [](ApiCall &call, bool wide) {
+		std::u16string key = call[1] <= 0xffff ? u"#" + widen_ascii(std::to_string(call[1])) :
+			wide ? call.wide(call[1], 255) : from_ansi(call.narrow(call[1], 255), 1252);
 		for (auto &character : key)
 			character = upper_case(character);
-		window->properties[key] = call[2];
-		call.ret(1);
-	});
-	registry.add("GetPropW", 2, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
-		if (!window) {
-			call.ret(0);
-			return;
-		}
-		std::u16string key = call[1] <= 0xffff ? u"#" + widen_ascii(std::to_string(call[1])) : call.wide(call[1], 255);
-		for (auto &character : key)
-			character = upper_case(character);
-		const auto found = window->properties.find(key);
-		call.ret(found == window->properties.end() ? 0 : found->second);
-	});
-	registry.add("RemovePropW", 2, [this](ApiCall &call) {
-		auto *window = objects.window(call[0]);
-		if (!window) {
-			call.fail(1400);
-			return;
-		}
-		std::u16string key = call[1] <= 0xffff ? u"#" + widen_ascii(std::to_string(call[1])) : call.wide(call[1], 255);
-		for (auto &character : key)
-			character = upper_case(character);
-		const auto found = window->properties.find(key);
-		if (found == window->properties.end()) {
-			call.ret(0);
-			return;
-		}
-		const auto value = found->second;
-		window->properties.erase(found);
-		call.ret(value);
-	});
+		return key;
+	};
+	for (const bool wide : {true, false}) {
+		const std::string suffix = wide ? "W" : "A";
+		registry.add("SetProp" + suffix, 3, [this, property_key, wide](ApiCall &call) {
+			auto *window = objects.window(call[0]);
+			if (!window) {
+				call.fail(1400);
+				return;
+			}
+			window->properties[property_key(call, wide)] = call[2];
+			call.ret(1);
+		});
+		registry.add("GetProp" + suffix, 2, [this, property_key, wide](ApiCall &call) {
+			const auto *window = objects.window(call[0]);
+			if (!window) {
+				call.ret(0);
+				return;
+			}
+			const auto found = window->properties.find(property_key(call, wide));
+			call.ret(found == window->properties.end() ? 0 : found->second);
+		});
+		registry.add("RemoveProp" + suffix, 2, [this, property_key, wide](ApiCall &call) {
+			auto *window = objects.window(call[0]);
+			if (!window) {
+				call.fail(1400);
+				return;
+			}
+			const auto found = window->properties.find(property_key(call, wide));
+			if (found == window->properties.end()) {
+				call.ret(0);
+				return;
+			}
+			const auto value = found->second;
+			window->properties.erase(found);
+			call.ret(value);
+		});
+	}
 
 	registry.add("SetWindowPos", 7, [this](ApiCall &call) {
 		const auto *window = objects.window(call[0]);

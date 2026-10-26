@@ -152,6 +152,8 @@ private:
 	std::function<void(std::chrono::milliseconds)> poll;
 	std::vector<std::function<bool()>> externals;
 	std::vector<std::function<void()>> pumps;
+	// When a wait that does not wait last let the services and pumps run.
+	std::chrono::steady_clock::time_point pumped{};
 	std::vector<std::function<void()>> services;
 	// Written to end the idle wait: by nudge() and by the thread that sees other processes change shared objects.
 	int wake = -1;

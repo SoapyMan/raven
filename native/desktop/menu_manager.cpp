@@ -14,7 +14,7 @@ constexpr uint32_t type_string = 0, type_bitmap = 4, type_menubar_break = 0x20, 
 	type_owner_draw | type_radio | type_separator | type_right_justify;
 constexpr uint32_t state_grayed = 3, state_disabled = 2, state_checked = 8, state_hilite = 0x80, state_default = 0x1000;
 
-// MENUITEMINFOW: size, mask, type, state, id, submenu, bitmaps, item data, type data, length, item bitmap (x64 layout).
+// MENUITEMINFOW: size, mask, type, state, id, submenu, bitmaps, item data, type data, length, item bitmap.
 struct ItemInfo {
 	uint32_t size = 0, mask = 0, type = 0, state = 0, id = 0;
 	uint64_t submenu = 0, bitmap_checked = 0, bitmap_unchecked = 0, data = 0, type_data = 0;
@@ -22,23 +22,54 @@ struct ItemInfo {
 	uint64_t bitmap_item = 0;
 };
 
+// Where the fields after the five leading words sit: a 32-bit program packs its handles and pointers in 4 bytes, a 64-bit one aligns
+// them to 8.
+struct ItemLayout {
+	size_t width, submenu, bitmap_checked, bitmap_unchecked, data, type_data, length, bitmap_item, size;
+};
+
+ItemLayout item_layout(const ApiCall &call)
+{
+	return call.pointer_width() == 4 ? ItemLayout{4, 20, 24, 28, 32, 36, 40, 44, 48} : ItemLayout{8, 24, 32, 40, 48, 56, 64, 72, 80};
+}
+
 ItemInfo read_item_info(ApiCall &call, uint64_t address)
 {
-	const auto bytes = call.read(address, 80);
+	const auto layout = item_layout(call);
+	const auto bytes = call.read(address, layout.size);
 	ItemInfo info;
 	std::memcpy(&info.size, bytes.data(), 4);
 	std::memcpy(&info.mask, bytes.data() + 4, 4);
 	std::memcpy(&info.type, bytes.data() + 8, 4);
 	std::memcpy(&info.state, bytes.data() + 12, 4);
 	std::memcpy(&info.id, bytes.data() + 16, 4);
-	std::memcpy(&info.submenu, bytes.data() + 24, 8);
-	std::memcpy(&info.bitmap_checked, bytes.data() + 32, 8);
-	std::memcpy(&info.bitmap_unchecked, bytes.data() + 40, 8);
-	std::memcpy(&info.data, bytes.data() + 48, 8);
-	std::memcpy(&info.type_data, bytes.data() + 56, 8);
-	std::memcpy(&info.length, bytes.data() + 64, 4);
-	std::memcpy(&info.bitmap_item, bytes.data() + 72, 8);
+	std::memcpy(&info.submenu, bytes.data() + layout.submenu, layout.width);
+	std::memcpy(&info.bitmap_checked, bytes.data() + layout.bitmap_checked, layout.width);
+	std::memcpy(&info.bitmap_unchecked, bytes.data() + layout.bitmap_unchecked, layout.width);
+	std::memcpy(&info.data, bytes.data() + layout.data, layout.width);
+	std::memcpy(&info.type_data, bytes.data() + layout.type_data, layout.width);
+	std::memcpy(&info.length, bytes.data() + layout.length, 4);
+	std::memcpy(&info.bitmap_item, bytes.data() + layout.bitmap_item, layout.width);
 	return info;
+}
+
+void write_item_info(ApiCall &call, uint64_t address, const ItemInfo &info)
+{
+	const auto layout = item_layout(call);
+	std::vector<uint8_t> bytes(layout.size);
+	std::memcpy(bytes.data(), &info.size, 4);
+	std::memcpy(bytes.data() + 4, &info.mask, 4);
+	std::memcpy(bytes.data() + 8, &info.type, 4);
+	std::memcpy(bytes.data() + 12, &info.state, 4);
+	std::memcpy(bytes.data() + 16, &info.id, 4);
+	std::memcpy(bytes.data() + layout.submenu, &info.submenu, layout.width);
+	std::memcpy(bytes.data() + layout.bitmap_checked, &info.bitmap_checked, layout.width);
+	std::memcpy(bytes.data() + layout.bitmap_unchecked, &info.bitmap_unchecked, layout.width);
+	std::memcpy(bytes.data() + layout.data, &info.data, layout.width);
+	std::memcpy(bytes.data() + layout.type_data, &info.type_data, layout.width);
+	std::memcpy(bytes.data() + layout.length, &info.length, 4);
+	std::memcpy(bytes.data() + layout.bitmap_item, &info.bitmap_item, layout.width);
+	call.write(address, std::span<const uint8_t>(bytes.data(), std::min<size_t>(info.size ? info.size : layout.size, layout.size)));
 }
 
 }
@@ -260,6 +291,41 @@ void NativeWindows::register_menu_api(ApiRegistry &registry)
 		}
 		call.ret(1);
 	});
+	// One item of a menu is its default (MFS_DEFAULT), drawn bold and chosen by a double click; -1 leaves the menu without one.
+	registry.add("SetMenuDefaultItem", 3, [this, locate](ApiCall &call) {
+		auto *menu = objects.edit_menu(call[0]);
+		if (!menu) {
+			call.fail(1401);
+			return;
+		}
+		const auto where = call.u32(1) == UINT32_MAX ? Location{} : locate(call[0], call.u32(1), call.u32(2) ? by_position : 0);
+		if (call.u32(1) != UINT32_MAX && (!where.found || where.menu != call[0])) {
+			call.fail(1456);
+			return;
+		}
+		for (auto &item : menu->items)
+			item.state &= ~state_default;
+		if (where.found)
+			menu->items[where.index].state |= state_default;
+		call.ret(1);
+	});
+	registry.add("GetMenuDefaultItem", 3, [this](ApiCall &call) {
+		const auto *menu = objects.menu(call[0]);
+		if (!menu) {
+			call.fail(1401);
+			call.ret(UINT32_MAX);
+			return;
+		}
+		for (size_t index = 0; index < menu->items.size(); ++index) {
+			const auto &item = menu->items[index];
+			// GMDI_USEDISABLED (1) admits a disabled default item.
+			if (!(item.state & state_default) || ((item.state & state_disabled) && !(call.u32(2) & 1)))
+				continue;
+			call.ret(call.u32(1) ? index : item.id);
+			return;
+		}
+		call.ret(UINT32_MAX);
+	});
 	registry.add("GetMenuState", 3, [this, locate](ApiCall &call) {
 		const auto where = locate(call[0], call.u32(1), call.u32(2));
 		if (!where.found) {
@@ -393,20 +459,7 @@ void NativeWindows::register_menu_api(ApiRegistry &registry)
 				info.length = uint32_t(item.text.size());
 			}
 		}
-		std::vector<uint8_t> bytes(80);
-		std::memcpy(bytes.data(), &info.size, 4);
-		std::memcpy(bytes.data() + 4, &info.mask, 4);
-		std::memcpy(bytes.data() + 8, &info.type, 4);
-		std::memcpy(bytes.data() + 12, &info.state, 4);
-		std::memcpy(bytes.data() + 16, &info.id, 4);
-		std::memcpy(bytes.data() + 24, &info.submenu, 8);
-		std::memcpy(bytes.data() + 32, &info.bitmap_checked, 8);
-		std::memcpy(bytes.data() + 40, &info.bitmap_unchecked, 8);
-		std::memcpy(bytes.data() + 48, &info.data, 8);
-		std::memcpy(bytes.data() + 56, &info.type_data, 8);
-		std::memcpy(bytes.data() + 64, &info.length, 4);
-		std::memcpy(bytes.data() + 72, &info.bitmap_item, 8);
-		call.write(call[3], std::span<const uint8_t>(bytes.data(), std::min<size_t>(info.size ? info.size : 80, 80)));
+		write_item_info(call, call[3], info);
 		call.ret(1);
 	});
 	registry.add("GetMenuBarInfo", 4, [this](ApiCall &call) {

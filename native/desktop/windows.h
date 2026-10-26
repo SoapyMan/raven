@@ -360,7 +360,9 @@ private:
 	void caret_sync();
 	void caret_idle();
 	// Hooks installed with SetWindowsHookEx, newest first; handles live in their own range.
-	struct Hook { uint64_t handle; int32_t id; uint64_t procedure; };
+	// A hook for one thread (thread non-zero) runs only for what happens on that thread.
+	struct Hook { uint64_t handle; int32_t id; uint64_t procedure; uint32_t thread; };
+	bool hook_applies(const Hook &hook) const;
 	std::vector<Hook> hooks;
 	uint64_t next_hook=0x7e000000;
 	bool has_hook(int32_t id) const;

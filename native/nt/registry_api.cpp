@@ -130,6 +130,23 @@ void register_registry_api(ApiRegistry &registry, KernelContext &context, Native
 				put_handle(call, call[4], key);
 			call.ret(status);
 		});
+		// SHDeleteEmptyKey removes a key only while it holds neither subkeys nor values.
+		registry.add("SHDeleteEmptyKey" + suffix, 2, [&hive, text_of, wide, view](ApiCall &call) {
+			const auto path = view(call[0], text_of(call, call[1], wide), 0);
+			uint64_t key = 0;
+			if (const auto status = hive.open(call[0], path, key)) {
+				call.ret(status);
+				return;
+			}
+			NativeRegistry::Info info;
+			const auto status = hive.info(key, info);
+			hive.close(key);
+			if (status || info.subkeys || info.values) {
+				call.ret(status ? status : 1020);
+				return;
+			}
+			call.ret(hive.remove_key(call[0], path));
+		});
 		registry.add("RegOpenKey" + suffix, 3, [&hive, text_of, put_handle, wide, view](ApiCall &call) {
 			if (!call[2]) {
 				call.ret(error_invalid_parameter);
@@ -694,6 +711,28 @@ void register_registry_api(ApiRegistry &registry, KernelContext &context, Native
 		hive.close(key);
 		call.ret(1);
 	});
+	// Transactions take effect at once (see CreateTransaction), so each transacted key call is its plain form: (name, plain form, its
+	// arguments, the ones the plain form takes from the first).
+	struct Transacted {
+		const char *name, *plain;
+		size_t arguments, taken;
+	};
+	const Transacted transacted[] = {{"RegOpenKeyTransactedW", "RegOpenKeyExW", 7, 5}, {"RegOpenKeyTransactedA", "RegOpenKeyExA", 7, 5},
+		{"RegCreateKeyTransactedW", "RegCreateKeyExW", 11, 9}, {"RegCreateKeyTransactedA", "RegCreateKeyExA", 11, 9},
+		{"RegDeleteKeyTransactedW", "RegDeleteKeyExW", 6, 4}};
+	for (const auto &entry : transacted) {
+		const auto plain = registry.find(entry.plain);
+		if (!plain)
+			continue;
+		registry.add(entry.name, entry.arguments, [handler = plain->second, taken = entry.taken](ApiCall &call) {
+			std::vector<uint64_t> words;
+			for (size_t index = 0; index < taken; ++index)
+				words.push_back(call[index]);
+			ApiCall inner(call.process, call.environment, words);
+			handler(inner);
+			call.ret(inner.result);
+		});
+	}
 	(void)error_no_more_items;
 	(void)error_file_not_found;
 }

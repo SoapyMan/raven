@@ -1032,3 +1032,4 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 #include "ucrtbase_cpp.c"
 #include "ucrtbase_cxx.c"
 #include "ucrtbase_more.c"
+#include "ucrtbase_fiber.c"

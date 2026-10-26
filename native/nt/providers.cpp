@@ -1789,6 +1789,11 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	adopt_inherited(kernel_objects,launch->inherited);
 	std::array<uint64_t,3> standard_handles{UINT64_MAX,UINT64_MAX,UINT64_MAX};
 	for (size_t i=0;i<3;++i) {
+		// A standard handle the creator also let the child inherit is that inherited object, under its own value.
+		const auto shared=std::find_if(launch->inherited.begin(),launch->inherited.end(),[&](const InheritedHandle &record) {
+			return (record.standard & (1U << i)) && kernel_objects.object(record.handle);
+		});
+		if (shared!=launch->inherited.end()) { standard_handles[i]=shared->handle; continue; }
 		if (launch->standard_fds[i]<0) continue;
 		const auto inherited=kernel_objects.inherit_file(launch->standard_fds[i]);
 		if (inherited.status) throw std::runtime_error("cannot inherit native standard file");
@@ -2366,6 +2371,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	register_wave_api(api_registry, kernel);
 	register_mmio_api(api_registry, kernel);
 	register_crypt32_api(api_registry, kernel);
+	register_bcrypt_api(api_registry, kernel);
 	register_process_info_api(api_registry, kernel);
 	register_font_service(api_registry, kernel);
 	register_canvas_service(api_registry, kernel);

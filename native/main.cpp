@@ -205,7 +205,7 @@ int main(int argc, char **argv)
 	}
 	// A program started by another one carries the command line and the directory its parent chose.
 	std::optional<std::string> command_line_text, directory_text;
-	int environment_fd=-1,suspended_fd=-1,inherit_fd=-1,handle_channel_fd=-1;
+	int environment_fd=-1,suspended_fd=-1,inherit_fd=-1,handle_channel_fd=-1,guest_error_fd=2;
 	bool elevated=false,noninteractive=false;
 	for (bool more=run_process;more && argc>first_file;) {
 		const std::string_view option=argv[first_file];
@@ -218,6 +218,15 @@ int main(int argc, char **argv)
 		}
 		else if (option.starts_with("--inherit-fd=")) inherit_fd=std::atoi(std::string(option.substr(13)).c_str());
 		else if (option.starts_with("--handle-channel-fd=")) handle_channel_fd=std::atoi(std::string(option.substr(20)).c_str());
+		else if (option.starts_with("--diagnostics-fd=")) {
+			// The runtime's own messages go where the parent runtime writes its own; the program's standard error moves out of their way
+			// to a descriptor of its own, so nothing the runtime says ever lands in a pipe the program reads.
+			const int diagnostics=std::atoi(std::string(option.substr(17)).c_str());
+			const int moved=::fcntl(2,F_DUPFD_CLOEXEC,64);
+			if (moved>=0 && ::dup2(diagnostics,2)==2) guest_error_fd=moved;
+			else if (moved>=0) ::close(moved);
+			::close(diagnostics);
+		}
 #ifdef RAVEN_NATIVE_CPU
 		else if (option.starts_with("--exit-code-fd=")) {
 			exit_code_fd=std::atoi(std::string(option.substr(15)).c_str());
@@ -623,7 +632,7 @@ int main(int argc, char **argv)
 							std::memcpy(block.data(),bytes.data(),block.size()*2);
 							launch->environment=std::move(block);
 						}
-						if (inherited_stdio) launch->standard_fds={0,1,2};
+						if (inherited_stdio) launch->standard_fds={0,1,guest_error_fd};
 					}
 					if (!entry->image.is_64)
 						return native_result(raven::run_native_process_x86(modules, *entry, bootstrap.string(), timeout, launch, presentation, source),true,inherited_stdio);

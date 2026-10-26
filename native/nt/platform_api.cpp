@@ -451,6 +451,9 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(s_ok);
 	});
+	// The lock keeps an object alive for clients in other processes. Nothing here hands an object outside the process, so its own references
+	// are all that keep it, and locking or unlocking leaves it as it is.
+	registry.add("CoLockObjectExternal", 3, [](ApiCall &call) { call.ret(call[0] ? s_ok : 0x80070057U); });
 	// APTTYPE: STA 0, MTA 1, main STA 3. A thread that never initialized COM is in the multithreaded apartment implicitly while any
 	// thread of the process holds it (qualifier APTTYPEQUALIFIER_IMPLICIT_MTA).
 	registry.add("CoGetApartmentType", 2, [com, &context](ApiCall &call) {
@@ -502,6 +505,10 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	});
 	registry.add("CoUninitialize", 0, uninitialize);
 	registry.add("OleUninitialize", 0, uninitialize);
+	// The dialog a program shows when the application it calls into is busy: no other application serves its calls here, so the
+	// answer is to try again at once (OLEUI_BZ_RETRYNOW).
+	for (const char *name : {"OleUIBusyW", "OleUIBusyA"})
+		registry.add(name, 1, [](ApiCall &call) { call.ret(118); });
 	registry.add("CoCreateInstance", 5, [](ApiCall &call) {
 		if (std::getenv("RAVEN_TRACE_API")) {
 			const auto bytes = call.read(call[0], 16);
@@ -798,15 +805,6 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 			call.ret(random_bytes(call, call[0], size_t(call[1])));
 		else
 			call.ret(1);
-	});
-	registry.add("BCryptGenRandom", 4, [random_bytes](ApiCall &call) {
-		// Only the system generator exists: the pseudo handle BCRYPT_RNG_ALG_HANDLE (0x81), or no handle with the preferred-generator flag.
-		const bool generator = call[0] == 0x81 || (!call[0] && (call.u32(3) & 2));
-		if (!generator || !call[1]) {
-			call.ret(0xc0000008U);
-			return;
-		}
-		call.ret(random_bytes(call, call[1], call.u32(2)) ? 0 : 0xc0000001U);
 	});
 	// Windows Runtime strings: a string handle points at a header (flags, length, pointer to the characters). A copy owns its characters in the
 	// same block; a reference points at the caller's.

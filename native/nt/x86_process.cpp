@@ -37,6 +37,7 @@
 #include <array>
 #include <chrono>
 #include <map>
+#include <sstream>
 #include <set>
 #include <functional>
 #include <filesystem>
@@ -95,6 +96,8 @@ constexpr std::array shared_exports{
 	NativeX86System::Export{"user32.dll", "RegisterRawInputDevices", 3},
 	NativeX86System::Export{"user32.dll", "GetRawInputDeviceInfoA", 4}, NativeX86System::Export{"user32.dll", "GetRawInputDeviceInfoW", 4},
 	NativeX86System::Export{"user32.dll", "IsIconic", 1}, NativeX86System::Export{"user32.dll", "MonitorFromPoint", 3},
+	NativeX86System::Export{"user32.dll", "WindowFromPoint", 2}, NativeX86System::Export{"user32.dll", "ChildWindowFromPoint", 3},
+	NativeX86System::Export{"user32.dll", "ChildWindowFromPointEx", 4}, NativeX86System::Export{"user32.dll", "RealChildWindowFromPoint", 3},
 	NativeX86System::Export{"user32.dll", "OffsetRect", 3}, NativeX86System::Export{"user32.dll", "QueryDisplayConfig", 6},
 	NativeX86System::Export{"gdi32.dll", "CreateBitmap", 5}, NativeX86System::Export{"gdi32.dll", "StretchBlt", 11},
 };
@@ -103,6 +106,8 @@ constexpr std::array shared_exports{
 // export lists. Anything with a pointer-width structure, a 64-bit argument or a callback into x64 conventions is not here.
 constexpr std::string_view shared_allowed[] = {
 	"WaitForSingleObjectEx",
+	// ICONINFO is read at the program's pointer width.
+	"CreateIconIndirect",
 	"EnumProcesses", "K32EnumProcesses",
 	"QueryFullProcessImageNameW", "QueryFullProcessImageNameA",
 	"NtQueryInformationProcess", "NtReadVirtualMemory", "NtWriteVirtualMemory", "ReadProcessMemory", "WriteProcessMemory", "OpenProcess",
@@ -190,7 +195,7 @@ const std::map<std::string_view, uint32_t> &desktop_arguments()
 	std::map<std::string_view, uint32_t> counts{
 		{"AdjustWindowRect",3},{"AdjustWindowRectEx",4},{"BeginPaint",2},{"CallWindowProcW",5},{"ClientToScreen",2},
 		{"CopyIcon",1},{"CreateIconFromResourceEx",7},{"CreateWindowExW",12},{"DefWindowProcW",4},{"DestroyIcon",1},
-		{"DestroyMenu",1},{"DestroyWindow",1},{"DispatchMessageW",1},{"DrawIconEx",9},{"EndPaint",2},{"FillRect",3},
+		{"DestroyMenu",1},{"DestroyWindow",1},{"DispatchMessageW",1},{"DrawIcon",4},{"DrawIconEx",9},{"EndPaint",2},{"FillRect",3},
 		{"FrameRect",3},{"GetActiveWindow",0},{"GetClassInfoExW",3},{"GetClassInfoW",3},{"GetClassLongA",2},
 		{"GetClassLongPtrA",2},{"GetClassLongPtrW",2},{"GetClassLongW",2},{"GetClassNameA",3},{"GetClassNameW",3},
 		{"GetClientRect",2},{"GetDC",1},{"GetDlgCtrlID",1},{"GetDlgItem",2},{"GetFocus",0},{"GetIconInfo",2},
@@ -731,6 +736,14 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	adopt_inherited(kernel_objects, launch->inherited);
 	std::array<uint64_t, 3> standard_handles{UINT64_MAX, UINT64_MAX, UINT64_MAX};
 	for (size_t i = 0; i < 3; ++i) {
+		// A standard handle the creator also let the child inherit is that inherited object, under its own value.
+		const auto shared = std::find_if(launch->inherited.begin(), launch->inherited.end(), [&](const InheritedHandle &record) {
+			return (record.standard & (1U << i)) && kernel_objects.object(record.handle);
+		});
+		if (shared != launch->inherited.end()) {
+			standard_handles[i] = shared->handle;
+			continue;
+		}
 		if (launch->standard_fds[i] < 0)
 			continue;
 		const auto inherited = kernel_objects.inherit_file(launch->standard_fds[i]);
@@ -813,7 +826,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		"FreeEnvironmentStringsW", "GetEnvironmentStringsW", "GetVersion", "GetFileAttributesA", "CreateFileW", "DeleteFileW",
 		"GetEnvironmentVariableA", "GetFileInformationByHandle", "MultiByteToWideChar", "QueryPerformanceCounter", "QueryPerformanceFrequency", "ReadFile",
 		"SetFilePointer", "GetFileSizeEx", "FlushFileBuffers",
-		"MonitorFromPoint"};
+		"MonitorFromPoint", "WindowFromPoint", "ChildWindowFromPoint", "ChildWindowFromPointEx", "RealChildWindowFromPoint"};
 	for (const auto &item : shared_exports)
 		shared_names.insert(item.name);
 	for (const auto name : shared_allowed)
@@ -842,13 +855,16 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				return result;
 			const auto api = found->second.first;
 			if (getenv("RAVEN_TRACE_X86")) {
+				std::ostringstream line;
+				if (getenv("RAVEN_TRACE_X86_THREADS"))
+					line << '[' << environment.thread_id() << "] ";
 				// Argument words only reflect stdcall exports; cdecl and variadic entries report none.
-				std::cerr << "api " << api << '(' << std::hex;
+				line << "api " << api << '(' << std::hex;
 				const auto count = found->second.second / 4;
 				if (count)
 					for (const auto value : process.api_arguments(count))
-						std::cerr << ' ' << value;
-				std::cerr << std::dec << " )";
+						line << ' ' << value;
+				line << std::dec << " )";
 				// RAVEN_TRACE_X86=2 also shows every argument that points at readable text, narrow or wide.
 				if (const char *level = getenv("RAVEN_TRACE_X86"); level && level[0] == '2' && count)
 					for (const auto value : process.api_arguments(count)) {
@@ -869,7 +885,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 								text.push_back(char(character));
 							}
 							if (text.size() >= 3)
-								std::cerr << " <" << text << '>';
+								line << " <" << text << '>';
 						} catch (const std::runtime_error &) {
 						}
 					}
@@ -892,10 +908,10 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 								} catch (const std::runtime_error &) {
 									bytes = process.read_memory(words[index], 200);
 								}
-								std::cerr << " [" << index << "]=\"";
+								line << " [" << index << "]=\"";
 								for (size_t at = 0; at + 1 < bytes.size() && (bytes[at] || bytes[at + 1]); at += 2)
-									std::cerr << (bytes[at + 1] == 0 && bytes[at] >= 32 && bytes[at] < 127 ? char(bytes[at]) : '?');
-								std::cerr << '"';
+									line << (bytes[at + 1] == 0 && bytes[at] >= 32 && bytes[at] < 127 ? char(bytes[at]) : '?');
+								line << '"';
 							} catch (...) {}
 						}
 					}
@@ -906,7 +922,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 					const uint64_t caller = uint64_t(stack[0]) | uint64_t(stack[1]) << 8 | uint64_t(stack[2]) << 16 | uint64_t(stack[3]) << 24;
 					for (const auto &[module_name, module] : modules.all())
 						if (caller >= module->loaded.base() && caller < module->loaded.base() + module->image.image_size)
-							std::cerr << " from " << module_name << '+' << std::hex << caller - module->loaded.base() << std::dec;
+							line << " from " << module_name << '+' << std::hex << caller - module->loaded.base() << std::dec;
 				} catch (const std::runtime_error &) {
 				}
 				// The names a program resolves at run time are what a diagnosis needs most.
@@ -917,14 +933,16 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 						try {
 							const bool wide = api == "LoadLibraryW";
 							const auto bytes = process.read_memory(text, 64);
-							std::cerr << " \"";
+							line << " \"";
 							for (size_t at = 0; at + (wide ? 1 : 0) < bytes.size() && bytes[at] && (!wide || at % 2 == 0); at += wide ? 2 : 1)
-								std::cerr << char(bytes[at]);
-							std::cerr << '"';
+								line << char(bytes[at]);
+							line << '"';
 						} catch (...) {}
 					}
 				}
-				std::cerr << '\n';
+				line << '\n';
+				// One write per line, so the traces of a program and of the programs it starts stay readable side by side.
+				std::cerr << line.str() << std::flush;
 			}
 			if (api == "VerSetConditionMask" || api == "VerifyVersionInfoW") {
 				// The 64-bit condition mask is two words on the stack of a 32-bit program, and the handler takes it whole.
@@ -977,11 +995,14 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			}
 			// Exceptions are dispatched in the program, by its vectored handlers and along the frames its threads register, by the C runtime
 			// component: the call goes on there with the same arguments, so handlers that resume elsewhere, as a C++ catch does, never return
-			// to the runtime. The vectored handler lists live there too.
+			// to the runtime. The vectored handler lists live there too, and fibers, which the thread switches by itself.
 			static const std::map<std::string_view, std::string_view> in_runtime{{"RaiseException", "raven_raise_exception"},
 				{"RtlUnwind", "raven_unwind"}, {"AddVectoredExceptionHandler", "raven_add_vectored_exception"},
 				{"AddVectoredContinueHandler", "raven_add_vectored_continue"}, {"RemoveVectoredExceptionHandler", "raven_remove_vectored"},
-				{"RemoveVectoredContinueHandler", "raven_remove_vectored"}};
+				{"RemoveVectoredContinueHandler", "raven_remove_vectored"}, {"CreateFiber", "raven_create_fiber"},
+				{"CreateFiberEx", "raven_create_fiber_ex"}, {"ConvertThreadToFiber", "raven_convert_thread_to_fiber"},
+				{"ConvertThreadToFiberEx", "raven_convert_thread_to_fiber_ex"}, {"ConvertFiberToThread", "raven_convert_fiber_to_thread"},
+				{"SwitchToFiber", "raven_switch_to_fiber"}, {"DeleteFiber", "raven_delete_fiber"}, {"IsThreadAFiber", "raven_is_thread_a_fiber"}};
 			if (const auto routed = in_runtime.find(api); routed != in_runtime.end())
 				if (const auto component = modules.all().find("ucrtbase.dll"); component != modules.all().end()) {
 					const std::string_view wanted = routed->second;
@@ -1021,15 +1042,21 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				result = process.resume(budget);
 				continue;
 			}
-			if (api == "MonitorFromPoint") {
-				// A POINT passed by value is two words here and one packed word in the shared handler.
-				const auto words = process.api_arguments(3);
-				const auto entry = shared_api.find("MonitorFromPoint");
+			// A POINT passed by value is two words here and one packed word in the shared handler: the words of each call and where its
+			// point starts.
+			static const std::map<std::string_view, std::pair<size_t, size_t>> point_calls{{"MonitorFromPoint", {3, 0}}, {"WindowFromPoint", {2, 0}},
+				{"ChildWindowFromPoint", {3, 1}}, {"ChildWindowFromPointEx", {4, 1}}, {"RealChildWindowFromPoint", {3, 1}}};
+			if (const auto point = point_calls.find(api); point != point_calls.end()) {
+				auto words = process.api_arguments(point->second.first);
+				const auto entry = shared_api.find(std::string(api));
 				if (!entry) {
 					std::cerr << "raven: unimplemented native x86 API " << api << '\n';
 					return result;
 				}
-				ApiCall inner(process, environment, {uint64_t(uint32_t(words[1])) << 32 | uint32_t(words[0]), words[2]});
+				const size_t at = point->second.second;
+				words[at] = uint64_t(uint32_t(words[at + 1])) << 32 | uint32_t(words[at]);
+				words.erase(words.begin() + ptrdiff_t(at + 1));
+				ApiCall inner(process, environment, words);
 				entry->second(inner);
 				process.return_api(inner.result);
 				budget = remaining();
@@ -1173,6 +1200,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	register_pipe_api(shared_api, kernel);
 	register_job_api(shared_api, kernel);
 	register_crypt32_api(shared_api, kernel);
+	register_bcrypt_api(shared_api, kernel);
 	register_process_info_api(shared_api, kernel);
 	register_font_service(shared_api, kernel);
 	// A 32-bit program runs under WOW64 on the 64-bit system Raven presents, its System32 being SysWOW64 until it switches redirection

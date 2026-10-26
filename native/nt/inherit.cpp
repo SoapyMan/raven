@@ -73,6 +73,7 @@ std::vector<uint8_t> serialize_inherited(const std::vector<InheritedHandle> &han
 		put<uint64_t>(bytes, item.size);
 		put_text(bytes, item.text.data(), item.text.size() * 2);
 		put_text(bytes, item.path.data(), item.path.size());
+		put<uint32_t>(bytes, item.standard);
 	}
 	return bytes;
 }
@@ -94,6 +95,7 @@ std::vector<InheritedHandle> parse_inherited(std::span<const uint8_t> bytes)
 		const auto text = reader.text();
 		item.text.assign(reinterpret_cast<const char16_t *>(text.data()), text.size() / 2);
 		item.path = reader.text();
+		item.standard = reader.get<uint32_t>();
 		handles.push_back(std::move(item));
 	}
 	return handles;

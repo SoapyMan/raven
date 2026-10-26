@@ -220,6 +220,8 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
 		owned.push_back(file);
 		arguments.push_back("--inherit-fd=" + std::to_string(pass(file)));
 	}
+	// The runtime's messages in the child go where this runtime writes its own, apart from the program's standard error.
+	arguments.push_back("--diagnostics-fd=" + std::to_string(pass(2)));
 	// The child writes its exit code into a file both share.
 	const int exit_file = ::memfd_create("raven-exit", MFD_CLOEXEC);
 	const int exit_kept = exit_file < 0 ? -1 : ::fcntl(exit_file, F_DUPFD_CLOEXEC, 0);

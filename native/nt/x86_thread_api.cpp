@@ -36,6 +36,7 @@ uint32_t NativeX86Threads::wait(uint64_t handle, uint32_t milliseconds)
 	std::optional<std::chrono::steady_clock::time_point> wake;
 	if (milliseconds != UINT32_MAX)
 		wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
+	bool looked = false;
 	for (;;) {
 		const int state = objects.signaled(handle, id);
 		if (state < 0) {
@@ -45,9 +46,22 @@ uint32_t NativeX86Threads::wait(uint64_t handle, uint32_t milliseconds)
 		if (state == 1 && objects.try_consume(handle, id)) {
 			return 0;
 		}
-		if (milliseconds == 0 || (wake && std::chrono::steady_clock::now() >= *wake))
+		const auto ready = [&] { return objects.signaled(handle, id) == 1; };
+		if (milliseconds == 0 || (wake && std::chrono::steady_clock::now() >= *wake)) {
+			// Once, a wait that has run out still takes in what the host finished meanwhile.
+			if (!looked) {
+				looked = true;
+				if (threads.block(ready, std::chrono::steady_clock::now()))
+					continue;
+			}
 			return wait_timeout;
-		threads.block([&] { return objects.signaled(handle, id) == 1; }, wake);
+		}
+		// An object that turns signaled by itself, such as a timer, is looked at again when it says.
+		auto until = wake;
+		if (const auto object = objects.object(handle))
+			if (const auto due = object->wakes_at(); due && (!until || *due < *until))
+				until = due;
+		threads.block(ready, until);
 	}
 }
 
@@ -66,7 +80,8 @@ bool NativeX86Threads::dispatch(std::string_view name)
 	const auto args = process.api_arguments(known->second);
 	if (name == "CreateThread") {
 		const uint32_t flags = uint32_t(args[4]);
-		if (args[0] || (flags & ~uint32_t(0x4 | 0x10000))) {
+		// Security attributes only govern inheritance into child processes, which a thread handle of this process never reaches.
+		if (flags & ~uint32_t(0x4 | 0x10000)) {
 			environment.set_last_error(87);
 			process.return_api(0);
 			return true;

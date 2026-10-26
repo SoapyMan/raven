@@ -399,6 +399,9 @@ bool NativeProfile::dispatch(std::string_view name)
 
 void register_profile_api(ApiRegistry &registry, NativeProfile &profile)
 {
+	// The system's win.ini: a new installation keeps none of the values programs read there, so each one reads as the default given.
+	for (const char *name : {"GetProfileIntW", "GetProfileIntA"})
+		registry.add(name, 3, [](ApiCall &call) { call.ret(call.u32(2)); });
 	registry.add("GetPrivateProfileSectionNamesW", 3, [&profile](ApiCall &call) {
 		uint64_t result = 0;
 		profile.execute("GetPrivateProfileSectionNamesW", {call[0], call[1], call[2]}, result);

@@ -1,0 +1,3 @@
+LIBRARY ravenhost.dll
+EXPORTS
+	RavenTrace@4

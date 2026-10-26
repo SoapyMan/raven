@@ -226,6 +226,9 @@ Started start_overlapped(KernelContext &context, size_t width, const std::shared
 	put_word(context.process, overlapped, status_pending, width);
 	put_word(context.process, overlapped + width, 0, width);
 	const bool native = event != UINT64_MAX;
+	// Starting a transfer clears its event, so the event tells of this transfer and not of an earlier one.
+	if (const uint64_t handle = native ? event : get_word(context.process, overlapped + 2 * width + 8, width); handle & ~uint64_t(1))
+		context.objects.set_event(handle & ~uint64_t(1), false);
 	uint32_t error = 0;
 	uint64_t bytes = 0;
 	if (attempt(context, *pipe, transfer, error, bytes) == 0) {

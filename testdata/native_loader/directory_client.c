@@ -4,6 +4,8 @@
 typedef struct { ULONG_PTR status, information; } IoStatus;
 typedef struct { USHORT length, maximum; WCHAR *buffer; } UnicodeString;
 typedef LONG (WINAPI *QueryDirectory)(HANDLE,HANDLE,void *,void *,IoStatus *,void *,ULONG,ULONG,BYTE,UnicodeString *,BYTE);
+// The same call with its BOOLEAN arguments as whole words: callers leave the bytes above the flag as they happen to be.
+typedef LONG (WINAPI *QueryDirectoryWords)(HANDLE,HANDLE,void *,void *,IoStatus *,void *,ULONG,ULONG,ULONG,UnicodeString *,ULONG);
 
 #define CHECK(code, condition) do { if (!(condition)) return code; } while (0)
 
@@ -92,6 +94,14 @@ int raven_entry(void)
 	UnicodeString missing = {14,14,L"missing"};
 	CHECK(28, query(handle,0,0,0,&io,output.bytes,1024,2,0,&missing,0) == (LONG)0xc000000f);
 	CHECK(29, query(handle,0,0,0,&io,output.bytes,1024,2,0,0,0) == (LONG)0x80000006 && CloseHandle(handle));
+	QueryDirectoryWords words = (QueryDirectoryWords)query;
+	handle = CreateFileW(root,FILE_LIST_DIRECTORY,FILE_SHARE_READ,0,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS,0);
+	CHECK(32, words(handle,0,0,0,&io,output.bytes,128,3,0xd7ae0000,0,0xd7ae0001) == 0);
+	unsigned calls = 1;
+	LONG status;
+	while ((status = words(handle,0,0,0,&io,output.bytes,128,3,0xd7ae0000,0,0xd7ae0000)) == 0 && calls < 16)
+		++calls;
+	CHECK(33, status == (LONG)0x80000006 && calls >= 2 && calls < 16 && CloseHandle(handle));
 	for (unsigned i = 0; i < 4; ++i) {
 		join(path,directory,names[i]);
 		CHECK(30, DeleteFileW(path));

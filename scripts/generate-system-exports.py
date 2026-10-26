@@ -18,7 +18,7 @@ import sys
 LIBRARIES = """advapi32 bcrypt comctl32 comdlg32 crypt32 dbghelp dwmapi gdi32 imm32 kernel32 ole32 oleaut32 psapi
 sensapi setupapi shell32 shlwapi user32 uxtheme version wininet winmm wintrust ws2_32 wsock32
 bcryptprimitives cfgmgr32 dhcpcsvc dnsapi hid imagehlp iphlpapi ntdll ktmw32 msimg32 mswsock ncrypt netapi32 opengl32 glu32 powrprof pdh runtimeobject winspool ravenhost secur32 shcore userenv wevtapi winhttp wtsapi32
-atlthunk oleacc odbccp32 usp10 sfc dsound combase wer uiautomationcore lz32 loadperf mpr shfolder wldap32""".split()
+atlthunk oleacc odbccp32 usp10 sfc dsound combase wer uiautomationcore lz32 loadperf mpr shfolder wldap32 oledlg""".split()
 # Real exports whose names begin with an underscore, which the generic filter drops.
 # The interlocked functions are compiler intrinsics in the import libraries, yet kernel32 exports them and programs import them by name.
 INTERLOCKED = {"InterlockedIncrement": 1, "InterlockedDecrement": 1, "InterlockedExchange": 2, "InterlockedExchangeAdd": 2,

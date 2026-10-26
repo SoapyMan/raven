@@ -1167,6 +1167,103 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("GetTimeFormatW", 6, [format_date_time](ApiCall &call) { format_date_time(call, false, 1, 2, 3, 4, 5); });
 	registry.add("GetTimeFormatEx", 6, [format_date_time](ApiCall &call) { format_date_time(call, false, 1, 2, 3, 4, 5); });
 
+	// GetNumberFormat: a plain number ("-1234.5") laid out with the locale's digits after the separator, grouping and negative form. The
+	// locale is the English (United States) one the dates use; a NUMBERFMT the caller passes replaces it as a whole.
+	const auto format_number = [](ApiCall &call) {
+		const uint32_t flags = call.u32(1);
+		const auto value = call.wide(call[2]);
+		uint32_t digits = 2, leading_zero = 1, grouping = 3, negative_order = 1;
+		std::u16string decimal = u".", thousand = u",";
+		if (call[3]) {
+			if (flags) {
+				call.fail(1004);
+				return;
+			}
+			const size_t width = call.pointer_width();
+			digits = call.load<uint32_t>(call[3]);
+			leading_zero = call.load<uint32_t>(call[3] + 4);
+			grouping = call.load<uint32_t>(call[3] + 8);
+			decimal = call.wide(call.load_pointer(call[3] + 12 + (width == 8 ? 4 : 0)), 4);
+			thousand = call.wide(call.load_pointer(call[3] + 12 + width + (width == 8 ? 4 : 0)), 4);
+			negative_order = call.load<uint32_t>(call[3] + 12 + 2 * width + (width == 8 ? 4 : 0));
+			if (digits > 9 || leading_zero > 1 || negative_order > 4 || (grouping > 9 && grouping != 32)) {
+				call.fail(87);
+				return;
+			}
+		}
+		// The value is digits with an optional leading minus and at most one decimal point.
+		const bool negative = !value.empty() && value[0] == u'-';
+		std::u16string whole, fraction;
+		bool point = false;
+		for (size_t index = negative ? 1 : 0; index < value.size(); ++index) {
+			const auto character = value[index];
+			if (character == u'.' && !point)
+				point = true;
+			else if (character >= u'0' && character <= u'9')
+				(point ? fraction : whole).push_back(character);
+			else {
+				call.fail(87);
+				return;
+			}
+		}
+		if (whole.empty() && fraction.empty()) {
+			call.fail(87);
+			return;
+		}
+		// Digits past the ones shown round half up into the rest.
+		const bool round_up = fraction.size() > digits && fraction[digits] >= u'5';
+		fraction.resize(digits, u'0');
+		if (round_up) {
+			auto number = whole + fraction;
+			size_t index = number.size();
+			while (index > 0 && number[index - 1] == u'9')
+				number[--index] = u'0';
+			if (index == 0)
+				number.insert(number.begin(), u'1');
+			else
+				++number[index - 1];
+			whole = number.substr(0, number.size() - digits);
+			fraction = number.substr(number.size() - digits);
+		}
+		whole.erase(0, std::min(whole.find_first_not_of(u'0'), whole.size()));
+		std::u16string grouped;
+		if (whole.empty()) {
+			if (leading_zero || !digits)
+				grouped = u"0";
+		} else {
+			// Grouping 32 is three digits next to the separator and two in every group beyond.
+			size_t size = grouping == 32 ? 3 : grouping, count = 0;
+			for (size_t index = whole.size(); index > 0; --index) {
+				if (size && count == size) {
+					grouped.insert(0, thousand);
+					count = 0;
+					if (grouping == 32)
+						size = 2;
+				}
+				grouped.insert(grouped.begin(), whole[index - 1]);
+				++count;
+			}
+		}
+		std::u16string text = grouped + (digits ? decimal + fraction : u"");
+		if (negative && text.find_first_not_of(u"0.,") != std::u16string::npos) {
+			static constexpr std::u16string_view before[] = {u"(", u"-", u"- ", u"", u""}, after[] = {u")", u"", u"", u"-", u" -"};
+			text = std::u16string(before[negative_order]) + text + std::u16string(after[negative_order]);
+		}
+		const int32_t capacity = call.i32(5);
+		if (!capacity) {
+			call.ret(text.size() + 1);
+			return;
+		}
+		if (size_t(capacity) <= text.size()) {
+			call.fail(122);
+			return;
+		}
+		call.put_wide(call[4], text, size_t(capacity));
+		call.ret(text.size() + 1);
+	};
+	registry.add("GetNumberFormatW", 6, format_number);
+	registry.add("GetNumberFormatEx", 6, format_number);
+
 	// The message comes from the text given, a module's message table or the system's; its inserts from an array of arguments or from the
 	// caller's va_list, one pointer-wide slot each.
 	const auto format_message = [&](ApiCall &call, bool wide) {

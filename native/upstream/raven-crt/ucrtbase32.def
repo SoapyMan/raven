@@ -23,6 +23,14 @@ EXPORTS
 	??_7exception@@6B@ = raven_exception_vtable DATA
 	raven_raise_exception = raven_raise_exception@16
 	raven_unwind = raven_unwind@16
+	raven_create_fiber = raven_create_fiber@12
+	raven_create_fiber_ex = raven_create_fiber_ex@20
+	raven_convert_thread_to_fiber = raven_convert_thread_to_fiber@4
+	raven_convert_thread_to_fiber_ex = raven_convert_thread_to_fiber_ex@8
+	raven_convert_fiber_to_thread = raven_convert_fiber_to_thread@0
+	raven_switch_to_fiber = raven_switch_to_fiber@4
+	raven_delete_fiber = raven_delete_fiber@4
+	raven_is_thread_a_fiber = raven_is_thread_a_fiber@0
 	raven_add_vectored_exception = raven_add_vectored_exception@8
 	raven_add_vectored_continue = raven_add_vectored_continue@8
 	raven_remove_vectored = raven_remove_vectored@4

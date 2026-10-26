@@ -1,5 +1,6 @@
 #include "elevation.h"
 #include "access_token.h"
+#include "file_objects.h"
 #include "kernel_context.h"
 #include "text.h"
 
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 
 namespace raven {
@@ -817,13 +819,29 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 		call.write(call[2], sid);
 		call.ret(1);
 	});
-	// Every object reports the same descriptor: owned by the account, readable and usable by everyone. It comes as one self-relative block
-	// that the program frees with LocalFree, and the owner, group and ACL pointers point inside it.
-	const auto security_info = [&context](ApiCall &call) {
+	// A descriptor as one self-relative block that the program frees with LocalFree: the owner, group and ACL pointers point inside it.
+	struct Entry {
+		uint8_t flags;
+		uint32_t mask;
+		std::vector<uint8_t> sid;
+	};
+	const auto answer_descriptor = [&context](ApiCall &call, const std::vector<uint8_t> &owner, const std::vector<uint8_t> &group,
+		const std::vector<Entry> &entries, uint16_t inheritance) {
 		const uint32_t wanted = call.u32(2);
-		const auto owner = user_sid(), group = make_sid(5, {21, 1000, 1000, 1000, 513}), everyone = make_sid(1, {0});
-		// ACL: the 8 byte header and one access allowed entry (header, mask, SID).
-		const uint16_t ace_size = uint16_t(8 + everyone.size()), acl_size = uint16_t(8 + ace_size);
+		std::vector<uint8_t> acl(acl_header);
+		acl[0] = 2;
+		for (const auto &entry : entries) {
+			const uint16_t size = uint16_t(8 + entry.sid.size());
+			const size_t at = acl.size();
+			acl.resize(at + size);
+			acl[at + 1] = entry.flags;
+			std::memcpy(acl.data() + at + 2, &size, 2);
+			std::memcpy(acl.data() + at + 4, &entry.mask, 4);
+			std::memcpy(acl.data() + at + 8, entry.sid.data(), entry.sid.size());
+		}
+		const uint16_t acl_size = uint16_t(acl.size()), count = uint16_t(entries.size());
+		std::memcpy(acl.data() + 2, &acl_size, 2);
+		std::memcpy(acl.data() + 4, &count, 2);
 		std::vector<uint8_t> block(20);
 		const auto place = [&](const std::vector<uint8_t> &bytes) {
 			const uint32_t at = uint32_t(block.size());
@@ -832,17 +850,8 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 				block.push_back(0);
 			return at;
 		};
-		std::vector<uint8_t> acl(acl_size);
-		acl[0] = 2;
-		std::memcpy(acl.data() + 2, &acl_size, 2);
-		const uint16_t one = 1;
-		std::memcpy(acl.data() + 4, &one, 2);
-		const uint32_t mask = 0x1f01ffU;
-		std::memcpy(acl.data() + 10, &ace_size, 2);
-		std::memcpy(acl.data() + 12, &mask, 4);
-		std::memcpy(acl.data() + 16, everyone.data(), everyone.size());
 		const uint32_t owner_at = place(owner), group_at = place(group), dacl_at = place(acl);
-		const uint16_t control = 0x8000 | 0x4;
+		const uint16_t control = 0x8000 | dacl_present | inheritance;
 		block[0] = 1;
 		std::memcpy(block.data() + 2, &control, 2);
 		std::memcpy(block.data() + 4, &owner_at, 4);
@@ -868,9 +877,61 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 			context.allocator.release(memory);
 		call.ret(0);
 	};
-	registry.add("GetSecurityInfo", 8, security_info);
+	// Objects other than files are owned by the account, and readable and usable by everyone.
+	const auto security_info = [answer_descriptor](ApiCall &call) {
+		answer_descriptor(call, user_sid(), make_sid(5, {21, 1000, 1000, 1000, 513}), {{0, 0x1f01ffU, make_sid(1, {0})}}, 0);
+	};
+	// A file or directory carries the list Windows gives it. The drive's root, Windows and the Program Files folders belong to
+	// TrustedInstaller; what an installer creates in them inherits their list and belongs to the administrators. Only those, SYSTEM and
+	// TrustedInstaller may change them, the users may read and run them, and programs such as installers check that before they trust a
+	// folder. Everywhere else the account owns what it has, with SYSTEM and the administrators.
+	const auto file_security = [answer_descriptor](ApiCall &call, std::u16string path, bool directory) {
+		if (path.starts_with(u"\\\\?\\"))
+			path.erase(0, 4);
+		for (auto &character : path)
+			character = character == u'/' ? u'\\' : character >= u'a' && character <= u'z' ? char16_t(character - 32) : character;
+		while (path.size() > 2 && path.back() == u'\\')
+			path.pop_back();
+		const auto system = make_sid(5, {18}), administrators = make_sid(5, {32, 544}), users = make_sid(5, {32, 545});
+		const auto installer = make_sid(5, {80, 956008885, 3418522649U, 1831038044, 1853292631, 2271478464U});
+		const uint32_t full = 0x1f01ffU, read_run = 0x1200a9U, modify = 0x1301bfU;
+		// Entries of a directory pass to what is made in it (objects and containers); an entry only for those does not apply to the folder.
+		const uint8_t passed = directory ? 0x3 : 0, only_below = 0xb, inherited = 0x10;
+		if (path.size() == 2 && path[1] == u':') {
+			answer_descriptor(call, installer, system, {{passed, full, administrators}, {passed, full, system}, {passed, read_run, users},
+				{0, 0x4, make_sid(5, {11})}, {only_below, modify, make_sid(5, {11})}}, 0x1000);
+			return;
+		}
+		std::u16string_view top;
+		for (const std::u16string_view folder : {u"C:\\WINDOWS", u"C:\\PROGRAM FILES", u"C:\\PROGRAM FILES (X86)"})
+			if (path.starts_with(folder) && (path.size() == folder.size() || path[folder.size()] == u'\\'))
+				top = folder;
+		if (!top.empty()) {
+			const bool own = path.size() == top.size();
+			const uint8_t from = own ? 0 : inherited;
+			std::vector<Entry> entries{{uint8_t(passed | from), full, installer}, {uint8_t(passed | from), full, system},
+				{uint8_t(passed | from), full, administrators}, {uint8_t(passed | from), read_run, users},
+				{uint8_t(passed | from), read_run, make_sid(15, {2, 1})}};
+			if (directory)
+				entries.push_back({uint8_t(only_below | from), 0x10000000U, make_sid(3, {0})});
+			answer_descriptor(call, own ? installer : administrators, system, entries, own ? 0x1400 : 0x400);
+			return;
+		}
+		answer_descriptor(call, user_sid(), make_sid(5, {21, 1000, 1000, 1000, 513}),
+			{{uint8_t(passed | inherited), full, system}, {uint8_t(passed | inherited), full, administrators},
+				{uint8_t(passed | inherited), full, user_sid()}}, 0x400);
+	};
+	// GetSecurityInfo of a file asks the handle's file.
+	registry.add("GetSecurityInfo", 8, [&objects, security_info, file_security](ApiCall &call) {
+		if (call.u32(1) == 1)
+			if (const auto file = objects.object_as<FileObject>(call[0])) {
+				file_security(call, file->dos_path, file->directory);
+				return;
+			}
+		security_info(call);
+	});
 	// A file or directory that is not there has no descriptor to give.
-	registry.add("GetNamedSecurityInfoW", 8, [&context, security_info](ApiCall &call) {
+	registry.add("GetNamedSecurityInfoW", 8, [&context, security_info, file_security](ApiCall &call) {
 		if (call.u32(1) == 1) {
 			const auto name = call.wide(call[0], 32768);
 			const auto resolved = context.paths.resolve(name);
@@ -878,6 +939,9 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 				call.ret(resolved && !resolved->parent_exists ? 3 : 2);
 				return;
 			}
+			std::error_code error;
+			file_security(call, context.paths.full(name), std::filesystem::is_directory(resolved->host, error));
+			return;
 		}
 		security_info(call);
 	});
@@ -900,6 +964,17 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 			call.store<uint16_t>(call[1], call.load<uint16_t>(call[0] + 2));
 		if (call[2])
 			call.store<uint32_t>(call[2], call.read(call[0], 1)[0]);
+		call.ret(1);
+	});
+	// Only the inheritance bits may be changed this way: automatic inheritance asked for or done, protection, and the resource manager bits.
+	registry.add("SetSecurityDescriptorControl", 3, [](ApiCall &call) {
+		const uint16_t interest = uint16_t(call.u32(1)), bits = uint16_t(call.u32(2)), allowed = 0x7f00;
+		if (!call[0] || (interest & ~allowed) || (bits & ~allowed)) {
+			call.fail(87);
+			return;
+		}
+		const uint16_t control = call.load<uint16_t>(call[0] + 2);
+		call.store<uint16_t>(call[0] + 2, uint16_t((control & ~interest) | (bits & interest)));
 		call.ret(1);
 	});
 	const auto owner_or_group = [part](ApiCall &call, size_t index, uint16_t defaulted) {

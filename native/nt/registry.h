@@ -81,6 +81,8 @@ private:
 	void seed();
 	void register_runtime_classes();
 	void register_animation_classes();
+	void register_event_logs();
+	void register_system_environment();
 	bool seeding = false;
 };
 
