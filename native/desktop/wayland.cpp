@@ -156,6 +156,7 @@ struct WaylandPresentation::State {
 	std::string source_text;
 	std::map<wl_data_offer *,std::set<std::string>> offer_mimes;
 	wl_data_offer *selection_offer=nullptr;
+	wl_data_offer *drag_offer=nullptr;
 	uint64_t selection_counter=0;
 	std::map<uint64_t,std::unique_ptr<Surface>> surfaces;
 	std::set<uint64_t> maximized;
@@ -174,6 +175,7 @@ struct WaylandPresentation::State {
 		if (output_manager) zxdg_output_manager_v1_destroy(output_manager);
 		if (data_source) wl_data_source_destroy(data_source);
 		if (selection_offer) wl_data_offer_destroy(selection_offer);
+		if (drag_offer) wl_data_offer_destroy(drag_offer);
 		if (data_device) wl_data_device_destroy(data_device);
 		if (data_manager) wl_data_device_manager_destroy(data_manager);
 		if (pointer) wl_pointer_destroy(pointer);
@@ -377,6 +379,13 @@ struct WaylandPresentation::State {
 
 	static constexpr const char *text_mimes[]={"text/plain;charset=utf-8","text/plain;charset=UTF-8","UTF8_STRING","text/plain"};
 
+	void release_drag_offer() {
+		if (!drag_offer) return;
+		offer_mimes.erase(drag_offer);
+		wl_data_offer_destroy(drag_offer);
+		drag_offer=nullptr;
+	}
+
 	void make_data_device() {
 		if (data_device || !data_manager || !seat) return;
 		data_device=wl_data_device_manager_get_data_device(data_manager,seat);
@@ -386,10 +395,18 @@ struct WaylandPresentation::State {
 				state.offer_mimes[offer].clear();
 				static const wl_data_offer_listener offers{[](void *data,wl_data_offer *offer,const char *mime) {
 					static_cast<State *>(data)->offer_mimes[offer].insert(mime);
-				},nullptr,nullptr};
+				},[](void *,wl_data_offer *,uint32_t) {},[](void *,wl_data_offer *,uint32_t) {}};
 				wl_data_offer_add_listener(offer,&offers,&state);
 			},
-			nullptr,nullptr,nullptr,nullptr,
+			// libwayland aborts on an event without a handler. Windows are no drop targets yet, so a dragged offer is only released.
+			[](void *data,wl_data_device *,uint32_t,wl_surface *,wl_fixed_t,wl_fixed_t,wl_data_offer *offer) {
+				auto &state=*static_cast<State *>(data);
+				state.release_drag_offer();
+				state.drag_offer=offer;
+			},
+			[](void *data,wl_data_device *) { static_cast<State *>(data)->release_drag_offer(); },
+			[](void *,wl_data_device *,uint32_t,wl_fixed_t,wl_fixed_t) {},
+			[](void *data,wl_data_device *) { static_cast<State *>(data)->release_drag_offer(); },
 			[](void *data,wl_data_device *,wl_data_offer *offer) {
 				auto &state=*static_cast<State *>(data);
 				if (state.selection_offer && state.selection_offer!=offer) { state.offer_mimes.erase(state.selection_offer); wl_data_offer_destroy(state.selection_offer); }
@@ -404,7 +421,7 @@ struct WaylandPresentation::State {
 		source_text.assign(text);
 		data_source=wl_data_device_manager_create_data_source(data_manager);
 		static const wl_data_source_listener listener{
-			nullptr,
+			[](void *,wl_data_source *,const char *) {},
 			[](void *data,wl_data_source *,const char *,int32_t descriptor) {
 				auto &state=*static_cast<State *>(data);
 				size_t done=0;
@@ -419,7 +436,7 @@ struct WaylandPresentation::State {
 				auto &state=*static_cast<State *>(data);
 				if (state.data_source==source) state.data_source=nullptr;
 				wl_data_source_destroy(source);
-			},nullptr,nullptr,nullptr};
+			},[](void *,wl_data_source *) {},[](void *,wl_data_source *) {},[](void *,wl_data_source *,uint32_t) {}};
 		wl_data_source_add_listener(data_source,&listener,this);
 		for (const auto *mime : text_mimes) wl_data_source_offer(data_source,mime);
 		wl_data_device_set_selection(data_device,data_source,last_serial);
