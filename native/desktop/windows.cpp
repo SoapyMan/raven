@@ -148,6 +148,31 @@ uint64_t NativeWindows::surface_dc(uint64_t handle)
 	} catch (...) { if (dc) objects.erase(dc); if (bitmap) objects.erase(bitmap); process.unmap_memory(address); throw; }
 }
 
+bool NativeWindows::blank_client(uint64_t handle) const
+{
+	const auto *window=objects.window(handle);
+	const auto *bitmap=window ? objects.bitmap(window->bitmap) : nullptr;
+	if (!window) return false;
+	if (!bitmap) return true;
+	// Only erased so far: no WM_PAINT finished on the window and no other process has drawn anything into it or one of its children.
+	if (!window->painted) {
+		bool drawn=false;
+		for (const auto drawn_window : foreign_content)
+			if (drawn_window==handle || objects.is_child(handle,drawn_window)) { drawn=true; break; }
+		if (!drawn) return true;
+	}
+	const auto pixels=bitmap->pixels();
+	const int64_t left=std::max<int64_t>(int64_t(window->x)-window->outer.left,0),top=std::max<int64_t>(int64_t(window->y)-window->outer.top,0);
+	const int64_t right=std::min<int64_t>(left+window->width,bitmap->width),bottom=std::min<int64_t>(top+window->height,bitmap->height);
+	if (pixels.size()<size_t(bitmap->width)*bitmap->height*4) return false;
+	for (int64_t y=top;y<bottom;++y) {
+		const auto *row=pixels.data()+(size_t(y)*bitmap->width+size_t(left))*4;
+		for (int64_t x=left;x<right;++x,row+=4)
+			if (row[0] | row[1] | row[2] | row[3]) return false;
+	}
+	return true;
+}
+
 void NativeWindows::present(uint64_t handle, bool force)
 {
 	// The desktop is the screen itself; guest drawing on it never becomes a host window.
@@ -174,10 +199,14 @@ void NativeWindows::present(uint64_t handle, bool force)
 				break;
 			}
 		}
+		// A window whose client area nothing reached yet would show as a black rectangle too: a program that draws it from another
+		// process, as a browser's compositor does, ends WM_PAINT without drawing. In a program drawn that way its first frame waits a
+		// moment for that drawing. A window that hands its client area to a graphics driver shows that surface instead and is not held.
+		const bool blank=!pending && !waiting->presented && !foreign_content.empty() && !hosting_surface.contains(handle) && blank_client(handle);
 		const auto now=std::chrono::steady_clock::now();
-		if (pending) {
+		if (pending || blank) {
 			if (!waiting->present_waiting) waiting->present_waiting=now;
-			if (now-*waiting->present_waiting<std::chrono::milliseconds(waiting->presented ? 250 : 2000)) {
+			if (now-*waiting->present_waiting<std::chrono::milliseconds(blank ? 1000 : waiting->presented ? 250 : 2000)) {
 				dirty_roots.insert(handle);
 				return;
 			}
@@ -432,6 +461,14 @@ void NativeWindows::import_foreign_frames()
 		take_foreign_frame(handle,seen,[&](const uint8_t *pixels,uint32_t width,uint32_t height) {
 			const auto root=objects.window_root(handle);
 			if (!root) return;
+			// A browser's compositor hands a window frames of plain black before it has anything to show: first, and again while a page
+			// it navigates to loads. Only a frame with something on it counts as drawn, and black frames are left out for up to four
+			// seconds, so the old page stays until the new one paints, as the browser keeps it.
+			bool black=true;
+			for (size_t at=0;at<size_t(width)*height*4 && black;at+=4)
+				black=!(pixels[at] | pixels[at+1] | pixels[at+2]);
+			if (!black) { foreign_content.insert(handle); foreign_black.erase(handle); }
+			else if (now-foreign_black.try_emplace(handle,now).first->second<std::chrono::seconds(4)) return;
 			surface_dc(root);
 			const auto *top=objects.window(root);
 			const auto *window=objects.window(handle);
@@ -1306,6 +1343,8 @@ bool NativeWindows::destroy(uint64_t handle)
 	}
 	release_surface(handle);
 	painted_frames.erase(handle);
+	foreign_content.erase(handle);
+	foreign_black.erase(handle);
 	return objects.erase(handle);
 }
 

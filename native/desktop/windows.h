@@ -154,6 +154,10 @@ private:
 	std::map<uint64_t,ForeignTarget> foreign_targets;
 	uint64_t foreign_dc(uint64_t window);
 	std::map<uint64_t,uint32_t> foreign_frames;
+	// Windows that received a frame from another process with something other than black on it.
+	std::set<uint64_t> foreign_content;
+	// Since when each window has been receiving frames of plain black.
+	std::map<uint64_t,std::chrono::steady_clock::time_point> foreign_black;
 	std::chrono::steady_clock::time_point foreign_checked{};
 	uint64_t foreign_stamp=UINT64_MAX;
 	void import_foreign_frames();
@@ -235,6 +239,9 @@ private:
 	// resizing the client area takes the surface along.
 	std::map<uint64_t,std::array<int64_t,5>> hosted_areas;
 	void place_host_surface(uint64_t root);
+	// Whether nothing has been drawn into the window's client area yet: its surface still holds only zeros or what erasing it left,
+	// or there is none.
+	bool blank_client(uint64_t handle) const;
 	KeyboardMap keyboard_map;
 	std::array<bool,256> key_down{};
 	// The key each held key went down as, so its release matches its press after a keymap change.
