@@ -223,8 +223,10 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 				if (!(alertable && !threads.current().apcs.empty()))
 					return wait_timeout;
 			}
-			// A served wait answers only what is already decided; running APCs or blocking needs the thread stopped.
-			if (call.process.serving()) {
+			// Running APCs needs the thread stopped, and so does blocking in a serial process, where the guest that spins in the stub holds
+			// the only task. A parallel guest spins in its own task while this host frame blocks, so a wait the other side ends soon never
+			// stops the thread.
+			if (call.process.serving() && (!call.process.parallel() || (alertable && !threads.current().apcs.empty()))) {
 				call.process.decline_served();
 				return 0;
 			}
