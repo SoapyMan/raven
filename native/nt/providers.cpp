@@ -1534,7 +1534,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		if (std::find(native_modules.begin(), native_modules.end(), library) == native_modules.end())
 			native_modules.push_back(library);
 #ifdef RAVEN_OPENGL
-	if (OpenGLBridge::enabled()) native_modules.push_back("opengl32.dll");
+	// The bridge is the program's OpenGL unless the program brings its own opengl32.dll and the bridge was not asked for.
+	const bool native_opengl = OpenGLBridge::enabled() && (OpenGLBridge::requested() || !modules.all().contains("opengl32.dll"));
+	if (native_opengl) native_modules.push_back("opengl32.dll");
 #endif
 #ifdef RAVEN_VULKAN
 	native_modules.push_back("vulkan-1.dll");
@@ -1542,7 +1544,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	load_initial_dependencies(modules,source,native_modules);
 	std::map<uint64_t, std::string> traps;
 #ifdef RAVEN_OPENGL
-	if (OpenGLBridge::enabled()) {
+	if (native_opengl) {
 		if (modules.all().contains("opengl32.dll")) throw std::runtime_error("native OpenGL cannot share a supplied opengl32.dll");
 		const auto symbols = OpenGLBridge::exports();
 		const auto bytes = runtime_provider("opengl32.dll", 0x180000000ULL, symbols, false, {}, {}, guest_paths());
@@ -1819,7 +1821,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	windows.set_presentation(std::move(presentation));
 #ifdef RAVEN_OPENGL
 	std::unique_ptr<OpenGLBridge> opengl;
-	if (OpenGLBridge::enabled()) opengl = std::make_unique<OpenGLBridge>(process, modules, desktop_objects, windows);
+	if (native_opengl) opengl = std::make_unique<OpenGLBridge>(process, modules, desktop_objects, windows);
 #endif
 	desktop.set_updated([&](uint64_t window) { windows.drawing(window); });
 #ifdef RAVEN_VULKAN

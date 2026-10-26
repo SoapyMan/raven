@@ -470,7 +470,15 @@ OpenGLBridge::OpenGLBridge(NativeProcess &process, ModuleSet &modules, DesktopOb
 
 OpenGLBridge::~OpenGLBridge() = default;
 
+// The bridge is the OpenGL of 64-bit programs unless a guest build of the libraries is supplied or RAVEN_NATIVE_OPENGL=0 turns it off.
 bool OpenGLBridge::enabled()
+{
+	const auto *value = std::getenv("RAVEN_NATIVE_OPENGL");
+	if (value) return std::string_view(value) == "1";
+	return !std::getenv("RAVEN_OPENGL_DIRECTORY");
+}
+
+bool OpenGLBridge::requested()
 {
 	const auto *value = std::getenv("RAVEN_NATIVE_OPENGL");
 	return value && std::string_view(value) == "1";
