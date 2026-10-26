@@ -1535,7 +1535,7 @@ static constexpr std::string_view ws2_32_exports[]{
 	"WSAHtonl","WSAHtons","WSAInstallServiceClassA","WSAInstallServiceClassW","WSAIoctl","WSAIsBlocking",
 	"WSAJoinLeaf","WSALookupServiceBeginA","WSALookupServiceBeginW","WSALookupServiceEnd","WSALookupServiceNextA","WSALookupServiceNextW",
 	"WSANSPIoctl","WSANtohl","WSANtohs","WSAPoll","WSAProviderCompleteAsyncCall","WSAProviderConfigChange",
-	"WSARecv","WSARecvDisconnect","WSARecvFrom","WSARemoveServiceClass","WSAResetEvent","WSASend",
+	"WSARecv","WSARecvDisconnect","WSARecvFrom","WSARecvMsg","WSARemoveServiceClass","WSAResetEvent","WSASend",
 	"WSASendDisconnect","WSASendMsg","WSASendTo","WSASetBlockingHook","WSASetEvent","WSASetLastError",
 	"WSASetServiceA","WSASetServiceW","WSASocketA","WSASocketW","WSAStartup","WSAStringToAddressA",
 	"WSAStringToAddressW","WSAUnadvertiseProvider","WSAUnhookBlockingHook","WSAWaitForMultipleEvents","WSApSetPostRoutine","WSCDeinstallProvider",

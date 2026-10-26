@@ -304,7 +304,12 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 	auto &objects = context.objects;
 	auto &threads = context.threads;
 	const auto socket_of = [&objects](uint64_t handle) { return objects.object_as<SocketObject>(handle); };
-	const auto fail = [](ApiCall &call, uint32_t error, uint64_t value = UINT64_MAX) { call.fail(error, value); };
+	const auto fail = [](ApiCall &call, uint32_t error, uint64_t value = UINT64_MAX) {
+		static const bool traced = std::getenv("RAVEN_TRACE_SOCKETS");
+		if (traced && error != 10035)
+			std::fprintf(stderr, "raven: %s on socket %llx fails with %u\n", api_in_progress, (unsigned long long)call[0], error);
+		call.fail(error, value);
+	};
 
 	// Waits until the descriptor is ready for the events or the time is up; true when it is ready. Other guest threads run meanwhile.
 	const auto wait_ready = [&threads](int descriptor, short events, std::optional<std::chrono::steady_clock::time_point> wake) {
@@ -480,7 +485,8 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			if (count >= 0) {
 				call.write(buffer, std::span<const uint8_t>(bytes.data(), size_t(count)));
 				if (count > 0 && std::getenv("RAVEN_TRACE_SOCKETS"))
-					std::fprintf(stderr, "raven: socket received %zd bytes: %.*s\n", count, int(std::min<ssize_t>(count, 600)), reinterpret_cast<const char *>(bytes.data()));
+					std::fprintf(stderr, "raven: socket %d received %zd bytes at %lld ms\n", socket->descriptor, count,
+						(long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
 				return count;
 			}
 			if (errno == EINTR)
@@ -969,6 +975,25 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 		} catch (const uint32_t &error) {
 			fail(call, error);
 		}
+	});
+
+	// WSARecvMsg(socket, message, received, overlapped, routine): WSARecvFrom over the parts of WSAMSG (the name and its length, the
+	// buffers, the control buffer and the flags). No control data is delivered, so its length comes back as zero.
+	registry.add("WSARecvMsg", 5, [&registry, fail](ApiCall &call) {
+		if (!call[1]) {
+			fail(call, wsaefault);
+			return;
+		}
+		const size_t width = call.pointer_width(), buffers_at = width == 4 ? 8 : 16, control_at = width == 4 ? 16 : 32,
+			flags_at = width == 4 ? 24 : 48;
+		const uint64_t message = call[1];
+		const auto receive_from = registry.find("WSARecvFrom");
+		ApiCall inner(call.process, call.environment, {call[0], call.load_pointer(message + buffers_at), call.load<uint32_t>(message + buffers_at + width),
+			call[2], message + flags_at, call.load_pointer(message), call.load_pointer(message) ? message + width : 0, call[3], call[4]});
+		receive_from->second(inner);
+		if (inner.result != uint64_t(UINT64_MAX) || call.last_error() == 997)
+			call.store<uint32_t>(message + control_at, 0);
+		call.ret(inner.result);
 	});
 
 	// The extension functions of Winsock are found through WSAIoctl by GUID; each is an export the runtime answers like any other.
@@ -1631,6 +1656,7 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 				{0xb5367df2, 0xcbac, 0x11cf, {0x95, 0xca, 0x00, 0x80, 0x5f, 0x48, 0xa1, 0x92}, "GetAcceptExSockaddrs"},
 				{0x7fda2e11, 0x8630, 0x436f, {0xa0, 0x31, 0xf5, 0x36, 0xa6, 0xee, 0xc1, 0x57}, "DisconnectEx"},
 				{0xa441e712, 0x754f, 0x43ca, {0x84, 0xa7, 0x0d, 0xee, 0x44, 0xcf, 0x60, 0x6d}, "WSASendMsg"},
+				{0xf689d7c8, 0x6f1f, 0x436b, {0x8a, 0x53, 0xe5, 0x4f, 0xe3, 0x51, 0xc3, 0x22}, "WSARecvMsg"},
 			};
 			const auto guid = call.read(call[2], 16);
 			const char *name = nullptr;

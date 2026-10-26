@@ -1461,7 +1461,7 @@ static constexpr std::pair<std::string_view, uint8_t> ws2_32_words[]{
 	{"WSAHtons",3},{"WSAInstallServiceClassA",1},{"WSAInstallServiceClassW",1},{"WSAIoctl",9},{"WSAIsBlocking",0},{"WSAJoinLeaf",8},
 	{"WSALookupServiceBeginA",3},{"WSALookupServiceBeginW",3},{"WSALookupServiceEnd",1},{"WSALookupServiceNextA",4},{"WSALookupServiceNextW",4},{"WSANSPIoctl",8},
 	{"WSANtohl",3},{"WSANtohs",3},{"WSAPoll",3},{"WSAProviderCompleteAsyncCall",2},{"WSAProviderConfigChange",3},{"WSARecv",7},
-	{"WSARecvDisconnect",2},{"WSARecvFrom",9},{"WSARemoveServiceClass",1},{"WSAResetEvent",1},{"WSASend",7},{"WSASendDisconnect",2},
+	{"WSARecvDisconnect",2},{"WSARecvFrom",9},{"WSARecvMsg",5},{"WSARemoveServiceClass",1},{"WSAResetEvent",1},{"WSASend",7},{"WSASendDisconnect",2},
 	{"WSASendMsg",6},{"WSASendTo",9},{"WSASetBlockingHook",1},{"WSASetEvent",1},{"WSASetLastError",1},{"WSASetServiceA",3},
 	{"WSASetServiceW",3},{"WSASocketA",6},{"WSASocketW",6},{"WSAStartup",2},{"WSAStringToAddressA",5},{"WSAStringToAddressW",5},
 	{"WSAUnadvertiseProvider",1},{"WSAUnhookBlockingHook",0},{"WSAWaitForMultipleEvents",5},{"WSApSetPostRoutine",1},{"WSCDeinstallProvider",2},{"WSCDeinstallProviderEx",3},

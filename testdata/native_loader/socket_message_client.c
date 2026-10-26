@@ -55,6 +55,22 @@ static int datagrams(int family)
 	DWORD sent = 0;
 	if (send_message(sender, &message, 0, &sent, NULL, NULL) || sent != 12 ||
 		message.dwFlags != 0xdeadbeef || !received(receiver, 12)) return 12;
+	LPFN_WSARECVMSG receive_message = NULL;
+	GUID receive_guid = WSAID_WSARECVMSG;
+	char bytes[16];
+	SOCKADDR_STORAGE source;
+	WSABUF receive_buffer = {sizeof(bytes), bytes};
+	WSAMSG incoming;
+	zero(&incoming, sizeof(incoming));
+	incoming.name = (SOCKADDR *)&source;
+	incoming.namelen = sizeof(source);
+	incoming.lpBuffers = &receive_buffer;
+	incoming.dwBufferCount = 1;
+	DWORD read = 0;
+	if (WSAIoctl(receiver, SIO_GET_EXTENSION_FUNCTION_POINTER, &receive_guid, sizeof(receive_guid), &receive_message,
+		sizeof(receive_message), &returned, NULL, NULL) || !receive_message ||
+		send_message(sender, &message, 0, &sent, NULL, NULL) || receive_message(receiver, &incoming, &read, NULL, NULL) ||
+		read != 12 || bytes[6] != 's' || source.ss_family != family || incoming.Control.len) return 33;
 	union { WSACMSGHDR aligned; char bytes[128]; } control;
 	zero(&control, sizeof(control));
 	message.Control.buf = control.bytes;

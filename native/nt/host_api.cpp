@@ -307,6 +307,14 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(1);
 	});
+	// The Winsock wait is the wait for several objects with the same answers: the index of the event, WSA_WAIT_TIMEOUT or
+	// WSA_WAIT_IO_COMPLETION.
+	registry.add("WSAWaitForMultipleEvents", 5, [&registry](ApiCall &call) {
+		const auto wait = registry.find("WaitForMultipleObjectsEx");
+		ApiCall inner(call.process, call.environment, {call.u32(0), call[1], call.u32(2), call.u32(3), call.u32(4)});
+		wait->second(inner);
+		call.ret(inner.result);
+	});
 	// A change notification waits for an address change that is never reported: the host's interfaces are not watched.
 	registry.add("NotifyAddrChange", 2, [](ApiCall &call) { call.ret(call[1] ? error_io_pending : error_not_supported); });
 	registry.add("NotifyRouteChange", 2, [](ApiCall &call) { call.ret(call[1] ? error_io_pending : error_not_supported); });
