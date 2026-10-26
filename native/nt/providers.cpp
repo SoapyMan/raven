@@ -2176,9 +2176,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		if (!module->runtime_api)
 			continue;
 		for (const auto &symbol : module->exports) {
-			// The clock only reads calibration; its separate pointer is safe while other threads run.
+			// The clock and the tick counts only read calibration; their pointers are safe while other threads run.
 			if (symbol.address && !symbol.names.empty() && symbol.forwarder.empty() &&
-				(guest_clock_api(module_name, symbol.names.at(0)) || (!process.parallel() && block_prelude(module_name, symbol.names.at(0)))) &&
+				(guest_clock_api(module_name, symbol.names.at(0)) || block_prelude(module_name, symbol.names.at(0)) == &tick_prelude() ||
+					(!process.parallel() && block_prelude(module_name, symbol.names.at(0)))) &&
 				served_stub_rva(module->loaded.data(), module_name, symbol.names.at(0), symbol.address) != symbol.address) {
 				auto image = module->loaded.data();
 				int32_t displacement = 0;
