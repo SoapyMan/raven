@@ -69,6 +69,10 @@ private:
 		std::sort(rows.begin(), rows.end(), [](const auto &a, const auto &b) { return a.second.first > b.second.first; });
 		for (size_t index = 0; index < rows.size() && index < 15; ++index)
 			std::cerr << "profile: frequent " << rows[index].first << " calls=" << rows[index].second.first << '\n';
+		size_t stops = 0;
+		for (const auto &row : rows)
+			if (row.first.starts_with("(stop) ") && stops++ < 15)
+				std::cerr << "profile: stopping " << row.first.substr(7) << " calls=" << row.second.first << '\n';
 	}
 };
 

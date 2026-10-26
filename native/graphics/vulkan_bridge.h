@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <unordered_map>
 #include <vulkan/vulkan.h>
 
 namespace raven {
@@ -75,8 +76,9 @@ private:
 		std::map<std::string, PFN_vkVoidFunction, std::less<>> procedures;
 	};
 	std::map<uint64_t, Device> devices;
+	// The maps a handle is translated through are hashed: every recorded command looks its handles up.
 	struct Queue { VkQueue handle; uint64_t device; uint32_t family, index; };
-	std::map<uint64_t, Queue> queues;
+	std::unordered_map<uint64_t, Queue> queues;
 	// Device memory with the guest-visible shadow that stands in for a host mapping, and the other resources a guest device owns.
 	struct Memory {
 		VkDeviceMemory handle; uint64_t device; VkDeviceSize size;
@@ -90,19 +92,19 @@ private:
 		uint8_t *view = nullptr;
 		size_t view_size = 0;
 	};
-	std::map<uint64_t, Memory> memories;
+	std::unordered_map<uint64_t, Memory> memories;
 	struct Buffer { VkBuffer handle; uint64_t device; };
-	std::map<uint64_t, Buffer> buffers;
+	std::unordered_map<uint64_t, Buffer> buffers;
 	struct Pool { VkCommandPool handle; uint64_t device; };
-	std::map<uint64_t, Pool> pools;
+	std::unordered_map<uint64_t, Pool> pools;
 	struct CommandBuffer { VkCommandBuffer handle; uint64_t device, pool; };
-	std::map<uint64_t, CommandBuffer> command_buffers;
+	std::unordered_map<uint64_t, CommandBuffer> command_buffers;
 	struct Fence { VkFence handle; uint64_t device; };
-	std::map<uint64_t, Fence> fences;
+	std::unordered_map<uint64_t, Fence> fences;
 	// Shader modules, descriptor and pipeline objects: one host handle each, owned by a device token.
 	enum class Kind { shader, set_layout, pipeline_layout, pipeline, pool, set, image, image_view, semaphore, render_pass, framebuffer, sampler };
 	struct Object { uint64_t handle; uint64_t device; Kind kind; uint64_t parent = 0; bool borrowed = false; };
-	std::map<uint64_t, Object> objects;
+	std::unordered_map<uint64_t, Object> objects;
 	bool dispatch_enumerate(std::string_view name);
 	bool dispatch_hand(std::string_view name);
 	SurfaceSource surface_source;
@@ -139,7 +141,7 @@ private:
 	void destroy_object(const VkDevice &device, const Object &object);
 	// Objects created by generated commands that no hand-written map owns.
 	struct Generic { uint64_t host; uint8_t type; uint64_t device; };
-	std::map<uint64_t, Generic> generic;
+	std::unordered_map<uint64_t, Generic> generic;
 	bool dispatch_generated(std::string_view name);
 	void destroy_generic_objects(uint64_t device_token);
 	uint64_t next_handle = 0x5600000000000001ULL;
