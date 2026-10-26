@@ -462,13 +462,13 @@ void NativeWindows::import_foreign_frames()
 			const auto root=objects.window_root(handle);
 			if (!root) return;
 			// A browser's compositor hands a window frames of plain black before it has anything to show: first, and again while a page
-			// it navigates to loads. Only a frame with something on it counts as drawn, and black frames are left out for up to four
-			// seconds, so the old page stays until the new one paints, as the browser keeps it.
+			// it navigates to loads. Only a frame with something on it counts as drawn. Black frames are left out, so the old page stays
+			// until the new one paints, as the browser keeps it, however long the network takes; a window never drawn waits four seconds.
 			bool black=true;
 			for (size_t at=0;at<size_t(width)*height*4 && black;at+=4)
 				black=!(pixels[at] | pixels[at+1] | pixels[at+2]);
 			if (!black) { foreign_content.insert(handle); foreign_black.erase(handle); }
-			else if (now-foreign_black.try_emplace(handle,now).first->second<std::chrono::seconds(4)) return;
+			else if (foreign_content.contains(handle) || now-foreign_black.try_emplace(handle,now).first->second<std::chrono::seconds(4)) return;
 			surface_dc(root);
 			const auto *top=objects.window(root);
 			const auto *window=objects.window(handle);
