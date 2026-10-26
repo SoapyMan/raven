@@ -50,7 +50,9 @@ int main(int argc, char **argv)
 				}
 				return bytes;
 			};
-			const auto result = raven::run_native_process(modules, entry, argv[1], std::chrono::milliseconds(500), source);
+			// Process startup alone can take most of a second on a loaded host: only the looping DLLs need a short limit.
+			const auto timeout = std::chrono::milliseconds(selected.ends_with("loop") ? 2000 : 10000);
+			const auto result = raven::run_native_process(modules, entry, argv[1], timeout, source);
 			const auto address = modules.resolve({"client.exe", "entered", 0, false, 0}) - entry.loaded.base();
 			check(address < entry.loaded.data().size(), "fixture state is outside image");
 			const auto entered = entry.loaded.data()[static_cast<size_t>(address)];

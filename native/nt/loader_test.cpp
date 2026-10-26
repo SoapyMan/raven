@@ -163,7 +163,8 @@ int main(int argc, char **argv)
 				const auto address = modules.resolve({"client.exe", "exit_requested", 0, false, 0});
 				entry->loaded.data()[address - entry->loaded.base()] = 1;
 			}
-			const auto timeout = std::chrono::milliseconds(extra == "loop.dll" ? 300 : 10000);
+			// The looping DLL must still be reached after base.dll and dependent.dll attach, which can take most of a second on a loaded host.
+			const auto timeout = std::chrono::milliseconds(extra == "loop.dll" ? 2000 : 10000);
 			if (extra == "reject.dll") {
 				bool rejected = false;
 				try { raven::run_native_process(modules, *entry, argv[1], timeout); }
