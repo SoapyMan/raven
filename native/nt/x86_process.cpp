@@ -741,6 +741,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	environment.prepare_parameters(*launch, standard_handles);
 	NativeObjectAPI object_api(process, environment, kernel_objects, deadline);
 	const auto prefix = NativePrefix::from_environment();
+	prefix.place_runtime_components(std::filesystem::path(bootstrap).parent_path());
 	NativeRegistry registry(prefix.registry_file());
 	apply_registry_settings(registry);
 	NativeProfile profile(process, environment, prefix);

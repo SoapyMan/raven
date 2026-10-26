@@ -2108,6 +2108,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		return result;
 	};
 	const auto prefix = NativePrefix::from_environment();
+	prefix.place_runtime_components(std::filesystem::path(bootstrap).parent_path());
 	NativePaths paths(prefix);
 	if (launch && !launch->directory.empty())
 		paths.set_current(launch->directory);

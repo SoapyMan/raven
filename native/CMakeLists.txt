@@ -1560,6 +1560,18 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     ENVIRONMENT RAVEN_PREFIX=${fixture}/msiexec-prefix)
             endif()
         endforeach()
+        if(RAVEN_INSTALLER32_COMPONENT_DIR AND RAVEN_MINGW32_INSTALLER)
+            set(SYSTEM_COMPONENT_CLIENT ${CMAKE_CURRENT_BINARY_DIR}/system-component-client.exe)
+            add_custom_command(OUTPUT ${SYSTEM_COMPONENT_CLIENT}
+                COMMAND ${RAVEN_MINGW32_INSTALLER} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                    -Wl,--entry,_raven_entry,--no-insert-timestamp -o ${SYSTEM_COMPONENT_CLIENT}
+                    ${PROJECT_SOURCE_DIR}/testdata/native_loader/system_component_client.c -lkernel32 -lwintrust
+                DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/system_component_client.c VERBATIM)
+            add_custom_target(system_component_fixture ALL DEPENDS ${SYSTEM_COMPONENT_CLIENT})
+            add_test(NAME native_system_components_x32 COMMAND raven --run-process --execution=native ${SYSTEM_COMPONENT_CLIENT})
+            set_tests_properties(native_system_components_x32 PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/system-components-prefix)
+        endif()
         set(RAVEN_CONTROLS_COMPONENT_DIR "" CACHE PATH "Directory holding the common controls component built by scripts/provision-controls.py")
         # The same components built for 32-bit programs (scripts/provision-controls.py --arch x86); they sit in a directory beside the runtime.
         set(RAVEN_CONTROLS32_COMPONENT_DIR "" CACHE PATH "Directory holding the 32-bit components built by scripts/provision-controls.py --arch x86")

@@ -23,6 +23,9 @@ struct AuthenticodeResult {
 AuthenticodeResult verify_authenticode(std::span<const uint8_t> file);
 // The PKCS #7 signature a program, cabinet or installer database carries; empty when it carries none.
 std::vector<uint8_t> embedded_signature(std::span<const uint8_t> file);
+// The digest a security catalog lists a file under: a program or library hashed as for its signature, any other file whole. Empty
+// without the cryptography library.
+std::vector<uint8_t> subject_digest(std::span<const uint8_t> file, bool sha256);
 
 #ifdef RAVEN_OPENSSL
 // The trust anchors: the host's certificate bundle and the code signing roots beside the runtime, which every Windows installation

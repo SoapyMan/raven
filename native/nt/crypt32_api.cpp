@@ -15,6 +15,7 @@
 #include <openssl/x509v3.h>
 #endif
 
+#include "file_objects.h"
 #include "prefix.h"
 
 #include <algorithm>
@@ -173,6 +174,12 @@ std::vector<uint8_t> der_encoding(Encode encode, Value *value)
 }
 
 // What WinVerifyTrust found for a file, kept for the provider data built from it later, and the guest blocks those structures use.
+// A catalog administrator context: the hash algorithm its file hashes use.
+class CatalogAdmin : public KernelObject {
+public:
+	bool sha256 = false;
+};
+
 class TrustState : public KernelObject {
 public:
 	AuthenticodeResult result;
@@ -859,6 +866,92 @@ void register_crypt32_api(ApiRegistry &registry, KernelContext &context)
 		call.write(call[2], value);
 		call.ret(1);
 	});
+	// Security catalogs: a context hashes files as the catalogs index them. No catalog is installed, so a lookup by hash finds none and a
+	// program falls back to the file's own signature.
+	const auto acquire_catalogs = [&context](ApiCall &call, bool sha256) {
+		if (!call[0]) {
+			call.fail(87);
+			return;
+		}
+		auto admin = std::make_shared<CatalogAdmin>();
+		admin->sha256 = sha256;
+		const auto made = context.objects.add_object(admin);
+		if (made.status) {
+			call.fail(8);
+			return;
+		}
+		call.store_pointer(call[0], made.value);
+		call.ret(1);
+	};
+	registry.add("CryptCATAdminAcquireContext", 3, [acquire_catalogs](ApiCall &call) { acquire_catalogs(call, false); });
+	registry.add("CryptCATAdminAcquireContext2", 5, [acquire_catalogs](ApiCall &call) {
+		const auto algorithm = call[2] ? call.wide(call[2], 32) : std::u16string();
+		if (!algorithm.empty() && algorithm != u"SHA1" && algorithm != u"SHA256") {
+			call.fail(0x80090008U);
+			return;
+		}
+		acquire_catalogs(call, algorithm == u"SHA256");
+	});
+	registry.add("CryptCATAdminReleaseContext", 2, [&context](ApiCall &call) {
+		if (!context.objects.object_as<CatalogAdmin>(call[0])) {
+			call.fail(87);
+			return;
+		}
+		context.objects.close(call[0]);
+		call.ret(1);
+	});
+	// The hash of the file behind a handle, read from its start without moving the handle's position.
+	const auto hash_file = [&context](ApiCall &call, uint64_t handle, uint64_t size_at, uint64_t hash_at, bool sha256) {
+		const auto file = context.objects.object_as<FileObject>(handle);
+		if (!file || file->directory || !size_at) {
+			call.fail(87);
+			return;
+		}
+		const uint32_t length = sha256 ? 32 : 20, capacity = call.load<uint32_t>(size_at);
+		call.store<uint32_t>(size_at, length);
+		if (!hash_at || capacity < length) {
+			call.fail(122);
+			return;
+		}
+		std::vector<uint8_t> bytes;
+		std::array<uint8_t, 65536> chunk;
+		for (off_t offset = 0;;) {
+			const auto count = ::pread(file->descriptor, chunk.data(), chunk.size(), offset);
+			if (count < 0) {
+				call.fail(30);
+				return;
+			}
+			if (count == 0)
+				break;
+			bytes.insert(bytes.end(), chunk.begin(), chunk.begin() + count);
+			offset += count;
+		}
+		const auto digest = subject_digest(bytes, sha256);
+		if (digest.size() != length) {
+			call.fail(0x80090008U);
+			return;
+		}
+		call.write(hash_at, digest);
+		call.ret(1);
+	};
+	registry.add("CryptCATAdminCalcHashFromFileHandle", 4, [hash_file](ApiCall &call) { hash_file(call, call[0], call[1], call[2], false); });
+	registry.add("CryptCATAdminCalcHashFromFileHandle2", 5, [&context, hash_file](ApiCall &call) {
+		const auto admin = context.objects.object_as<CatalogAdmin>(call[0]);
+		if (!admin) {
+			call.fail(87);
+			return;
+		}
+		hash_file(call, call[1], call[2], call[3], admin->sha256);
+	});
+	registry.add("CryptCATAdminEnumCatalogFromHash", 5, [&context](ApiCall &call) {
+		if (!context.objects.object_as<CatalogAdmin>(call[0]) || !call[1]) {
+			call.fail(87);
+			return;
+		}
+		call.fail(1168);
+	});
+	registry.add("CryptCATAdminReleaseCatalogContext", 3, [](ApiCall &call) { call.fail(87); });
+	registry.add("CryptCATCatalogInfoFromContext", 3, [](ApiCall &call) { call.fail(87); });
 	// Authenticode: WinVerifyTrust checks the file a WINTRUST_FILE_INFO names. With WTD_STATEACTION_VERIFY it keeps what it found under a
 	// state handle, from which the trust helpers build the provider data, the signer and its certificate chain; WTD_STATEACTION_CLOSE
 	// releases them.

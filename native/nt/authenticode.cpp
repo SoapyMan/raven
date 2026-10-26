@@ -435,6 +435,32 @@ std::vector<uint8_t> embedded_signature(std::span<const uint8_t> file)
 	return found ? std::move(found->signature) : std::vector<uint8_t>();
 }
 
+std::vector<uint8_t> subject_digest(std::span<const uint8_t> file, bool sha256)
+{
+	std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> context(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+	if (!context || !EVP_DigestInit_ex(context.get(), sha256 ? EVP_sha256() : EVP_sha1(), nullptr))
+		return {};
+	// A program or library is hashed as its signature would be, without the checksum, the security directory entry and the certificate
+	// table; any other file whole.
+	const uint32_t header = file.size() >= 0x40 && file[0] == 'M' && file[1] == 'Z' ? le32(file, 0x3c) : 0;
+	if (header && uint64_t(header) + 24 + 96 <= file.size() && le32(file, header) == 0x4550) {
+		const size_t optional = header + 24, checksum = optional + 64;
+		const size_t security = optional + (le16(file, optional) == 0x20b ? 112 : 96) + 4 * 8;
+		const uint32_t table = le32(file, security), size = le32(file, security + 4);
+		const size_t end = table && size && uint64_t(table) + size <= file.size() ? table : file.size();
+		update(context.get(), file, 0, checksum);
+		update(context.get(), file, checksum + 4, security);
+		update(context.get(), file, security + 8, end);
+	} else
+		update(context.get(), file, 0, file.size());
+	std::vector<uint8_t> digest(EVP_MAX_MD_SIZE);
+	unsigned int length = 0;
+	if (!EVP_DigestFinal_ex(context.get(), digest.data(), &length))
+		return {};
+	digest.resize(length);
+	return digest;
+}
+
 AuthenticodeResult verify_authenticode(std::span<const uint8_t> file)
 {
 	AuthenticodeResult result;
@@ -550,6 +576,11 @@ AuthenticodeResult verify_authenticode(std::span<const uint8_t>)
 }
 
 std::vector<uint8_t> embedded_signature(std::span<const uint8_t>)
+{
+	return {};
+}
+
+std::vector<uint8_t> subject_digest(std::span<const uint8_t>, bool)
 {
 	return {};
 }
