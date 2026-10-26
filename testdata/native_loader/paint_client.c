@@ -66,7 +66,7 @@ static LRESULT CALLBACK procedure(HWND window,UINT message,WPARAM wparam,LPARAM 
 	}
 #endif
 #ifdef RAVEN_POINTER_LOOP
-	if (message==WM_NCHITTEST) return DefWindowProcW(window,message,wparam,lparam);
+	if (message==WM_NCHITTEST || message==WM_SETCURSOR) return DefWindowProcW(window,message,wparam,lparam);
 	if (message==WM_MOUSEACTIVATE) return MA_ACTIVATE;
 	if (message==WM_MOUSEMOVE) { ++moved; return 0; }
 	if (message==WM_LBUTTONDOWN || message==WM_LBUTTONUP) {
@@ -131,6 +131,9 @@ int raven_entry(void)
 	HINSTANCE instance=GetModuleHandleW(NULL);
 	WNDCLASSEXW definition={0}; definition.cbSize=sizeof(definition); definition.hInstance=instance;
 	definition.lpfnWndProc=procedure; definition.lpszClassName=L"RavenPaintContract";
+#ifdef RAVEN_POINTER_LOOP
+	definition.hCursor=LoadCursorW(NULL,IDC_HAND);
+#endif
 	ATOM atom=RegisterClassExW(&definition);
 	if (!atom) return 2;
 	HWND window=CreateWindowExW(0,MAKEINTATOM(atom),L"Raven native paint",WS_POPUP,12,23,32,32,NULL,NULL,instance,NULL);

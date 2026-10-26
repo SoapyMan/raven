@@ -74,6 +74,8 @@ struct DesktopPresentation {
 	std::function<std::optional<std::pair<int32_t,int32_t>>()> screen_size;
 	// Requests or leaves maximization while retaining the surface a graphics context renders into.
 	std::function<void(uint64_t,bool)> maximize;
+	// The pointer over the program's windows: a system cursor by its IDC_ identifier (32512 the arrow), or none for 0.
+	std::function<void(uint32_t shape)> cursor;
 	HostPlatform platform = HostPlatform::wayland;
 };
 

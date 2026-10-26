@@ -3,6 +3,9 @@
 #include "relative-pointer-unstable-v1-client-protocol.h"
 #include "pointer-constraints-unstable-v1-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
+#ifdef RAVEN_WAYLAND_CURSOR_SHAPE
+#include "cursor-shape-v1-client-protocol.h"
+#endif
 
 #include <wayland-client.h>
 #include <algorithm>
@@ -27,6 +30,28 @@
 #include <vector>
 
 namespace raven {
+
+#ifdef RAVEN_WAYLAND_CURSOR_SHAPE
+// The named shape that looks like a system cursor of Windows; the ones without a counterpart show the default pointer.
+static uint32_t cursor_shape(uint32_t cursor)
+{
+	switch (cursor) {
+	case 32513: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT;
+	case 32514: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_WAIT;
+	case 32515: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CROSSHAIR;
+	case 32642: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NWSE_RESIZE;
+	case 32643: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NESW_RESIZE;
+	case 32644: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_EW_RESIZE;
+	case 32645: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NS_RESIZE;
+	case 32640: case 32646: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE;
+	case 32648: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NOT_ALLOWED;
+	case 32649: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER;
+	case 32650: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_PROGRESS;
+	case 32651: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_HELP;
+	default: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
+	}
+}
+#endif
 
 struct WaylandPresentation::State {
 	struct Output {
@@ -109,6 +134,13 @@ struct WaylandPresentation::State {
 	zwp_locked_pointer_v1 *locked=nullptr;
 	int64_t relative_x=0,relative_y=0;
 	uint64_t constrained_window=0;
+#ifdef RAVEN_WAYLAND_CURSOR_SHAPE
+	wp_cursor_shape_manager_v1 *shape_manager=nullptr;
+	wp_cursor_shape_device_v1 *shape_device=nullptr;
+#endif
+	// The cursor the program shows and the serial of the pointer's arrival on one of its surfaces, which setting the cursor quotes.
+	uint32_t cursor=32512,enter_serial=0;
+	bool pointer_inside=false;
 	uint64_t pointer_window=0;
 	uint64_t keyboard_window=0;
 	int32_t pointer_x=0,pointer_y=0;
@@ -133,6 +165,10 @@ struct WaylandPresentation::State {
 		if (relative) zwp_relative_pointer_v1_destroy(relative);
 		if (relative_manager) zwp_relative_pointer_manager_v1_destroy(relative_manager);
 		if (constraints) zwp_pointer_constraints_v1_destroy(constraints);
+#ifdef RAVEN_WAYLAND_CURSOR_SHAPE
+		if (shape_device) wp_cursor_shape_device_v1_destroy(shape_device);
+		if (shape_manager) wp_cursor_shape_manager_v1_destroy(shape_manager);
+#endif
 		surfaces.clear();
 		outputs.clear();
 		if (output_manager) zxdg_output_manager_v1_destroy(output_manager);
@@ -194,6 +230,22 @@ struct WaylandPresentation::State {
 		zwp_relative_pointer_v1_add_listener(relative,&listener,this);
 	}
 
+	void watch_cursor_shape() {
+#ifdef RAVEN_WAYLAND_CURSOR_SHAPE
+		if (shape_device || !shape_manager || !pointer) return;
+		shape_device=wp_cursor_shape_manager_v1_get_pointer(shape_manager,pointer);
+#endif
+	}
+
+	void show_cursor() {
+		if (!pointer || !pointer_inside) return;
+		if (!cursor) wl_pointer_set_cursor(pointer,enter_serial,nullptr,0,0);
+#ifdef RAVEN_WAYLAND_CURSOR_SHAPE
+		else if (shape_device) wp_cursor_shape_device_v1_set_shape(shape_device,enter_serial,cursor_shape(cursor));
+#endif
+		if (display) wl_display_flush(display);
+	}
+
 	void pointer_event(DesktopEventKind kind,uint32_t button=0,uint32_t pressed=0) {
 		if (!pointer_window && kind==DesktopEventKind::pointer_motion) return;
 		if (pending.size()>=10000) { input_failed=true; return; }
@@ -234,9 +286,12 @@ struct WaylandPresentation::State {
 				value.enter=[](void *data,wl_pointer *,uint32_t serial,wl_surface *surface,wl_fixed_t x,wl_fixed_t y) {
 					auto &state=*static_cast<State *>(data); state.pointer_window=0; state.last_serial=serial;
 					for (const auto &[handle,window] : state.surfaces) if (window->proxy==surface) state.pointer_window=handle;
+					state.enter_serial=serial; state.pointer_inside=true; state.show_cursor();
 					state.pointer_x=coordinate(x); state.pointer_y=coordinate(y); state.pointer_event(DesktopEventKind::pointer_motion);
 				};
-				value.leave=[](void *data,wl_pointer *,uint32_t,wl_surface *) { static_cast<State *>(data)->pointer_window=0; };
+				value.leave=[](void *data,wl_pointer *,uint32_t,wl_surface *) {
+					auto &state=*static_cast<State *>(data); state.pointer_window=0; state.pointer_inside=false;
+				};
 				value.motion=[](void *data,wl_pointer *,uint32_t,wl_fixed_t x,wl_fixed_t y) {
 					auto &state=*static_cast<State *>(data); state.pointer_x=coordinate(x); state.pointer_y=coordinate(y);
 					state.pointer_event(DesktopEventKind::pointer_motion);
@@ -260,10 +315,14 @@ struct WaylandPresentation::State {
 			}();
 			wl_pointer_add_listener(state.pointer,&listener,&state);
 			state.watch_relative_motion();
+			state.watch_cursor_shape();
 		} else if (!(flags & WL_SEAT_CAPABILITY_POINTER) && state.pointer) {
 			state.release_constraint();
 			if (state.relative) { zwp_relative_pointer_v1_destroy(state.relative); state.relative=nullptr; }
-			wl_pointer_destroy(state.pointer); state.pointer=nullptr; state.pointer_window=0;
+#ifdef RAVEN_WAYLAND_CURSOR_SHAPE
+			if (state.shape_device) { wp_cursor_shape_device_v1_destroy(state.shape_device); state.shape_device=nullptr; }
+#endif
+			wl_pointer_destroy(state.pointer); state.pointer=nullptr; state.pointer_window=0; state.pointer_inside=false;
 		}
 		if ((flags & WL_SEAT_CAPABILITY_KEYBOARD) && !state.keyboard) {
 			state.keyboard=wl_seat_get_keyboard(seat);
@@ -463,6 +522,12 @@ struct WaylandPresentation::State {
 			state.relative_manager=static_cast<zwp_relative_pointer_manager_v1 *>(wl_registry_bind(registry,name,&zwp_relative_pointer_manager_v1_interface,1));
 			state.watch_relative_motion();
 		}
+#ifdef RAVEN_WAYLAND_CURSOR_SHAPE
+		else if (!std::strcmp(interface,"wp_cursor_shape_manager_v1")) {
+			state.shape_manager=static_cast<wp_cursor_shape_manager_v1 *>(wl_registry_bind(registry,name,&wp_cursor_shape_manager_v1_interface,1));
+			state.watch_cursor_shape();
+		}
+#endif
 		else if (!std::strcmp(interface,"zwp_pointer_constraints_v1"))
 			state.constraints=static_cast<zwp_pointer_constraints_v1 *>(wl_registry_bind(registry,name,&zwp_pointer_constraints_v1_interface,1));
 		else if (!std::strcmp(interface,"xdg_wm_base")) {
@@ -838,7 +903,12 @@ DesktopPresentation WaylandPresentation::callbacks()
 	[this] { return state->display ? wl_display_get_fd(state->display) : -1; },
 	[this]() -> void * { state->connect(); return state->display; },
 	[this] { state->connect(); return state->screen_size(); },
-	[this](uint64_t handle,bool maximized) { state->maximize(handle,maximized); }};
+	[this](uint64_t handle,bool maximized) { state->maximize(handle,maximized); },
+	[this](uint32_t shape) {
+		if (state->cursor==shape) return;
+		state->cursor=shape;
+		state->show_cursor();
+	}};
 }
 
 }

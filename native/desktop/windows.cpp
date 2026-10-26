@@ -468,6 +468,19 @@ void NativeWindows::update_warp_lock(bool warped)
 	warp_lock_window=active;
 }
 
+void NativeWindows::show_cursor()
+{
+	if (!presentation.cursor) return;
+	// A cursor that is not a system one (made from a bitmap, or a resource of a module) shows as the arrow.
+	uint32_t shape=32512;
+	if (cursor_count<0 || !current_cursor) shape=0;
+	else if (current_cursor>=desktop_stock_cursor && current_cursor<desktop_stock_cursor+desktop_stock_cursor_count)
+		shape=uint32_t(32512+current_cursor-desktop_stock_cursor);
+	static const bool trace=std::getenv("RAVEN_TRACE_CURSOR")!=nullptr;
+	if (trace) fprintf(stderr,"cursor %llx count %d shape %u\n",(unsigned long long)current_cursor,cursor_count,shape);
+	presentation.cursor(shape);
+}
+
 void NativeWindows::flush_dirty(bool force)
 {
 	settle_focus_leave(false);
@@ -940,6 +953,12 @@ void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uin
 		fprintf(stderr,"button %x target %llx hit %llx visible %d\n",message,(unsigned long long)target,(unsigned long long)hit,
 			window && objects.window_visible(target) ? 1 : 0);
 	if (!window || !objects.window_visible(target) || !hit) return;
+	// Unless the mouse is captured, the window under the pointer chooses the cursor before the mouse message arrives.
+	if (!capture && (message==0x200 || message==0x201 || message==0x204 || message==0x207)) {
+		send(target,0x20,target,uint16_t(hit)|(uint64_t(message)<<16));
+		window=objects.window(target);
+		if (!window || !objects.window_visible(target)) return;
+	}
 	// Scroll bars and the frame may run a loop of their own that waits for the release, so what was held goes in first.
 	if (hit!=1 && placing_press) release_held_input();
 	if ((hit==6 || hit==7) && scroll_pointer(target,hit,message,int32_t(x),int32_t(y))) return;
@@ -1349,6 +1368,27 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 			x>=window->x && y>=window->y && int64_t(x)<int64_t(window->x)+window->width &&
 			int64_t(y)<int64_t(window->y)+window->height ? 1 : 0;
 	}
+	if (message==0x20) {
+		// WM_SETCURSOR: the parent of a child chooses first. The client area shows the class cursor, the frame the cursor of its edge
+		// and the rest the arrow.
+		if ((window->style & 0x40000000U) && window->parent && objects.window(window->parent) && send(window->parent,0x20,args[2],args[3])) return 1;
+		window=objects.window(args[0]);
+		if (!window) return 0;
+		const auto hit=int16_t(uint16_t(args[3]));
+		uint64_t cursor=desktop_stock_cursor;
+		if (hit==1) {
+			const auto *definition=objects.window_class(window->class_id);
+			if (!definition || !definition->cursor) return 0;
+			cursor=definition->cursor;
+		}
+		else if (hit==10 || hit==11) cursor=desktop_stock_cursor+(32644-32512);
+		else if (hit==12 || hit==15) cursor=desktop_stock_cursor+(32645-32512);
+		else if (hit==13 || hit==17) cursor=desktop_stock_cursor+(32642-32512);
+		else if (hit==14 || hit==16) cursor=desktop_stock_cursor+(32643-32512);
+		current_cursor=cursor;
+		show_cursor();
+		return hit==1 || (hit>=10 && hit<=17);
+	}
 	if (message==0x317) {
 		// WM_PRINT: the default procedure replays its flags as the erase and client-paint requests.
 		if (args[3] & 0x8) send(args[0],0x14,args[2],0);
@@ -1415,9 +1455,9 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 	if (message==0x21) return 1;
 	if (message==0x11) return 1;
 	if (!message || message==1 || message==2 || message==3 || message==5 || message==0x82 || message==0x18) return 0;
-	// Messages whose Windows default is "no action, result 0": cursor, activation notices, window-position notices,
+	// Messages whose Windows default is "no action, result 0": activation notices, window-position notices,
 	// non-client mouse notices, capture loss, keyboard and timer/command traffic nobody consumed.
-	if (message==0x20 || message==0x16 || message==0x1c || message==0x24 || message==0x46 || message==0x47 || message==0x4e ||
+	if (message==0x16 || message==0x1c || message==0x24 || message==0x46 || message==0x47 || message==0x4e ||
 		message==0x7f || message==0x80 || (message>=0xa0 && message<=0xa9) || message==0x215 || (message>=0x100 && message<=0x109) ||
 		message==0x111 || message==0x113 || (message>=0x116 && message<=0x120) || message==0x211 || message==0x212) return 0;
 	// Every other message has no default action in DefWindowProc and answers zero.

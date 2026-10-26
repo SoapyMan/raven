@@ -405,10 +405,12 @@ private:
 	// its pointer, so the pointer is held on that window until the cursor shows again.
 	uint64_t warp_lock_window=0;
 	void update_warp_lock(bool warped);
+	// Hands the cursor the program shows to the host pointer.
+	void show_cursor();
 	std::map<uint64_t,std::array<int32_t,6>> raw_reports;
 	uint64_t next_raw_report=0x1000;
 	void raw_mouse_input(int64_t dx,int64_t dy,uint32_t button_flags,int16_t wheel);
-	uint64_t current_cursor=0;
+	uint64_t current_cursor=desktop_stock_cursor;
 	// Mouse capture and timers belong to the initial guest thread's input state.
 	uint64_t capture=0;
 	struct Timer { uint64_t window,id,procedure; uint32_t interval; std::chrono::steady_clock::time_point due; bool system=false; uint32_t thread=0; };

@@ -356,12 +356,14 @@ void NativeWindows::register_api(ApiRegistry &registry)
 	registry.add("ShowCursor", 1, [this](ApiCall &call) {
 		cursor_count += call.u32(0) ? 1 : -1;
 		update_warp_lock(false);
+		show_cursor();
 		call.ret(uint32_t(cursor_count));
 	});
 	registry.add("SetCursor", 1, [this](ApiCall &call) {
 		const auto previous = current_cursor;
 		current_cursor = call[0];
 		update_warp_lock(false);
+		show_cursor();
 		call.ret(previous);
 	});
 	registry.add("DestroyCursor", 1, [](ApiCall &call) { call.ret(1); });

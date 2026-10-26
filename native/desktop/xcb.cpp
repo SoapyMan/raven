@@ -97,6 +97,10 @@ struct XcbPresentation::State {
 	// Readable for as long as events wait in the queue, for a caller that sleeps on the descriptor while the socket has nothing to read.
 	int ready=-1;
 	std::array<bool,256> keys_down{};
+	// The cursor the program shows, by its IDC_ identifier or 0 for none, and the server cursors made for each so far.
+	uint32_t cursor=32512;
+	std::map<uint32_t,xcb_cursor_t> cursors;
+	xcb_font_t cursor_font=0;
 
 	~State() {
 		for (auto &[handle,window] : windows) destroy(*window);
@@ -104,6 +108,8 @@ struct XcbPresentation::State {
 		if (keyboard_context) xkb_context_unref(keyboard_context);
 		if (ready>=0) close(ready);
 		if (connection) {
+			for (const auto &[id,made] : cursors) xcb_free_cursor(connection,made);
+			if (cursor_font) xcb_close_font(connection,cursor_font);
 			if (confinement) xcb_destroy_window(connection,confinement);
 			if (utility) xcb_destroy_window(connection,utility);
 			if (gc) xcb_free_gc(connection,gc);
@@ -319,16 +325,58 @@ struct XcbPresentation::State {
 		upload(window,left,top,right,bottom);
 	}
 
+	// A glyph of the standard cursor font for each system cursor that has one; none of them is an empty pixmap.
+	xcb_cursor_t server_cursor(uint32_t id) {
+		if (const auto found=cursors.find(id); found!=cursors.end()) return found->second;
+		const xcb_cursor_t made=xcb_generate_id(connection);
+		if (!id) {
+			const xcb_pixmap_t empty=xcb_generate_id(connection);
+			xcb_create_pixmap(connection,1,empty,screen->root,1,1);
+			xcb_create_cursor(connection,made,empty,empty,0,0,0,0,0,0,0,0);
+			xcb_free_pixmap(connection,empty);
+		} else {
+			uint16_t glyph=68;
+			switch (id) {
+			case 32513: glyph=152; break;
+			case 32514: case 32650: glyph=150; break;
+			case 32515: glyph=34; break;
+			case 32642: glyph=14; break;
+			case 32643: glyph=12; break;
+			case 32644: glyph=108; break;
+			case 32645: glyph=116; break;
+			case 32640: case 32646: glyph=52; break;
+			case 32648: glyph=24; break;
+			case 32649: glyph=60; break;
+			case 32651: glyph=92; break;
+			default: break;
+			}
+			if (!cursor_font) {
+				cursor_font=xcb_generate_id(connection);
+				xcb_open_font(connection,cursor_font,6,"cursor");
+			}
+			xcb_create_glyph_cursor(connection,made,cursor_font,cursor_font,glyph,uint16_t(glyph+1),0,0,0,0xffff,0xffff,0xffff);
+		}
+		cursors.emplace(id,made);
+		return made;
+	}
+
+	void show_cursor() {
+		if (!connection) return;
+		const uint32_t value=server_cursor(cursor);
+		for (const auto &[handle,window] : windows) xcb_change_window_attributes(connection,window->id,XCB_CW_CURSOR,&value);
+		xcb_flush(connection);
+	}
+
 	xcb_window_t make_window(bool popup,int32_t x,int32_t y,uint32_t width,uint32_t height) {
 		const xcb_window_t id=xcb_generate_id(connection);
 		uint32_t mask=XCB_EVENT_MASK_EXPOSURE|XCB_EVENT_MASK_BUTTON_PRESS|XCB_EVENT_MASK_BUTTON_RELEASE|XCB_EVENT_MASK_POINTER_MOTION|
 			XCB_EVENT_MASK_ENTER_WINDOW|XCB_EVENT_MASK_LEAVE_WINDOW|XCB_EVENT_MASK_KEY_PRESS|XCB_EVENT_MASK_KEY_RELEASE;
 		if (!popup) mask|=XCB_EVENT_MASK_STRUCTURE_NOTIFY|XCB_EVENT_MASK_FOCUS_CHANGE;
 		// No background: what the server would clear to shows only until the frame arrives.
-		const uint32_t values[]={XCB_BACK_PIXMAP_NONE,0,XCB_GRAVITY_NORTH_WEST,popup ? 1U : 0U,mask};
+		const uint32_t values[]={XCB_BACK_PIXMAP_NONE,0,XCB_GRAVITY_NORTH_WEST,popup ? 1U : 0U,mask,server_cursor(cursor)};
 		xcb_create_window(connection,XCB_COPY_FROM_PARENT,id,screen->root,int16_t(x),int16_t(y),uint16_t(width),uint16_t(height),0,
 			XCB_WINDOW_CLASS_INPUT_OUTPUT,XCB_COPY_FROM_PARENT,
-			XCB_CW_BACK_PIXMAP|XCB_CW_BORDER_PIXEL|XCB_CW_BIT_GRAVITY|XCB_CW_OVERRIDE_REDIRECT|XCB_CW_EVENT_MASK,values);
+			XCB_CW_BACK_PIXMAP|XCB_CW_BORDER_PIXEL|XCB_CW_BIT_GRAVITY|XCB_CW_OVERRIDE_REDIRECT|XCB_CW_EVENT_MASK|XCB_CW_CURSOR,values);
 		static constexpr char name[]="raven.native\0raven.native";
 		property(id,atoms[wm_class],atoms[string_type],8,sizeof name,name);
 		if (popup) property(id,atoms[window_type],atoms[atom_type],32,1,&atoms[window_type_popup]);
@@ -873,7 +921,12 @@ DesktopPresentation XcbPresentation::callbacks()
 		state->connect();
 		return std::pair{int32_t(state->screen->width_in_pixels),int32_t(state->screen->height_in_pixels)};
 	},
-	[this](uint64_t handle,bool maximized) { state->maximize(handle,maximized); }};
+	[this](uint64_t handle,bool maximized) { state->maximize(handle,maximized); },
+	[this](uint32_t shape) {
+		if (state->cursor==shape) return;
+		state->cursor=shape;
+		state->show_cursor();
+	}};
 	result.platform=HostPlatform::xcb;
 	return result;
 }

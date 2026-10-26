@@ -306,9 +306,29 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                 list(APPEND RAVEN_WAYLAND_PROTOCOL_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/${protocol}-unstable-v1-client-protocol.h
                     ${CMAKE_CURRENT_BINARY_DIR}/${protocol}-unstable-v1-protocol.c)
             endforeach()
+            # Pointer shapes by name; the protocol refers to tablet tools, so their interfaces are generated with it.
+            set(RAVEN_WAYLAND_CURSOR_SHAPE OFF)
+            if(EXISTS "${WAYLAND_PROTOCOLS_DATA}/staging/cursor-shape/cursor-shape-v1.xml" AND EXISTS "${WAYLAND_PROTOCOLS_DATA}/stable/tablet/tablet-v2.xml")
+                set(RAVEN_WAYLAND_CURSOR_SHAPE ON)
+                foreach(protocol staging/cursor-shape/cursor-shape-v1 stable/tablet/tablet-v2)
+                    get_filename_component(protocol_name ${protocol} NAME)
+                    set(PROTOCOL_XML ${WAYLAND_PROTOCOLS_DATA}/${protocol}.xml)
+                    add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${protocol_name}-client-protocol.h
+                        COMMAND ${WAYLAND_SCANNER} client-header ${PROTOCOL_XML} ${CMAKE_CURRENT_BINARY_DIR}/${protocol_name}-client-protocol.h
+                        DEPENDS ${PROTOCOL_XML} VERBATIM)
+                    add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${protocol_name}-protocol.c
+                        COMMAND ${WAYLAND_SCANNER} private-code ${PROTOCOL_XML} ${CMAKE_CURRENT_BINARY_DIR}/${protocol_name}-protocol.c
+                        DEPENDS ${PROTOCOL_XML} VERBATIM)
+                    list(APPEND RAVEN_WAYLAND_PROTOCOL_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/${protocol_name}-client-protocol.h
+                        ${CMAKE_CURRENT_BINARY_DIR}/${protocol_name}-protocol.c)
+                endforeach()
+            endif()
             add_library(raven_wayland STATIC desktop/wayland.cpp
                 ${CMAKE_CURRENT_BINARY_DIR}/xdg-shell-client-protocol.h ${CMAKE_CURRENT_BINARY_DIR}/xdg-shell-protocol.c
                 ${RAVEN_WAYLAND_PROTOCOL_SOURCES})
+            if(RAVEN_WAYLAND_CURSOR_SHAPE)
+                target_compile_definitions(raven_wayland PRIVATE RAVEN_WAYLAND_CURSOR_SHAPE=1)
+            endif()
             target_include_directories(raven_wayland PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
             target_link_libraries(raven_wayland PUBLIC PkgConfig::WAYLAND_CLIENT)
             target_compile_options(raven_wayland PRIVATE -Wall -Wextra -Wpedantic -Wconversion)

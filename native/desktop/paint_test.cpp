@@ -35,6 +35,9 @@ int main(int argc,char **argv)
 				++frames;
 			};
 			presentation.remove=[&](uint64_t handle) { check(handle==window,"removed wrong surface"); ++removed; };
+			// The pointer over the window shows the hand its class names.
+			std::vector<uint32_t> cursors;
+			presentation.cursor=[&](uint32_t shape) { cursors.push_back(shape); };
 			unsigned waits=0;
 			bool closed=false;
 			// A blocked GetMessage looks at the host without a budget of its own, so the event comes on the first look after the frame.
@@ -54,6 +57,7 @@ int main(int argc,char **argv)
 			const auto result=raven::run_native_process(modules,entry,argv[1],std::chrono::seconds(5),{},{},presentation);
 			check(result.stop==raven::NativeStop::returned && !result.value && frames==2 && removed==1,"SDK paint lifecycle failed");
 			check(fixture==2 || waits==1,"close workflow did not wait for host event");
+			check(fixture!=4 || (!cursors.empty() && cursors.front()==32649),"class cursor did not reach the host pointer");
 		}
 	} catch (const std::exception &error) { std::cerr<<error.what()<<'\n'; return 1; }
 	return 0;

@@ -12,9 +12,11 @@ bool NativeDesktop::load_dispatch(std::string_view name)
 	if (name == "LoadCursorW") {
 		const auto args = process.api_arguments(2);
 		uint64_t result = 0;
-		// Only the system cursors exist so far; module cursor resources are reported as unsupported.
+		// Only the system cursors exist so far; a cursor resource of a module shows as the arrow, so the pointer does not vanish over it.
 		if (!args[0] && args[1] >= 32512 && args[1] < 32512 + desktop_stock_cursor_count)
 			result = desktop_stock_cursor + (args[1] - 32512);
+		else if (args[0] && resources.view(args[0], 12, args[1]))
+			result = desktop_stock_cursor;
 		else
 			environment.set_last_error(args[0] ? 120 : 1813);
 		process.return_api(result);
