@@ -104,6 +104,31 @@ uint32_t wsa_error(int host)
 	}
 }
 
+// RAVEN_TRACE_SOCKETS: how many bytes a socket received, from whom and when, without the content.
+void trace_received(int descriptor, ssize_t count, const char *path)
+{
+	static const bool traced = std::getenv("RAVEN_TRACE_SOCKETS");
+	if (!traced || count <= 0)
+		return;
+	sockaddr_storage peer{};
+	socklen_t size = sizeof(peer);
+	char text[INET6_ADDRSTRLEN] = "?";
+	uint16_t port = 0;
+	if (!::getpeername(descriptor, reinterpret_cast<sockaddr *>(&peer), &size)) {
+		if (peer.ss_family == AF_INET) {
+			const auto &address = reinterpret_cast<const sockaddr_in &>(peer);
+			::inet_ntop(AF_INET, &address.sin_addr, text, sizeof(text));
+			port = ntohs(address.sin_port);
+		} else if (peer.ss_family == AF_INET6) {
+			const auto &address = reinterpret_cast<const sockaddr_in6 &>(peer);
+			::inet_ntop(AF_INET6, &address.sin6_addr, text, sizeof(text));
+			port = ntohs(address.sin6_port);
+		}
+	}
+	std::fprintf(stderr, "raven: socket %d received %zd bytes from %s:%u at %lld ms (%s)\n", descriptor, count, text, port,
+		(long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(), path);
+}
+
 constexpr uint16_t windows_inet6 = 23;
 
 int host_family(int family) { return family == windows_inet6 ? AF_INET6 : family; }
@@ -484,9 +509,7 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 				reinterpret_cast<sockaddr *>(from), from_length);
 			if (count >= 0) {
 				call.write(buffer, std::span<const uint8_t>(bytes.data(), size_t(count)));
-				if (count > 0 && std::getenv("RAVEN_TRACE_SOCKETS"))
-					std::fprintf(stderr, "raven: socket %d received %zd bytes at %lld ms\n", socket->descriptor, count,
-						(long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+				trace_received(socket->descriptor, count, "direct");
 				return count;
 			}
 			if (errno == EINTR)
@@ -631,6 +654,7 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 				bytes = 0;
 				return 0;
 			}
+			trace_received(socket.descriptor, count, "overlapped");
 			size_t offset = 0;
 			for (const auto &buffer : transfer.buffers) {
 				const size_t part = std::min<size_t>(buffer.length, size_t(count) - offset);
