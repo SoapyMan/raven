@@ -1258,6 +1258,90 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		if (call[4]) call.store<uint32_t>(call[4], clamp(uint64_t(info.f_blocks) * info.f_frsize / cluster));
 		call.ret(1);
 	});
+	// The volume of an open file, as GetVolumeInformationW and GetDiskFreeSpaceW describe it: one NTFS disk volume without a label.
+	registry.add("NtQueryVolumeInformationFile", 5, [file_of](ApiCall &call) {
+		constexpr uint32_t volume_class = 1, size_class = 3, device_class = 4, attribute_class = 5, full_size_class = 7;
+		constexpr uint32_t invalid_handle = 0xc0000008U, length_mismatch = 0xc0000004U, buffer_overflow = 0x80000005U, invalid_class = 0xc0000003U;
+		const size_t width = call.pointer_width();
+		const auto finish = [&](uint32_t status, uint64_t information) {
+			call.store_pointer(call[1], status);
+			call.store_pointer(call[1] + width, information);
+			call.ret(status);
+		};
+		const auto file = file_of(call[0]);
+		if (!file) {
+			call.ret(invalid_handle);
+			return;
+		}
+		const uint32_t capacity = call.u32(3), kind = call.u32(4);
+		struct statvfs info{};
+		if ((kind == size_class || kind == full_size_class) && ::fstatvfs(file->descriptor, &info)) {
+			finish(0xc0000001U, 0);
+			return;
+		}
+		constexpr uint64_t cluster = 8 * 512;
+		const uint64_t total = uint64_t(info.f_blocks) * info.f_frsize / cluster, available = uint64_t(info.f_bavail) * info.f_frsize / cluster;
+		std::vector<uint8_t> bytes;
+		size_t fixed = 0;
+		const auto put = [&bytes](size_t at, const auto value) {
+			if (bytes.size() < at + sizeof(value)) bytes.resize(at + sizeof(value));
+			std::memcpy(bytes.data() + at, &value, sizeof(value));
+		};
+		const auto put_name = [&bytes](size_t at, std::u16string_view name) {
+			bytes.resize(at + name.size() * 2);
+			std::memcpy(bytes.data() + at, name.data(), name.size() * 2);
+		};
+		switch (kind) {
+		case volume_class:
+			// Creation time, serial number, label length, object support, then the label.
+			fixed = 18;
+			put(0, uint64_t(0));
+			put(8, uint32_t(0x52415645));
+			put(12, uint32_t(0));
+			put(16, uint8_t(0));
+			bytes.resize(fixed);
+			break;
+		case size_class:
+			fixed = 24;
+			put(0, total);
+			put(8, available);
+			put(16, uint32_t(8));
+			put(20, uint32_t(512));
+			break;
+		case device_class:
+			// FILE_DEVICE_DISK, no characteristics.
+			fixed = 8;
+			put(0, uint32_t(7));
+			put(4, uint32_t(0));
+			break;
+		case attribute_class:
+			fixed = 12;
+			put(0, uint32_t(0x0000000f));
+			put(4, int32_t(255));
+			put(8, uint32_t(8));
+			put_name(12, u"NTFS");
+			break;
+		case full_size_class:
+			fixed = 32;
+			put(0, total);
+			put(8, available);
+			put(16, available);
+			put(24, uint32_t(8));
+			put(28, uint32_t(512));
+			break;
+		default:
+			call.ret(invalid_class);
+			return;
+		}
+		if (capacity < fixed) {
+			finish(length_mismatch, 0);
+			return;
+		}
+		// A name that does not fit is cut at the buffer's end.
+		const size_t written = std::min<size_t>(bytes.size(), capacity);
+		call.write(call[2], std::span<const uint8_t>(bytes.data(), written));
+		finish(written < bytes.size() ? buffer_overflow : 0, written);
+	});
 	// GetTempFileName: a zero unique value picks a free name and creates the file; any other value only forms the name.
 	registry.add("GetTempFileNameW", 4, [&, resolve, missing, file_of, copy_file](ApiCall &call) {
 		const auto directory = call.wide(call[0]);
