@@ -121,6 +121,9 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
     if(OPENSSL_FOUND)
         target_link_libraries(raven_cpu PUBLIC OpenSSL::Crypto)
         target_compile_definitions(raven_cpu PRIVATE RAVEN_OPENSSL=1)
+        # The Schannel package of SSPI is a TLS client over the same library.
+        target_sources(raven_cpu PRIVATE nt/schannel_api.cpp)
+        target_link_libraries(raven_cpu PUBLIC OpenSSL::SSL)
     endif()
     # Font files are read and rasterized for the DirectWrite component with FreeType when it is there.
     if(FREETYPE_FOUND)
@@ -1676,6 +1679,19 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             add_custom_target(socket_message_fixture ALL DEPENDS ${SOCKET_MESSAGE_CLIENT})
             add_test(NAME native_socket_messages_x64 COMMAND raven --run-process --execution=native ${SOCKET_MESSAGE_CLIENT})
             set_tests_properties(native_socket_messages_x64 PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+            find_program(RAVEN_OPENSSL_TOOL openssl)
+            if(OPENSSL_FOUND AND RAVEN_OPENSSL_TOOL AND Python3_EXECUTABLE)
+                set(SCHANNEL_CLIENT ${CMAKE_CURRENT_BINARY_DIR}/schannel-client.exe)
+                add_custom_command(OUTPUT ${SCHANNEL_CLIENT}
+                    COMMAND ${RAVEN_MINGW64} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                        -Wl,--entry,raven_entry,--no-insert-timestamp -o ${SCHANNEL_CLIENT}
+                        ${PROJECT_SOURCE_DIR}/testdata/native_loader/schannel_client.c -lkernel32 -lws2_32 -lsecur32
+                    DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/schannel_client.c VERBATIM)
+                add_custom_target(schannel_fixture ALL DEPENDS ${SCHANNEL_CLIENT})
+                add_test(NAME native_schannel_x64 COMMAND ${Python3_EXECUTABLE}
+                    ${PROJECT_SOURCE_DIR}/scripts/native-schannel.py $<TARGET_FILE:raven> ${SCHANNEL_CLIENT} ${CMAKE_CURRENT_BINARY_DIR})
+                set_tests_properties(native_schannel_x64 PROPERTIES TIMEOUT 60)
+            endif()
             find_program(RAVEN_MINGW32 i686-w64-mingw32-gcc)
             set(REMOTE_PROCESS_CLIENTS)
             set(SHARED_WAIT_CLIENTS)

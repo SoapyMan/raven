@@ -249,9 +249,13 @@ std::optional<std::vector<uint8_t>> descriptor_from_text(std::u16string_view tex
 void register_security_api(ApiRegistry &registry, KernelContext &context)
 {
 	auto &objects = context.objects;
-	// No SSPI provider is installed; callers can use the documented initialization failure path.
+#ifdef RAVEN_OPENSSL
+	register_schannel_api(registry, context);
+#else
+	// Without a TLS library no SSPI provider is installed; callers can use the documented initialization failure path.
 	registry.add("InitSecurityInterfaceA", 0, [](ApiCall &call) { call.fail(50); });
 	registry.add("InitSecurityInterfaceW", 0, [](ApiCall &call) { call.fail(50); });
+#endif
 	registry.add("InitializeSecurityDescriptor", 2, [](ApiCall &call) {
 		if (!call[0]) {
 			call.fail(87);
