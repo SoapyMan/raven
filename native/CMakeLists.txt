@@ -2234,11 +2234,36 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             PASS_REGULAR_EXPRESSION "Native entry returned 0 " ENVIRONMENT RAVEN_PREFIX=${KERNEL_PREFIX})
         add_test(NAME native_kernel_file_persistence COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/check-file-persistence.py ${KERNEL_PREFIX})
         set_tests_properties(native_kernel_file_persistence PROPERTIES TIMEOUT 15 DEPENDS native_kernel_files)
+        set(RAVEN_CLANG_MINGW_INCLUDE)
         if(RAVEN_CLANG)
+            # Some distributions' clang does not search the MinGW headers the MinGW gcc uses: hand it the directory that holds windows.h.
+            set(clang_probe ${CMAKE_CURRENT_BINARY_DIR}/clang-mingw-probe.c)
+            file(WRITE ${clang_probe} "#include <windows.h>\n")
+            execute_process(COMMAND ${RAVEN_CLANG} --target=x86_64-w64-mingw32 -fsyntax-only ${clang_probe}
+                RESULT_VARIABLE clang_headers OUTPUT_QUIET ERROR_QUIET)
+            if(NOT clang_headers EQUAL 0)
+                execute_process(COMMAND ${RAVEN_MINGW64} -xc -E -Wp,-v ${clang_probe}
+                    OUTPUT_QUIET ERROR_VARIABLE mingw_search)
+                string(REGEX MATCHALL "\n [^\n]+" mingw_directories "${mingw_search}")
+                foreach(directory ${mingw_directories})
+                    string(STRIP "${directory}" directory)
+                    if(EXISTS ${directory}/windows.h)
+                        set(RAVEN_CLANG_MINGW_INCLUDE -isystem ${directory})
+                        break()
+                    endif()
+                endforeach()
+                execute_process(COMMAND ${RAVEN_CLANG} --target=x86_64-w64-mingw32 ${RAVEN_CLANG_MINGW_INCLUDE} -fsyntax-only ${clang_probe}
+                    RESULT_VARIABLE clang_headers OUTPUT_QUIET ERROR_QUIET)
+                if(NOT clang_headers EQUAL 0)
+                    message(STATUS "clang cannot compile against the MinGW headers; the structured-exception test is skipped")
+                endif()
+            endif()
+        endif()
+        if(RAVEN_CLANG AND clang_headers EQUAL 0)
             # The structured-exception fixture needs the compiler's __try support; the program supplies its own scope-table handler.
             set(SEH_OBJECT ${CMAKE_CURRENT_BINARY_DIR}/kernel-seh.o)
             add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/kernel-seh.exe
-                COMMAND ${RAVEN_CLANG} --target=x86_64-w64-mingw32 -O0 -fms-extensions -fseh-exceptions -Xclang -fasync-exceptions -Wno-inconsistent-dllimport -fno-stack-protector -mno-stack-arg-probe -c
+                COMMAND ${RAVEN_CLANG} --target=x86_64-w64-mingw32 ${RAVEN_CLANG_MINGW_INCLUDE} -O0 -fms-extensions -fseh-exceptions -Xclang -fasync-exceptions -Wno-inconsistent-dllimport -fno-stack-protector -mno-stack-arg-probe -c
                     -o ${SEH_OBJECT} ${LOADER_SOURCES}/kernel_seh_client.c
                 COMMAND ${RAVEN_MINGW64} -nostdlib -Wl,--entry,raven_entry,--image-base,0x1b3000000
                     -o ${CMAKE_CURRENT_BINARY_DIR}/kernel-seh.exe ${SEH_OBJECT} -lkernel32
