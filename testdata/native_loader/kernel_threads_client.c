@@ -189,6 +189,13 @@ int raven_entry(void)
 		CloseHandle(workers[i]);
 	}
 	CHECK(97,QueryDepthSList(&list)==0 && !InterlockedPopEntrySList(&list));
+	// Waits already decided: a signaled manual event stays signaled, a semaphore gives one count per wait, an empty one times out.
+	HANDLE ready=CreateEventW(0,TRUE,TRUE,0), counted=CreateSemaphoreW(0,3,3,0);
+	for(int i=0;i<1000;++i) CHECK(98,WaitForSingleObject(ready,INFINITE)==WAIT_OBJECT_0);
+	for(int i=0;i<3;++i) CHECK(99,WaitForSingleObjectEx(counted,0,FALSE)==WAIT_OBJECT_0);
+	CHECK(100,WaitForSingleObject(counted,0)==WAIT_TIMEOUT && ResetEvent(ready) && WaitForSingleObject(ready,10)==WAIT_TIMEOUT);
+	CloseHandle(ready);
+	CloseHandle(counted);
 
 	InitializeSRWLock(&lock);
 	InitializeConditionVariable(&ready_variable);

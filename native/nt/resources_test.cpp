@@ -53,7 +53,7 @@ int main(int argc, char **argv)
 		raven::LoadedImage *initial[] = {&entry.loaded, &provider.loaded};
 		raven::NativeProcess process(initial, argv[1], std::chrono::seconds(2));
 		for (const auto &symbol : provider.exports)
-			process.add_api_trap(provider.loaded.base() + symbol.address);
+			process.add_api_trap(raven::api_trap_address(provider, "kernel32.dll", symbol.names.at(0), symbol.address));
 		raven::NativeEnvironment environment(process, entry.loaded.base(), 1, 1);
 		raven::NativeResources resources(process, environment, modules, entry);
 		const auto api = [&](const char *name, std::initializer_list<uint64_t> args) {

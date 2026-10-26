@@ -542,6 +542,7 @@ struct NativeProcess::State {
 	// Cumulative counters can be sampled between debugger attaches without tracing the guest's syscalls.
 	uint64_t slice_interrupts = 0, slice_deferrals = 0, slice_yield_requests = 0;
 	uint64_t served_calls = 0, served_waits = 0, served_yields = 0;
+	bool served_declined = false;
 	uint64_t queued_calls = 0;
 	std::optional<std::vector<uint64_t>> translated_words;
 	// How deep in guest callbacks the translated call was made: a callback the handler starts makes real calls of its own.
@@ -2061,6 +2062,18 @@ uint64_t NativeProcess::serving_teb() const
 	return found->second;
 }
 
+bool NativeProcess::serving() const
+{
+	return state->serving;
+}
+
+void NativeProcess::decline_served()
+{
+	if (!state->serving || state->serving_queued)
+		throw std::runtime_error("only a synchronous served call can be declined");
+	state->served_declined = true;
+}
+
 bool NativeProcess::serving_queued() const
 {
 	return state->serving && state->serving_queued;
@@ -2214,16 +2227,19 @@ bool NativeProcess::serve_pending()
 	if (!stub && !queued)
 		return false;
 	// A synchronous call observes every earlier queued record on this thread.
+	bool declined = false;
 	if (stub) {
 		drain_queued_calls(true);
+		state->served_declined = false;
 		block[10] = serve_call(stub, {block[1], block[2], block[3], block[4]}, {block[6], block[7], block[8], block[9]}, block[5] + 40);
+		declined = std::exchange(state->served_declined, false);
 	}
 	if (state->resume_hook)
 		state->resume_hook();
 	// The stub saves its result in RAX before obeying this request; later threads may then overwrite the shared result slot.
 	const bool due = state->slice.count() > 0 && state->slice_yield &&
 		std::chrono::steady_clock::now() - state->slice_started >= state->slice;
-	block[11] = !parallel() && !state->served_yield_traps.empty() && due;
+	block[11] = declined ? 2 : !parallel() && !state->served_yield_traps.empty() && due;
 	if (stub)
 		__atomic_store_n(&block[0], 0, __ATOMIC_RELEASE);
 	// Parallel threads own their results, so another host frame can run as soon as this reply is published.

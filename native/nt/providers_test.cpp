@@ -85,7 +85,7 @@ static void served_thread_result(const std::string &bootstrap)
 	const auto other = process.new_thread(other_stack + 65536, other_teb);
 	unsigned calls = 0, switches = 0;
 	bool nested = false;
-	process.set_served_calls(block, {stub}, 112, 85, {stub + 101}, [&](uint64_t address) {
+	process.set_served_calls(block, {stub}, 112, 85, {stub + 109}, [&](uint64_t address) {
 		check(address == stub, "served call used another stub");
 		check(process.serving_teb() == (nested ? other_teb : teb), "served call lost its current TEB");
 		const auto words = process.api_arguments(6);
@@ -99,7 +99,7 @@ static void served_thread_result(const std::string &bootstrap)
 		process.return_api(sum);
 	});
 	process.set_time_slicing(std::chrono::milliseconds(1), [&] { return !nested; }, [&] {
-		check(process.context().registers.rip == stub + 102, "served thread yielded before its result was private");
+		check(process.context().registers.rip == stub + 110, "served thread yielded before its result was private");
 		const auto saved = process.save_thread();
 		nested = true;
 		process.load_thread(other);

@@ -219,6 +219,15 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 					if (current[index] == 1 && objects.try_consume(resolved[index], id))
 						return uint32_t(index);
 			}
+			if (milliseconds == 0 || (wake && std::chrono::steady_clock::now() >= *wake)) {
+				if (!(alertable && !threads.current().apcs.empty()))
+					return wait_timeout;
+			}
+			// A served wait answers only what is already decided; running APCs or blocking needs the thread stopped.
+			if (call.process.serving()) {
+				call.process.decline_served();
+				return 0;
+			}
 			if (alertable && !threads.current().apcs.empty() && run_apcs())
 				return wait_io_completion;
 			if (milliseconds == 0 || (wake && std::chrono::steady_clock::now() >= *wake))

@@ -157,6 +157,9 @@ public:
 		std::vector<uint64_t> yield_traps, std::function<void(uint64_t stub)> handler, std::vector<uint64_t> queued_stubs = {});
 	// Host-recorded TEB of a served call, zero outside that path.
 	uint64_t serving_teb() const;
+	bool serving() const;
+	// A served call that would block gives up its answer: the stub then stops at its fallback trap with its arguments untouched.
+	void decline_served();
 	bool serving_queued() const;
 	void set_queued_gl_elements(bool available);
 	// Runs before the guest runs again: before every resumption and before a served call is answered.

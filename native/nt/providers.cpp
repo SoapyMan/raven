@@ -146,7 +146,11 @@ static bool served_api(std::string_view module, std::string_view name)
 {
 	if (module == "kernel32.dll" || module == "kernelbase.dll")
 		return name == "QueryPerformanceCounter" || name == "QueryPerformanceFrequency" || name == "WakeConditionVariable" ||
-			name == "WakeAllConditionVariable" || name == "ReleaseSemaphore";
+			name == "WakeAllConditionVariable" || name == "ReleaseSemaphore" || name == "CreateSemaphoreExW" ||
+			name == "WaitForSingleObject" || name == "WaitForSingleObjectEx";
+	// Reading a socket's recorded events polls the host sockets and never blocks.
+	if (module == "ws2_32.dll")
+		return name == "WSAEnumNetworkEvents";
 	// Waking marks the sleepers; they run when the scheduler next picks a thread.
 	if (module == "ntdll.dll")
 		return name == "RtlWakeConditionVariable" || name == "RtlWakeAllConditionVariable";
@@ -168,7 +172,7 @@ static bool served_api(std::string_view module, std::string_view name)
 // A served stub: it loads the block address from the provider's own pointer, which stays zero until the runtime maps the block, stores
 // RCX, RDX, R8, R9, RSP and the low halves of XMM0 to XMM3, publishes its own address and spins until the runtime clears it. After a
 // thousand rounds it stops at a breakpoint instead, which gives the processor to the runtime when the two compete for it.
-static constexpr size_t served_stub_size = 128, served_trap = 0x70, served_wait = 85, served_yield = 101;
+static constexpr size_t served_stub_size = 128, served_trap = 0x70, served_wait = 85, served_yield = 109;
 
 static std::vector<uint8_t> served_stub(int32_t to_pointer)
 {
@@ -179,8 +183,9 @@ static std::vector<uint8_t> served_stub(int32_t to_pointer)
 		// mov r11d, 1000; spin: pause; cmp qword [r10], 0; je done; dec r11d; jnz spin; int3; jmp to the compare; nop
 		0x41, 0xbb, 0xe8, 0x03, 0x00, 0x00, 0xf3, 0x90, 0x49, 0x83, 0x3a, 0x00, 0x74, 0x0a, 0x41, 0xff, 0xcb, 0x75, 0xf3, 0xcc, 0xeb, 0xf2,
 		0x66, 0x90,
-		// done: mov rax, [r10+80]; cmp qword [r10+88], 0; je return; int3; return: ret
-		0x49, 0x8b, 0x42, 0x50, 0x49, 0x83, 0x7a, 0x58, 0x00, 0x74, 0x01, 0xcc, 0xc3};
+		// done: mov rax, [r10+80]; mov r11, [r10+88]; test r11, r11; je return; cmp r11d, 2; je fallback; int3; return: ret
+		// A declined call (2) takes the fallback trap that follows, with the argument registers as the caller left them.
+		0x49, 0x8b, 0x42, 0x50, 0x4d, 0x8b, 0x5a, 0x58, 0x4d, 0x85, 0xdb, 0x74, 0x07, 0x41, 0x83, 0xfb, 0x02, 0x74, 0x03, 0xcc, 0xc3};
 	const int32_t displacement = to_pointer - 7;
 	std::memcpy(code.data() + 3, &displacement, 4);
 	code.resize(served_trap + 2);
