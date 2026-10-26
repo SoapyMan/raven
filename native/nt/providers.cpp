@@ -147,7 +147,7 @@ static bool served_api(std::string_view module, std::string_view name)
 	if (module == "kernel32.dll" || module == "kernelbase.dll")
 		return name == "QueryPerformanceCounter" || name == "QueryPerformanceFrequency" || name == "WakeConditionVariable" ||
 			name == "WakeAllConditionVariable" || name == "ReleaseSemaphore" || name == "CreateSemaphoreExW" ||
-			name == "WaitForSingleObject" || name == "WaitForSingleObjectEx";
+			name == "WaitForSingleObject" || name == "WaitForSingleObjectEx" || name == "SetEvent" || name == "ResetEvent" || name == "CloseHandle";
 	// Reading a socket's recorded events polls the host sockets and never blocks.
 	if (module == "ws2_32.dll")
 		return name == "WSAEnumNetworkEvents";
@@ -2367,6 +2367,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	register_canvas_service(api_registry, kernel);
 	register_sync_api(api_registry, kernel);
 	register_thread_api(api_registry, kernel);
+	NativeObjectAPI::register_served(api_registry, kernel.objects);
 	register_text_api(api_registry, kernel);
 	register_memory_api(api_registry, kernel);
 	register_file_api(api_registry, kernel);

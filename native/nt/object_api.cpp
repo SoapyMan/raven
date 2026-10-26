@@ -34,6 +34,21 @@ static uint32_t error(uint32_t status)
 	return 87;
 }
 
+void NativeObjectAPI::register_served(ApiRegistry &registry, NativeObjects &objects)
+{
+	registry.add("CloseHandle", 1, [&objects](ApiCall &call) {
+		const uint32_t status=objects.close(call[0]);
+		if (status) call.fail(error(status), 0);
+		else call.ret(1);
+	});
+	for (const bool set : {true, false})
+		registry.add(set ? "SetEvent" : "ResetEvent", 1, [&objects, set](ApiCall &call) {
+			const uint32_t status=objects.set_event(call[0], set).status;
+			if (status) call.fail(error(status), 0);
+			else call.ret(1);
+		});
+}
+
 bool NativeObjectAPI::dispatch(std::string_view name)
 {
 	if (file_io(name)) return true;

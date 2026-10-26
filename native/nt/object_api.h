@@ -1,6 +1,7 @@
 #pragma once
 
 #include "environment.h"
+#include "api.h"
 #include "objects.h"
 
 namespace raven {
@@ -15,6 +16,8 @@ public:
 	// With the scheduler, an NT wait that cannot be satisfied lets the other guest threads run until it can be, or its time is up.
 	void set_threads(class NativeThreads *value) { threads = value; }
 	static std::span<const std::string_view> nt_exports();
+	// The calls a served stub answers without stopping the guest: closing a handle and setting or resetting an event.
+	static void register_served(ApiRegistry &registry, NativeObjects &objects);
 
 private:
 	NativeProcess &process;
