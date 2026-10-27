@@ -28,11 +28,13 @@ void NativeWindows::paint_child_frames(uint64_t root)
 				continue;
 			const DesktopRect rect{window->outer.left - top->outer.left, window->outer.top - top->outer.top,
 				window->outer.right - top->outer.left, window->outer.bottom - top->outer.top};
-			// With visual styles the sunken edges become the thin light borders of Windows 11 fields and lists.
+			// With visual styles the sunken edges become the thin light borders of Windows 11 fields and lists, or dark ones for a window
+			// given a dark theme variant.
 			if (themed() && (window->ex_style & 0x20200U || window->style & 0x800000U)) {
-				ring(rect, 0xd5d5d5, 0xd5d5d5);
+				const bool dark = dark_windows.contains(handle);
+				ring(rect, dark ? 0x5a5a5a : 0xd5d5d5, dark ? 0x5a5a5a : 0xd5d5d5);
 				if (window->ex_style & 0x200U)
-					ring({rect.left + 1, rect.top + 1, rect.right - 1, rect.bottom - 1}, 0xffffff, 0xffffff);
+					ring({rect.left + 1, rect.top + 1, rect.right - 1, rect.bottom - 1}, dark ? 0x2b2b2b : 0xffffff, dark ? 0x2b2b2b : 0xffffff);
 			} else if (window->ex_style & 0x200U)
 				canvas.edge(rect, color(color_button_shadow), color(color_button_highlight), color(color_dark_shadow), color(color_light));
 			else if (window->ex_style & 0x20000U)

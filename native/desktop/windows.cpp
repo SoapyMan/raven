@@ -1368,6 +1368,8 @@ bool NativeWindows::destroy(uint64_t handle)
 		if (objects.menu(menu->second)) objects.erase(menu->second);
 		system_menus.erase(menu);
 	}
+	unthemed_windows.erase(handle);
+	dark_windows.erase(handle);
 	foreign_content.erase(handle);
 	foreign_black.erase(handle);
 	return objects.erase(handle);

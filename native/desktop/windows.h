@@ -327,12 +327,13 @@ private:
 	void register_long_api(ApiRegistry &registry);
 	void register_ansi_api(ApiRegistry &registry);
 	void register_theme_api(ApiRegistry &registry);
-	// Visual styles: on unless RAVEN_THEME=classic; the open theme handles with their class, the theme each window opened last, and the
-	// windows SetWindowTheme took out of the styles.
+	// Visual styles: on unless RAVEN_THEME=classic; the open theme handles with their class, those drawn with the dark palette, the
+	// theme each window opened last, the windows SetWindowTheme took out of the styles and those it gave a dark variant.
 	bool themed() const;
 	std::map<uint64_t, std::string> themes;
+	std::set<uint64_t> dark_themes;
 	std::map<uint64_t, uint64_t> window_themes;
-	std::set<uint64_t> unthemed_windows;
+	std::set<uint64_t> unthemed_windows, dark_windows;
 	uint64_t next_theme = 0x7a000001;
 	// Layout of one non-client scroll bar in screen coordinates.
 	struct ScrollGeometry {

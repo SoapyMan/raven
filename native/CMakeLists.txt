@@ -950,6 +950,14 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         add_custom_target(pure_pe_fixture ALL DEPENDS ${PURE_FIXTURE})
         add_test(NAME native_pure_cli COMMAND raven --run-process --execution=native ${PURE_FIXTURE})
         set_tests_properties(native_pure_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        set(THEME_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/theme-fixture.exe)
+        add_custom_command(OUTPUT ${THEME_FIXTURE}
+            COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector -Wl,--entry,raven_entry,--no-insert-timestamp
+                -o ${THEME_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/native_loader/theme_client.c -luxtheme -luser32 -lkernel32
+            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/theme_client.c VERBATIM)
+        add_custom_target(theme_pe_fixture ALL DEPENDS ${THEME_FIXTURE})
+        add_test(NAME native_theme_dark_cli COMMAND raven --run-process --execution=native ${THEME_FIXTURE})
+        set_tests_properties(native_theme_dark_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
         set(DC_ATTRIBUTE_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/dc-attribute-fixture.exe)
         add_custom_command(OUTPUT ${DC_ATTRIBUTE_FIXTURE}
             COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
