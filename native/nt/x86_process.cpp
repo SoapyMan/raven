@@ -900,7 +900,8 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 					static const std::map<std::string_view, std::vector<size_t>> wide_strings{{"SetWindowTextW", {1}}, {"SetDlgItemTextW", {2}},
 						{"CreateWindowExW", {1, 2}}, {"RegisterClassW", {}}, {"MessageBoxW", {1, 2}}, {"LoadStringW", {}}, {"CreateProcessW", {0, 1, 7}}, {"ShellExecuteW", {1, 2, 3}}, {"LoadLibraryW", {0}}, {"CreateFileW", {0}}, {"GetFileAttributesW", {0}},
 						{"PathIsURLW", {0}}, {"PathSearchAndQualifyW", {0}}, {"UrlApplySchemeW", {0}}, {"GetFullPathNameW", {0}}, {"RegOpenKeyExW", {1}},
-						{"RegCreateKeyExW", {1}}, {"RegQueryValueExW", {1}}, {"RegSetValueExW", {1}}, {"lstrcmpiW", {0, 1}}};
+						{"RegCreateKeyExW", {1}}, {"RegQueryValueExW", {1}}, {"RegSetValueExW", {1}}, {"lstrcmpiW", {0, 1}}, {"OpenThemeData", {1}},
+						{"OpenThemeDataEx", {1}}, {"SetWindowTheme", {1, 2}}};
 					if (const auto entry = wide_strings.find(api); entry != wide_strings.end() && !entry->second.empty()) {
 						const auto words = process.api_arguments(found->second.second / 4);
 						for (const auto index : entry->second) {
