@@ -371,5 +371,14 @@ int raven_entry(void)
 	compare = 1;
 	if (wait_on(&watched, &compare, sizeof watched, 10) || GetLastError() != ERROR_TIMEOUT) return 167;
 	wake_all(&watched);
+	/* A descriptor naming the local administrator account and a raw access mask, as installers write for their shared folders. */
+	PSECURITY_DESCRIPTOR shared_folder = NULL;
+	if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:(A;OI;GA;;;LS)(A;OI;GA;;;BA)(A;OI;GA;;;LA)(A;OI;GR;;;AU)(A;OI;0x00100000;;;BG)",
+		SDDL_REVISION_1, &shared_folder, NULL)) return 168;
+	LPWSTR round_trip = NULL;
+	if (!ConvertSecurityDescriptorToStringSecurityDescriptorW(shared_folder, SDDL_REVISION_1, DACL_SECURITY_INFORMATION, &round_trip, NULL) ||
+		!contains(round_trip, L";;;LA)") || !contains(round_trip, L"0x100000;;;BG)")) return 169;
+	LocalFree(round_trip);
+	LocalFree(shared_folder);
 	return 0;
 }

@@ -62,7 +62,9 @@ std::optional<std::vector<uint8_t>> sid_from_text(std::u16string text)
 		{u"PO", u"S-1-5-32-550"}, {u"PS", u"S-1-5-10"}, {u"PU", u"S-1-5-32-547"}, {u"RC", u"S-1-5-12"}, {u"RD", u"S-1-5-32-555"},
 		{u"RE", u"S-1-5-32-552"}, {u"RU", u"S-1-5-32-554"}, {u"SI", u"S-1-16-16384"}, {u"SO", u"S-1-5-32-549"}, {u"SS", u"S-1-18-2"},
 		{u"SU", u"S-1-5-6"}, {u"SY", u"S-1-5-18"}, {u"WD", u"S-1-1-0"}, {u"WR", u"S-1-5-33"}, {u"OW", u"S-1-3-4"},
-		{u"UD", u"S-1-5-84-0-0-0-0-0"}, {u"AC", u"S-1-15-2-1"}, {u"S1", u"S-1-16-0"}};
+		{u"UD", u"S-1-5-84-0-0-0-0-0"}, {u"AC", u"S-1-15-2-1"}, {u"S1", u"S-1-16-0"},
+		// The local administrator and guest accounts belong to the machine domain the user is part of.
+		{u"LA", u"S-1-5-21-1000-1000-1000-500"}, {u"LG", u"S-1-5-21-1000-1000-1000-501"}};
 	if (const auto alias = aliases.find(text); alias != aliases.end())
 		text = alias->second;
 	unsigned long long numbers[16];
@@ -460,7 +462,8 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 		call.store<uint16_t>(call[0] + 4, uint16_t(count + 1));
 		call.ret(1);
 	};
-	// Token information: the account is one fixed user in the Users group at medium integrity, not elevated, in session 1.
+	// Token information: the account is one fixed user in session 1, an administrator under User Account Control: medium integrity and a
+	// limited token, or high integrity and the full token when the process runs elevated.
 	registry.add("GetTokenInformation", 5, [&objects, &context](ApiCall &call) {
 		// The pseudo handles of the process token, the thread token and the thread's effective token name the program's own token.
 		const int32_t pseudo = int32_t(uint32_t(call[0]));
@@ -945,6 +948,52 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 		}
 		security_info(call);
 	});
+	// The descriptor of a kernel object, self-relative: the user owns what the process made, with the user's domain group, and a DACL that is
+	// present but null leaves the object open to everyone, which is how the runtime checks access to its objects.
+	registry.add("NtQuerySecurityObject", 5, [&objects](ApiCall &call) {
+		if (call[0] != UINT64_MAX && call[0] != UINT64_MAX - 1 && !objects.object(call[0])) {
+			call.ret(0xc0000008U);
+			return;
+		}
+		const uint32_t wanted = call.u32(1);
+		const auto sid = [](uint32_t last) {
+			std::vector<uint8_t> bytes{1, 5, 0, 0, 0, 0, 0, 5};
+			for (const uint32_t value : {21u, 1000u, 1000u, 1000u, last})
+				for (int shift = 0; shift < 32; shift += 8)
+					bytes.push_back(uint8_t(value >> shift));
+			return bytes;
+		};
+		std::vector<uint8_t> descriptor(20, 0);
+		descriptor[0] = 1;
+		uint16_t control = 0x8000;
+		const auto attach = [&](size_t offset_at, const std::vector<uint8_t> &part) {
+			const uint32_t offset = uint32_t(descriptor.size());
+			std::memcpy(descriptor.data() + offset_at, &offset, 4);
+			descriptor.insert(descriptor.end(), part.begin(), part.end());
+		};
+		if (wanted & 1)
+			attach(4, sid(1000));
+		if (wanted & 2)
+			attach(8, sid(513));
+		if (wanted & 4)
+			control |= 0x4;
+		std::memcpy(descriptor.data() + 2, &control, 2);
+		if (call[4])
+			call.store<uint32_t>(call[4], uint32_t(descriptor.size()));
+		if (call.u32(3) < descriptor.size()) {
+			call.ret(0xc0000023U);
+			return;
+		}
+		call.write(call[2], descriptor);
+		call.ret(0);
+	});
+	// Objects keep no descriptor of their own, so a new one is accepted for any object that exists.
+	registry.add("NtSetSecurityObject", 3, [&objects](ApiCall &call) {
+		const bool known = call[0] == UINT64_MAX || call[0] == UINT64_MAX - 1 || objects.object(call[0]);
+		call.ret(!known ? 0xc0000008U : !call[2] ? 0xc000000dU : 0);
+	});
+	// No job objects exist by name here, so opening one finds nothing.
+	registry.add("NtOpenJobObject", 3, [](ApiCall &call) { call.ret(0xc0000034U); });
 	// Reading a descriptor: the control bits say whether its parts are offsets from its start (self-relative) or pointers.
 	const auto part = [](ApiCall &call, uint64_t descriptor, size_t index) -> uint64_t {
 		const uint16_t control = call.load<uint16_t>(descriptor + 2);
@@ -1246,7 +1295,8 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 					{"S-1-5-32-556", "NO"}, {"S-1-5-20", "NS"}, {"S-1-5-2", "NU"}, {"S-1-5-32-550", "PO"}, {"S-1-5-10", "PS"},
 					{"S-1-5-32-547", "PU"}, {"S-1-5-12", "RC"}, {"S-1-5-32-555", "RD"}, {"S-1-5-32-552", "RE"}, {"S-1-5-32-554", "RU"},
 					{"S-1-16-16384", "SI"}, {"S-1-5-32-549", "SO"}, {"S-1-5-6", "SU"}, {"S-1-5-18", "SY"}, {"S-1-1-0", "WD"},
-					{"S-1-5-33", "WR"}, {"S-1-3-4", "OW"}, {"S-1-15-2-1", "AC"}};
+					{"S-1-5-33", "WR"}, {"S-1-3-4", "OW"}, {"S-1-15-2-1", "AC"}, {"S-1-5-21-1000-1000-1000-500", "LA"},
+					{"S-1-5-21-1000-1000-1000-501", "LG"}};
 				const auto sid_text = [&](uint64_t sid) {
 					const auto bytes = call.read(sid, sid_length(call, sid));
 					uint64_t authority = 0;

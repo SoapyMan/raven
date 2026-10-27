@@ -1,4 +1,5 @@
 #include "access_token.h"
+#include "elevation.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -77,7 +78,8 @@ AccessToken::AccessToken()
 			::fcntl(descriptor, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_SEAL))
 			throw std::runtime_error("cannot create access token storage");
 		map();
-		shared->integrity = 8192;
+		// Medium integrity, or high in a process that runs elevated, as an administrator's full token is.
+		shared->integrity = process_elevated() ? 12288 : 8192;
 		shared->type = 1;
 		shared->impersonation_level = 2;
 		shared->privilege_count = 1;

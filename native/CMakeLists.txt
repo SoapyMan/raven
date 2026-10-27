@@ -1854,7 +1854,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_custom_command(OUTPUT ${event_client}
                         COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
                             -Wl,--entry,${remote_entry},--no-insert-timestamp
-                            -o ${event_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/process_event_client.c -lkernel32 -lgcc
+                            -o ${event_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/process_event_client.c -ladvapi32 -lkernel32 -lgcc
                         DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/process_event_client.c VERBATIM)
                     list(APPEND EVENT_CLIENTS ${event_client})
                     add_test(NAME native_process_event_x${width} COMMAND raven --run-process --execution=native --timeout-ms=45000 ${event_client})
@@ -2648,6 +2648,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_custom_target(stream_fixture${width} ALL DEPENDS ${stream_client})
                     add_test(NAME native_global_stream_x${width} COMMAND raven --run-process --execution=native ${stream_client})
                     set_tests_properties(native_global_stream_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(integrity_client ${CMAKE_CURRENT_BINARY_DIR}/integrity-client${width}.exe)
+                    add_custom_command(OUTPUT ${integrity_client}
+                        COMMAND ${accprop_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${accprop_entry},--no-insert-timestamp
+                            -o ${integrity_client} ${LOADER_SOURCES}/integrity_client.c -ladvapi32 -lkernel32
+                        DEPENDS ${LOADER_SOURCES}/integrity_client.c VERBATIM)
+                    add_custom_target(integrity_fixture${width} ALL DEPENDS ${integrity_client})
+                    add_test(NAME native_integrity_elevated_x${width} COMMAND raven --run-process --execution=native --elevated ${integrity_client})
+                    set_tests_properties(native_integrity_elevated_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    add_test(NAME native_integrity_limited_x${width} COMMAND raven --run-process --execution=native ${integrity_client})
+                    set_tests_properties(native_integrity_limited_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 10 ")
                 endforeach()
                 # raven-deployment.dll, the PackageManager class of the Windows Runtime for each width: Raven code on the public headers.
                 set(deployment_source ${PROJECT_SOURCE_DIR}/native/upstream/raven-deployment)

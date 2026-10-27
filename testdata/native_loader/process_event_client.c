@@ -61,9 +61,16 @@ static int extended_events(void)
 		WaitForSingleObject(legacy, 0) != WAIT_OBJECT_0 || !CloseHandle(first) ||
 		WaitForSingleObject(second, 0) != WAIT_OBJECT_0 || !CloseHandle(legacy) || !CloseHandle(second))
 		return 107;
-	attributes.lpSecurityDescriptor = (void *)1;
-	if (CreateEventExW(&attributes, NULL, 0, EVENT_ALL_ACCESS) || GetLastError() != ERROR_NOT_SUPPORTED)
+	/* A descriptor of its own, as services give the events they share with other sessions, is accepted with the event. */
+	SECURITY_DESCRIPTOR descriptor;
+	if (!InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION) || !SetSecurityDescriptorDacl(&descriptor, TRUE, NULL, FALSE))
 		return 108;
+	attributes.lpSecurityDescriptor = &descriptor;
+	WCHAR global[sizeof(name) + 1] = L"Global";
+	for (unsigned index = 5; index < sizeof(name); ++index) global[index + 1] = wide[index];
+	HANDLE shared = CreateEventExW(&attributes, global, 0, EVENT_ALL_ACCESS);
+	if (!shared || GetLastError() == ERROR_ALREADY_EXISTS || !SetEvent(shared) || !CloseHandle(shared))
+		return 109;
 	return 0;
 }
 
