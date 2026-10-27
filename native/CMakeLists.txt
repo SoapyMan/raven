@@ -2624,6 +2624,33 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                         ${accprop_source}/accprop.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c -loleaut32 -lole32 -luuid -lkernel32 -lgcc
                     DEPENDS ${accprop_source}/accprop.c VERBATIM)
                 add_custom_target(accprop_component ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/raven-accprop.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-accprop.dll)
+                # raven-d3d10_1.dll, Direct3D 10.1 device creation over the d3d10core.dll the runtime is given, for each width.
+                set(d3d10_source ${PROJECT_SOURCE_DIR}/native/upstream/raven-d3d10)
+                add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/raven-d3d10_1.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-d3d10_1.dll
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/x86
+                    COMMAND ${RAVEN_MINGW64} ${accprop_flags} -Wl,--entry,DllMain,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/raven-d3d10_1.dll
+                        ${d3d10_source}/d3d10_1.c -lkernel32 -lgcc
+                    COMMAND ${RAVEN_MINGW32} ${accprop_flags} -Wl,--entry,_DllMain@12,--kill-at,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-d3d10_1.dll
+                        ${d3d10_source}/d3d10_1.c -lkernel32 -lgcc
+                    DEPENDS ${d3d10_source}/d3d10_1.c VERBATIM)
+                add_custom_target(d3d10_component ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/raven-d3d10_1.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-d3d10_1.dll)
+                foreach(width 64 32)
+                    set(d3d10_client ${CMAKE_CURRENT_BINARY_DIR}/d3d10-client${width}.exe)
+                    if(width EQUAL 64)
+                        set(d3d10_compiler ${RAVEN_MINGW64})
+                        set(d3d10_entry raven_entry)
+                    else()
+                        set(d3d10_compiler ${RAVEN_MINGW32})
+                        set(d3d10_entry _raven_entry)
+                    endif()
+                    add_custom_command(OUTPUT ${d3d10_client}
+                        COMMAND ${d3d10_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${d3d10_entry},--no-insert-timestamp
+                            -o ${d3d10_client} ${LOADER_SOURCES}/d3d10_client.c -lkernel32
+                        DEPENDS ${LOADER_SOURCES}/d3d10_client.c VERBATIM)
+                    add_custom_target(d3d10_fixture${width} ALL DEPENDS ${d3d10_client} d3d10_component)
+                    add_test(NAME native_d3d10_1_x${width} COMMAND raven --run-process --execution=native ${d3d10_client})
+                    set_tests_properties(native_d3d10_1_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                endforeach()
                 foreach(width 64 32)
                     set(accprop_client ${CMAKE_CURRENT_BINARY_DIR}/accprop-client${width}.exe)
                     if(width EQUAL 64)

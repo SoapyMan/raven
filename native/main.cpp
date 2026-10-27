@@ -461,13 +461,17 @@ int main(int argc, char **argv)
 						}
 						// The Direct3D libraries a Windows installation provides come from RAVEN_D3D_DIRECTORY (a DXVK build of the program's width)
 						// or from beside the runtime.
-						if (!selected && (name=="dxgi.dll" || name=="d3d11.dll" || name=="d3d10core.dll" || name=="d3d9.dll" || name=="d3d8.dll")) {
+						if (!selected && (name=="dxgi.dll" || name=="d3d11.dll" || name=="d3d10core.dll" || name=="d3d10_1.dll" || name=="d3d9.dll" || name=="d3d8.dll")) {
 							std::vector<std::filesystem::path> places;
 							if (const char *directory = std::getenv("RAVEN_D3D_DIRECTORY")) places.emplace_back(directory);
 							places.emplace_back(std::filesystem::read_symlink("/proc/self/exe").parent_path());
 							for (const auto &place : places)
 								if (std::filesystem::exists(place / name))
 									return read_module((place / name).c_str());
+							// Direct3D 10.1 is the runtime's own library over the d3d10core.dll found here, when no build carries one.
+							if (name=="d3d10_1.dll")
+								if (const auto component = component_directory / "raven-d3d10_1.dll"; std::filesystem::exists(component))
+									return read_module(component.c_str());
 						}
 						// Then the system directory, where installers put the libraries programs share. The system's own libraries are the
 						// runtime's whatever files there carry their names.
