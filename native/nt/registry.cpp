@@ -287,10 +287,17 @@ void NativeRegistry::register_animation_classes()
 
 void NativeRegistry::seed()
 {
-	// A hive that already has the program directories keeps whatever it holds.
-	if (keys.contains(fold(u"HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion")))
-		return;
 	seeding = true;
+	// A hive that has some of these already, such as one imported from an installation, keeps what it holds and gains only what it lacks.
+	bool added = false;
+	const auto fill = [&](uint64_t key, std::u16string_view name, uint32_t type, std::span<const uint8_t> data) {
+		uint32_t present_type = 0;
+		std::vector<uint8_t> present;
+		if (query(key, name, present_type, present) == 2) {
+			set(key, name, type, data);
+			added = true;
+		}
+	};
 	const auto bytes_of = [](std::u16string_view text) {
 		std::vector<uint8_t> data;
 		for (const auto character : text) {
@@ -306,7 +313,7 @@ void NativeRegistry::seed()
 		uint32_t disposition = 0;
 		if (create(0x80000002ULL, path, key, disposition))
 			return;
-		set(key, name, 1, bytes_of(value));
+		fill(key, name, 1, bytes_of(value));
 		close(key);
 	};
 	const auto number = [&](const char16_t *path, const char16_t *name, uint32_t value) {
@@ -315,7 +322,7 @@ void NativeRegistry::seed()
 		if (create(0x80000002ULL, path, key, disposition))
 			return;
 		const uint8_t data[4] = {uint8_t(value), uint8_t(value >> 8), uint8_t(value >> 16), uint8_t(value >> 24)};
-		set(key, name, 4, data);
+		fill(key, name, 4, data);
 		close(key);
 	};
 	// The 64-bit view of the machine hive, and the 32-bit view that 32-bit programs reach through Wow6432Node.
@@ -357,7 +364,7 @@ void NativeRegistry::seed()
 		uint32_t disposition = 0;
 		if (!create(0x80000002ULL, directx, key, disposition)) {
 			const uint8_t installed[8] = {0, 0, 0, 9, 0, 0, 0, 0};
-			set(key, u"InstalledVersion", 3, installed);
+			fill(key, u"InstalledVersion", 3, installed);
 			close(key);
 		}
 	}
@@ -373,12 +380,13 @@ void NativeRegistry::seed()
 		uint64_t key = 0;
 		uint32_t disposition = 0;
 		if (!create(0x80000002ULL, service, key, disposition)) {
-			set(key, u"ImagePath", 2, bytes_of(u"%systemroot%\\system32\\msiexec.exe /V"));
+			fill(key, u"ImagePath", 2, bytes_of(u"%systemroot%\\system32\\msiexec.exe /V"));
 			close(key);
 		}
 	}
 	seeding = false;
-	save();
+	if (added)
+		save();
 }
 
 bool NativeRegistry::resolve(uint64_t parent, std::u16string_view path, std::u16string &folded, std::u16string &display) const
