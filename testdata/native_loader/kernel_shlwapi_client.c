@@ -82,5 +82,8 @@ int raven_entry(void)
 	CHECK(33,same(size,L"512 bytes"));
 	CHECK(34,StrCmpIW(L"Hello",L"hELLO")==0 && StrCmpW(L"a",L"b")<0);
 	CHECK(35,StrToIntW(L"-42x")==-42);
+	/* The arguments of a command line start after the first space outside quotes. */
+	const WCHAR *line=L"\"C:\\Program Files\\Office\\run.exe\" /quiet now";
+	CHECK(36,PathGetArgsW(line)==line+34 && same(PathGetArgsW(L"alone"),L""));
 	return 0;
 }

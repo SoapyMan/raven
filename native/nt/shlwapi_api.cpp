@@ -844,6 +844,23 @@ void register_shlwapi_api(ApiRegistry &registry, KernelContext &context)
 		call.put_wide(call[0], result, call[1]);
 		call.ret(0);
 	});
+	// PathCchCanonicalize is the Ex form with no flags; both remove the . and .. parts the way PathCchCombineEx does.
+	const auto path_cch_canonicalize = [](ApiCall &call) {
+		if (!call[0] || !call[1] || call[1] > 32768 || !call[2]) {
+			call.ret(0x80070057U);
+			return;
+		}
+		const auto result = canonical(call.wide(call[2]));
+		if (result.size() >= call[1]) {
+			call.store<uint16_t>(call[0], 0);
+			call.ret(0x8007007aU);
+			return;
+		}
+		call.put_wide(call[0], result, call[1]);
+		call.ret(0);
+	};
+	registry.add("PathCchCanonicalize", 3, path_cch_canonicalize);
+	registry.add("PathCchCanonicalizeEx", 4, path_cch_canonicalize);
 	registry.add("PathAddBackslashW", 1, [](ApiCall &call) {
 		auto path = call.wide(call[0], max_path * 4);
 		if (path.empty() || separator(path.back())) {
@@ -880,6 +897,26 @@ void register_shlwapi_api(ApiRegistry &registry, KernelContext &context)
 			call.put_wide(call[0], path, max_path);
 		}
 	});
+	// The arguments of a command line: after the first space outside quotes, or the terminator when there is none.
+	for (const bool narrow : {false, true})
+		registry.add(narrow ? "PathGetArgsA" : "PathGetArgsW", 1, [narrow](ApiCall &call) {
+			if (!call[0]) {
+				call.ret(0);
+				return;
+			}
+			const size_t unit = narrow ? 1 : 2;
+			const auto text = narrow ? widen_ascii(call.narrow(call[0], max_path * 8)) : call.wide(call[0], max_path * 8);
+			bool quoted = false;
+			for (size_t at = 0; at < text.size(); ++at) {
+				if (text[at] == u'"')
+					quoted = !quoted;
+				else if (text[at] == u' ' && !quoted) {
+					call.ret(call[0] + (at + 1) * unit);
+					return;
+				}
+			}
+			call.ret(call[0] + text.size() * unit);
+		});
 	registry.add("PathMatchSpecW", 2, [](ApiCall &call) {
 		const auto file = call.wide(call[0]);
 		const auto spec = call.wide(call[1]);

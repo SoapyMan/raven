@@ -383,5 +383,10 @@ int raven_entry(void)
 	/* A thread has no I/O pending in the kernel's sense; a key takes its last write time and refuses a class it does not have. */
 	BOOL pending = TRUE;
 	if (!GetThreadIOPendingFlag(GetCurrentThread(), &pending) || pending) return 170;
+	/* PathCchCanonicalize removes the . and .. parts and refuses a result that does not fit. */
+	HRESULT (WINAPI *canonicalize)(WCHAR *, size_t, const WCHAR *) = (void *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "PathCchCanonicalize");
+	WCHAR clean[MAX_PATH];
+	if (!canonicalize || canonicalize(clean, MAX_PATH, L"C:\\a\\.\\b\\..\\c.txt") || lstrcmpW(clean, L"C:\\a\\c.txt") ||
+		canonicalize(clean, 4, L"C:\\a\\c.txt") != (HRESULT)0x8007007a) return 179;
 	return 0;
 }

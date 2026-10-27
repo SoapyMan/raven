@@ -59,14 +59,14 @@ static std::vector<uint8_t> read_host_file(const std::filesystem::path &path)
 	return bytes;
 }
 
-// PathCchCombineEx and PathCchSkipRoot live in kernelbase.dll on Windows and are not in the import libraries the public lists come from.
-static constexpr std::array<std::string_view, 47> names{
+// The PathCch functions live in kernelbase.dll on Windows and are not in the import libraries the public lists come from.
+static constexpr std::array<std::string_view, 49> names{
 	"CloseHandle","CreateEventA","CreateEventW","ExitProcess",
 	"FindResourceA", "FindResourceExA", "FindResourceExW", "FindResourceW", "FreeLibrary",
 	"GetACP", "GetCommandLineA", "GetCommandLineW", "GetCurrentProcessId", "GetCurrentThreadId", "GetFileType", "GetLastError", "GetModuleHandleA",
 	"GetModuleHandleW", "GetProcAddress", "GetProcessHeap", "GetStartupInfoA", "GetStartupInfoW", "GetStdHandle", "HeapAlloc", "HeapCreate", "HeapDestroy", "HeapFree", "HeapReAlloc", "HeapSize",
 	"LoadLibraryA", "LoadLibraryW", "LoadResource",
-	"LockResource", "MultiByteToWideChar", "PathCchCombineEx", "PathCchSkipRoot", "RaiseException", "ResetEvent", "SetEvent", "SetLastError", "SizeofResource",
+	"LockResource", "MultiByteToWideChar", "PathCchCanonicalize", "PathCchCanonicalizeEx", "PathCchCombineEx", "PathCchSkipRoot", "RaiseException", "ResetEvent", "SetEvent", "SetLastError", "SizeofResource",
 	"VirtualAlloc", "VirtualFree", "VirtualProtect", "VirtualQuery", "WaitForSingleObject", "WriteFile"
 };
 
