@@ -1411,6 +1411,15 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                 add_test(NAME native_imaging_${installer_arch} COMMAND raven --run-process --execution=native --timeout-ms=60000 ${fixture}/imaging.exe)
                 set_tests_properties(native_imaging_${installer_arch} PROPERTIES TIMEOUT 300 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
                     ENVIRONMENT RAVEN_PREFIX=${fixture}/imaging-prefix)
+                # Rich edit labels made transparent paint only their text over the parent, and ordinary ones their own background.
+                add_custom_command(OUTPUT ${fixture}/richedit.exe
+                    COMMAND ${installer_compiler} -O2 -nostdlib -fno-stack-protector -fno-builtin -Wl,--entry,${installer_entry},--no-insert-timestamp
+                        -o ${fixture}/richedit.exe ${PROJECT_SOURCE_DIR}/testdata/native_loader/richedit_client.c -luser32 -lgdi32 -lkernel32
+                    DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/richedit_client.c VERBATIM)
+                add_custom_target(richedit_fixture_${installer_arch} ALL DEPENDS ${fixture}/richedit.exe)
+                add_test(NAME native_richedit_${installer_arch} COMMAND raven --run-process --execution=native --timeout-ms=60000 ${fixture}/richedit.exe)
+                set_tests_properties(native_richedit_${installer_arch} PROPERTIES TIMEOUT 300 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                    ENVIRONMENT RAVEN_PREFIX=${fixture}/richedit-prefix)
                 # Messages from the program's own message table, with inserts from a va_list, as installers write their logs.
                 list(GET installer_compiler 0 installer_driver)
                 # The tools beside the compiler, or on the path when it is reached through a wrapper directory such as ccache's.
