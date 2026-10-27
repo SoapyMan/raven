@@ -9,7 +9,23 @@
 typedef int (__cdecl *new_handler)(size_t);
 static new_handler current_new_handler;
 
-CRT void terminate(void) { abort(); }
+typedef void (__cdecl *terminate_handler)(void);
+static terminate_handler current_terminate_handler;
+
+/* The program's handler runs first; if it returns, the process ends as it would without one. */
+CRT void terminate(void)
+{
+	if (current_terminate_handler)
+		current_terminate_handler();
+	abort();
+}
+
+CRT terminate_handler set_terminate(terminate_handler handler)
+{
+	const terminate_handler previous = current_terminate_handler;
+	current_terminate_handler = handler;
+	return previous;
+}
 CRT new_handler _set_new_handler(new_handler handler)
 {
 	new_handler previous = current_new_handler;
@@ -126,6 +142,206 @@ CRT int wcsncpy_s(wchar_t *to, size_t size, const wchar_t *from, size_t count)
 	to[length] = 0;
 	return 0;
 }
+
+/* The checked copies: nothing to copy succeeds; a missing destination is EINVAL; a missing source or a destination too small clears
+   the destination and reports EINVAL or ERANGE. The move forms leave the destination alone on a missing source. */
+static int checked_copy(void *to, size_t size, const void *from, size_t count, int move)
+{
+	if (!count)
+		return 0;
+	if (!to)
+		return 22;
+	if (!from) {
+		if (!move)
+			memset(to, 0, size);
+		return 22;
+	}
+	if (size < count) {
+		if (!move)
+			memset(to, 0, size);
+		return 34;
+	}
+	memmove(to, from, count);
+	return 0;
+}
+
+CRT int memcpy_s(void *to, size_t size, const void *from, size_t count)
+{
+	return checked_copy(to, size, from, count, 0);
+}
+
+CRT int memmove_s(void *to, size_t size, const void *from, size_t count)
+{
+	return checked_copy(to, size, from, count, 1);
+}
+
+CRT int wmemcpy_s(wchar_t *to, size_t size, const wchar_t *from, size_t count)
+{
+	if (size > (size_t)-1 / sizeof(wchar_t) || count > (size_t)-1 / sizeof(wchar_t))
+		return 34;
+	return checked_copy(to, size * sizeof(wchar_t), from, count * sizeof(wchar_t), 0);
+}
+
+CRT int wmemmove_s(wchar_t *to, size_t size, const wchar_t *from, size_t count)
+{
+	if (size > (size_t)-1 / sizeof(wchar_t) || count > (size_t)-1 / sizeof(wchar_t))
+		return 34;
+	return checked_copy(to, size * sizeof(wchar_t), from, count * sizeof(wchar_t), 1);
+}
+
+/* _TRUNCATE appends what fits and reports STRUNCATE; otherwise an append that does not fit clears the destination. */
+CRT int wcsncat_s(wchar_t *to, size_t size, const wchar_t *from, size_t count)
+{
+	size_t used = 0, length = 0;
+	if (!to || !size)
+		return 22;
+	while (used < size && to[used])
+		++used;
+	if (used == size) {
+		to[0] = 0;
+		return 22;
+	}
+	if (!from) {
+		if (!count)
+			return 0;
+		to[0] = 0;
+		return 22;
+	}
+	while (length < count && from[length])
+		++length;
+	if (used + length >= size) {
+		if (count == (size_t)-1) {
+			memcpy(to + used, from, (size - used - 1) * sizeof(wchar_t));
+			to[size - 1] = 0;
+			return 80;
+		}
+		to[0] = 0;
+		return 34;
+	}
+	memcpy(to + used, from, length * sizeof(wchar_t));
+	to[used + length] = 0;
+	return 0;
+}
+
+CRT wchar_t *wcstok_s(wchar_t *text, const wchar_t *delimiters, wchar_t **context)
+{
+	if (!delimiters || !context || (!text && !*context))
+		return NULL;
+	if (!text)
+		text = *context;
+	while (*text && wcschr(delimiters, *text))
+		++text;
+	if (!*text) {
+		*context = text;
+		return NULL;
+	}
+	wchar_t *start = text;
+	while (*text && !wcschr(delimiters, *text))
+		++text;
+	if (*text)
+		*text++ = 0;
+	*context = text;
+	return start;
+}
+
+/* Integers to wide text in a buffer of known size; a negative value has its sign only in base 10. */
+static int integer_to_wide(unsigned long long value, int negative, wchar_t *buffer, size_t size, int radix)
+{
+	wchar_t digits[66];
+	size_t count = 0;
+	if (!buffer || !size)
+		return 22;
+	if (radix < 2 || radix > 36) {
+		buffer[0] = 0;
+		return 22;
+	}
+	do {
+		const unsigned digit = (unsigned)(value % (unsigned)radix);
+		digits[count++] = (wchar_t)(digit < 10 ? L'0' + digit : L'a' + digit - 10);
+		value /= (unsigned)radix;
+	} while (value);
+	if (negative)
+		digits[count++] = L'-';
+	if (count >= size) {
+		buffer[0] = 0;
+		return 34;
+	}
+	for (size_t at = 0; at < count; ++at)
+		buffer[at] = digits[count - 1 - at];
+	buffer[count] = 0;
+	return 0;
+}
+
+CRT int _itow_s(int value, wchar_t *buffer, size_t size, int radix)
+{
+	const int negative = radix == 10 && value < 0;
+	return integer_to_wide(negative ? 0ULL - (unsigned long long)(long long)value : (unsigned)value, negative, buffer, size, radix);
+}
+
+CRT int _i64tow_s(long long value, wchar_t *buffer, size_t size, int radix)
+{
+	const int negative = radix == 10 && value < 0;
+	return integer_to_wide(negative ? 0ULL - (unsigned long long)value : (unsigned long long)value, negative, buffer, size, radix);
+}
+
+CRT int _ultow_s(unsigned long value, wchar_t *buffer, size_t size, int radix)
+{
+	return integer_to_wide(value, 0, buffer, size, radix);
+}
+
+CRT int _ui64tow_s(unsigned long long value, wchar_t *buffer, size_t size, int radix)
+{
+	return integer_to_wide(value, 0, buffer, size, radix);
+}
+
+CRT double _wtof(const wchar_t *text) { return text ? raven_wcstod(text, NULL) : 0.0; }
+CRT int _ldsign(long double x) { return __builtin_signbit(x) ? 0x8000 : 0; }
+CRT int __initialize_lconv_for_unsigned_char(void) { return 0; }
+
+/* At most count characters, or as many as fit when count is _TRUNCATE: a result cut short returns -1, and one that does not fit the
+   buffer at all leaves an empty string. */
+CRT int __stdio_common_vsnwprintf_s(unsigned long long options, wchar_t *buffer, size_t size, size_t count, const wchar_t *text, void *locale,
+	va_list arguments)
+{
+	va_list copy;
+	int length;
+	if (!buffer || !size || !text)
+		return -1;
+	va_copy(copy, arguments);
+	length = __stdio_common_vswprintf(options, NULL, 0, text, locale, copy);
+	va_end(copy);
+	if (length < 0) {
+		buffer[0] = 0;
+		return -1;
+	}
+	const size_t room = count == (size_t)-1 || count >= size ? size - 1 : count;
+	if ((size_t)length > room && count != (size_t)-1 && count >= size) {
+		buffer[0] = 0;
+		return -1;
+	}
+	__stdio_common_vswprintf(options, buffer, room + 1, text, locale, arguments);
+	buffer[(size_t)length < room ? (size_t)length : room] = 0;
+	return (size_t)length > room ? -1 : length;
+}
+
+#ifdef __i386__
+/* The SSE2 math entry points of 32-bit programs built for SSE2: the argument comes in xmm0 (the exponent of pow in xmm1) and the
+   result goes back in xmm0 rather than on the x87 stack. */
+__attribute__((used)) double raven_sse2_exp(double x) { return exp(x); }
+__attribute__((used)) double raven_sse2_log(double x) { return log(x); }
+__attribute__((used)) double raven_sse2_log10(double x) { return log10(x); }
+__attribute__((used)) double raven_sse2_pow(double x, double y) { return pow(x, y); }
+#define RAVEN_SSE2_UNARY(name, target) \
+	__asm__(".text\n.globl __libm_sse2_" name "_precise\n__libm_sse2_" name "_precise:\n\tsubl $8, %esp\n\tmovsd %xmm0, (%esp)\n" \
+		"\tcall _" target "\n\tfstpl (%esp)\n\tmovsd (%esp), %xmm0\n\taddl $8, %esp\n\tret\n" \
+		".section .drectve\n\t.ascii \" -export:_libm_sse2_" name "_precise\"\n\t.text\n");
+RAVEN_SSE2_UNARY("exp", "raven_sse2_exp")
+RAVEN_SSE2_UNARY("log", "raven_sse2_log")
+RAVEN_SSE2_UNARY("log10", "raven_sse2_log10")
+__asm__(".text\n.globl __libm_sse2_pow_precise\n__libm_sse2_pow_precise:\n\tsubl $16, %esp\n\tmovsd %xmm0, (%esp)\n\tmovsd %xmm1, 8(%esp)\n"
+	"\tcall _raven_sse2_pow\n\tfstpl (%esp)\n\tmovsd (%esp), %xmm0\n\taddl $16, %esp\n\tret\n"
+	".section .drectve\n\t.ascii \" -export:_libm_sse2_pow_precise\"\n\t.text\n");
+#endif
 
 CRT size_t strcspn(const char *text, const char *reject)
 {

@@ -444,6 +444,8 @@ CRT void *malloc(size_t size) { return HeapAlloc(GetProcessHeap(), 0, size ? siz
 CRT void *calloc(size_t count, size_t size) { return HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, count * size ? count * size : 1); }
 CRT void free(void *block) { if (block) HeapFree(GetProcessHeap(), 0, block); }
 CRT size_t _msize(void *block) { return HeapSize(GetProcessHeap(), 0, block); }
+/* The CRT allocates from the process heap, so that is the heap it hands out. */
+CRT intptr_t _get_heap_handle(void) { return (intptr_t)GetProcessHeap(); }
 
 CRT void *realloc(void *block, size_t size)
 {
@@ -1033,3 +1035,4 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 #include "ucrtbase_cxx.c"
 #include "ucrtbase_more.c"
 #include "ucrtbase_fiber.c"
+#include "ucrtbase_office.c"

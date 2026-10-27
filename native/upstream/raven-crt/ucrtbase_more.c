@@ -1048,7 +1048,28 @@ CRT double _wcstod_l(const wchar_t *text, wchar_t **end, _locale_t locale) { ret
 
 /* ---- strings and conversions ---- */
 
-CRT unsigned long long _wcstoui64(const wchar_t *text, wchar_t **end, int base) { return (unsigned long long)_wcstoi64(text, end, base); }
+/* The unsigned 64-bit form reads the whole range through the narrow conversion, as the digits are ASCII. */
+CRT unsigned long long wcstoull(const wchar_t *text, wchar_t **end, int base)
+{
+	char narrow[80];
+	size_t index = 0;
+	char *narrow_end;
+	unsigned long long value;
+	while (text[index] && text[index] < 128 && index < sizeof(narrow) - 1)
+		narrow[index] = (char)text[index], ++index;
+	narrow[index] = 0;
+	value = strtoull(narrow, &narrow_end, base);
+	if (end)
+		*end = (wchar_t *)text + (narrow_end - narrow);
+	return value;
+}
+
+CRT unsigned long long _wcstoui64(const wchar_t *text, wchar_t **end, int base) { return wcstoull(text, end, base); }
+CRT long long wcstoll(const wchar_t *text, wchar_t **end, int base) { return _wcstoi64(text, end, base); }
+CRT long long _wcstoll_l(const wchar_t *text, wchar_t **end, int base, _locale_t locale) { return _wcstoi64(text, end, base); }
+CRT unsigned long long _wcstoull_l(const wchar_t *text, wchar_t **end, int base, _locale_t locale) { return wcstoull(text, end, base); }
+CRT long double wcstold(const wchar_t *text, wchar_t **end) { return raven_wcstod(text, end); }
+CRT long long _wtoll(const wchar_t *text) { return _wcstoi64(text, NULL, 10); }
 CRT long _wtol(const wchar_t *text) { return wcstol(text, NULL, 10); }
 CRT long long atoll(const char *text) { return strtoll(text, NULL, 10); }
 CRT long long _atoi64(const char *text) { return strtoll(text, NULL, 10); }
@@ -1229,3 +1250,299 @@ CRT int _fdsign(float x) { return __builtin_signbit(x) ? 0x8000 : 0; }
 
 /* No floating point exception is pending when a program asks; operations here do not record them for the C library. */
 CRT unsigned _statusfp(void) { return 0; }
+
+/* ---- what the Office Click-to-Run client imports besides ---- */
+CRT int __stdio_common_vfwprintf_s(unsigned long long options, void *stream, const wchar_t *text, void *locale, va_list arguments)
+{
+	return __stdio_common_vfwprintf(options, stream, text, locale, arguments);
+}
+
+CRT int _ui64toa_s(unsigned long long value, char *buffer, size_t size, int radix)
+{
+	wchar_t wide[66];
+	size_t at = 0;
+	if (!buffer || !size)
+		return 22;
+	const int result = integer_to_wide(value, 0, wide, size < 66 ? size : 66, radix);
+	if (result) {
+		buffer[0] = 0;
+		return result;
+	}
+	do
+		buffer[at] = (char)wide[at];
+	while (wide[at++]);
+	return 0;
+}
+
+/* A larger block keeps its contents and has the new part cleared. */
+CRT void *_recalloc(void *block, size_t count, size_t size)
+{
+	if (size && count > (size_t)-1 / size) {
+		set_errno(12);
+		return NULL;
+	}
+	const size_t before = block ? _msize(block) : 0, after = count * size;
+	char *grown = realloc(block, after);
+	if (grown && after > before)
+		memset(grown + before, 0, after - before);
+	return grown;
+}
+
+/* Guard pages are not consumed by an overflow here, so there is nothing to restore. */
+CRT int _resetstkoflw(void) { return 1; }
+
+struct timespec_64 {
+	long long seconds;
+	long nanoseconds;
+};
+struct timespec_32 {
+	long seconds;
+	long nanoseconds;
+};
+
+/* TIME_UTC (1) is the only base: seconds and nanoseconds since 1970. */
+static int utc_now(int base, long long *seconds, long *nanoseconds)
+{
+	FILETIME now;
+	if (base != 1)
+		return 0;
+	GetSystemTimePreciseAsFileTime(&now);
+	const unsigned long long ticks = (((unsigned long long)now.dwHighDateTime << 32) | now.dwLowDateTime) - 116444736000000000ULL;
+	*seconds = (long long)(ticks / 10000000);
+	*nanoseconds = (long)(ticks % 10000000 * 100);
+	return base;
+}
+CRT int _timespec64_get(struct timespec_64 *time, int base)
+{
+	if (!time) {
+		set_errno(22);
+		return 0;
+	}
+	return utc_now(base, &time->seconds, &time->nanoseconds);
+}
+CRT int _timespec32_get(struct timespec_32 *time, int base)
+{
+	long long seconds;
+	if (!time) {
+		set_errno(22);
+		return 0;
+	}
+	if (!utc_now(base, &seconds, &time->nanoseconds))
+		return 0;
+	time->seconds = (long)seconds;
+	return base;
+}
+
+/* Case changes in place within a buffer of known size; a string with no terminator inside it is emptied and refused. */
+static int change_case_s(wchar_t *text, size_t size, wchar_t *(*change)(wchar_t *))
+{
+	size_t length = 0;
+	if (!text || !size) {
+		set_errno(22);
+		return 22;
+	}
+	while (length < size && text[length])
+		++length;
+	if (length == size) {
+		text[0] = 0;
+		set_errno(22);
+		return 22;
+	}
+	change(text);
+	return 0;
+}
+CRT int _wcslwr_s(wchar_t *text, size_t size) { return change_case_s(text, size, _wcslwr); }
+CRT int _wcsupr_s(wchar_t *text, size_t size) { return change_case_s(text, size, _wcsupr); }
+
+/* One part of a split path into its own buffer; a part that does not fit fails the whole split. */
+static int path_part(wchar_t *to, size_t size, const wchar_t *from, size_t length)
+{
+	if (!to)
+		return size ? 22 : 0;
+	if (!size)
+		return 22;
+	if (length >= size)
+		return 34;
+	memcpy(to, from, length * sizeof(wchar_t));
+	to[length] = 0;
+	return 0;
+}
+
+CRT int _wsplitpath_s(const wchar_t *path, wchar_t *drive, size_t drive_size, wchar_t *directory, size_t directory_size, wchar_t *name,
+	size_t name_size, wchar_t *extension, size_t extension_size)
+{
+	const wchar_t *at = path, *last_slash = NULL, *last_dot = NULL;
+	size_t drive_length = 0;
+	int result;
+	if (!path) {
+		result = 22;
+		goto failed;
+	}
+	if (path[0] && path[1] == L':')
+		drive_length = 2;
+	for (at = path + drive_length; *at; ++at)
+		if (*at == L'\\' || *at == L'/')
+			last_slash = at;
+		else if (*at == L'.')
+			last_dot = at;
+	const wchar_t *base = last_slash ? last_slash + 1 : path + drive_length;
+	if (last_dot && last_dot < base)
+		last_dot = NULL;
+	const wchar_t *end = last_dot ? last_dot : at;
+	if ((result = path_part(drive, drive_size, path, drive_length)) ||
+		(result = path_part(directory, directory_size, path + drive_length, (size_t)(base - path - drive_length))) ||
+		(result = path_part(name, name_size, base, (size_t)(end - base))) ||
+		(result = path_part(extension, extension_size, end, (size_t)(at - end))))
+		goto failed;
+	return 0;
+failed:
+	if (drive && drive_size)
+		drive[0] = 0;
+	if (directory && directory_size)
+		directory[0] = 0;
+	if (name && name_size)
+		name[0] = 0;
+	if (extension && extension_size)
+		extension[0] = 0;
+	set_errno(result);
+	return result;
+}
+
+/* A drive letter gains its colon, a directory its trailing separator and an extension its dot. */
+CRT int _wmakepath_s(wchar_t *path, size_t size, const wchar_t *drive, const wchar_t *directory, const wchar_t *name, const wchar_t *extension)
+{
+	size_t length = 0;
+	if (!path || !size) {
+		set_errno(22);
+		return 22;
+	}
+#define PUT(character) do { if (length + 1 >= size) goto overflow; path[length++] = (character); } while (0)
+	if (drive && *drive) {
+		PUT(drive[0]);
+		PUT(L':');
+	}
+	if (directory && *directory) {
+		const wchar_t *at = directory;
+		for (; *at; ++at)
+			PUT(*at);
+		if (at[-1] != L'\\' && at[-1] != L'/')
+			PUT(L'\\');
+	}
+	for (const wchar_t *at = name; at && *at; ++at)
+		PUT(*at);
+	if (extension && *extension) {
+		if (*extension != L'.')
+			PUT(L'.');
+		for (const wchar_t *at = extension; *at; ++at)
+			PUT(*at);
+	}
+#undef PUT
+	path[length] = 0;
+	return 0;
+overflow:
+	path[0] = 0;
+	set_errno(34);
+	return 34;
+}
+
+CRT int isblank(int c) { return c == ' ' || c == '\t'; }
+CRT int isgraph(int c) { return c > 0x20 && c < 0x7f; }
+CRT double nan(const char *payload) { return __builtin_nan(""); }
+
+/* The bounded conversions: the count includes the terminator, _TRUNCATE keeps what fits and reports STRUNCATE (80), and a result that
+   does not fit otherwise empties the destination. */
+static int bounded_result(size_t *converted, size_t length, size_t size, size_t count, size_t *kept)
+{
+	int result = 0;
+	if (count != (size_t)-1 && count < length)
+		length = count;
+	if (length >= size) {
+		if (count != (size_t)-1)
+			return 34;
+		length = size - 1;
+		result = 80;
+	}
+	*kept = length;
+	if (converted)
+		*converted = length + 1;
+	return result;
+}
+
+CRT int mbstowcs_s(size_t *converted, wchar_t *to, size_t size, const char *text, size_t count)
+{
+	if (converted)
+		*converted = 0;
+	if (!text || (!to && size) || (to && !size)) {
+		if (to && size)
+			to[0] = 0;
+		set_errno(22);
+		return 22;
+	}
+	const int needed = MultiByteToWideChar(CP_ACP, 0, text, -1, NULL, 0);
+	if (needed <= 0) {
+		if (to)
+			to[0] = 0;
+		set_errno(42);
+		return 42;
+	}
+	if (!to) {
+		if (converted)
+			*converted = (size_t)needed;
+		return 0;
+	}
+	wchar_t *whole = malloc((size_t)needed * sizeof(wchar_t));
+	size_t kept;
+	if (!whole)
+		return 12;
+	MultiByteToWideChar(CP_ACP, 0, text, -1, whole, needed);
+	const int result = bounded_result(converted, (size_t)needed - 1, size, count, &kept);
+	if (result == 34) {
+		to[0] = 0;
+		set_errno(34);
+	} else {
+		memcpy(to, whole, kept * sizeof(wchar_t));
+		to[kept] = 0;
+	}
+	free(whole);
+	return result;
+}
+
+CRT int wcstombs_s(size_t *converted, char *to, size_t size, const wchar_t *text, size_t count)
+{
+	BOOL lost = FALSE;
+	if (converted)
+		*converted = 0;
+	if (!text || (!to && size) || (to && !size)) {
+		if (to && size)
+			to[0] = 0;
+		set_errno(22);
+		return 22;
+	}
+	const int needed = WideCharToMultiByte(CP_ACP, 0, text, -1, NULL, 0, NULL, &lost);
+	if (needed <= 0 || lost) {
+		if (to)
+			to[0] = 0;
+		set_errno(42);
+		return 42;
+	}
+	if (!to) {
+		if (converted)
+			*converted = (size_t)needed;
+		return 0;
+	}
+	char *whole = malloc((size_t)needed);
+	size_t kept;
+	if (!whole)
+		return 12;
+	WideCharToMultiByte(CP_ACP, 0, text, -1, whole, needed, NULL, NULL);
+	const int result = bounded_result(converted, (size_t)needed - 1, size, count, &kept);
+	if (result == 34) {
+		to[0] = 0;
+		set_errno(34);
+	} else {
+		memcpy(to, whole, kept);
+		to[kept] = 0;
+	}
+	free(whole);
+	return result;
+}

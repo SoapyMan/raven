@@ -539,7 +539,32 @@ CRT void *_aligned_malloc(size_t size, size_t alignment)
 	return (void *)aligned;
 }
 
-CRT void _aligned_free(void *block) { if (block) HeapFree(GetProcessHeap(), 0, ((void **)block)[-1]); }
+/* The block's own allocation sits in the pointer-sized slot below it, rounded down for blocks aligned at an offset. */
+CRT void _aligned_free(void *block)
+{
+	if (block)
+		HeapFree(GetProcessHeap(), 0, ((void **)((uintptr_t)block & ~(uintptr_t)(sizeof(void *) - 1)))[-1]);
+}
+
+CRT void *_aligned_offset_malloc(size_t size, size_t alignment, size_t offset)
+{
+	char *raw;
+	uintptr_t aligned;
+	if (!alignment || (alignment & (alignment - 1)) || (size && offset >= size)) {
+		set_errno(22);
+		return NULL;
+	}
+	if (alignment < sizeof(void *))
+		alignment = sizeof(void *);
+	raw = HeapAlloc(GetProcessHeap(), 0, size + alignment + 2 * sizeof(void *));
+	if (!raw) {
+		set_errno(12);
+		return NULL;
+	}
+	aligned = (((uintptr_t)raw + 2 * sizeof(void *) + offset + alignment - 1) & ~(uintptr_t)(alignment - 1)) - offset;
+	((void **)(aligned & ~(uintptr_t)(sizeof(void *) - 1)))[-1] = raw;
+	return (void *)aligned;
+}
 
 CRT char *_strdup(const char *text)
 {

@@ -28,8 +28,11 @@ extern long long _lseeki64(int, long long, int);
 extern int __intrinsic_setjmp(void *, void *);
 extern void longjmp(void *, int);
 extern long long strtoll(const char *, char **, int);
+extern int __stdio_common_vsnwprintf_s(unsigned long long, wchar_t *, size_t, size_t, const wchar_t *, void *, __builtin_va_list);
 extern void *_aligned_malloc(size_t, size_t);
 extern void _aligned_free(void *);
+extern void free(void *);
+struct time_of_day { long long seconds; long nanoseconds; };
 extern int strcmp(const char *, const char *);
 extern char *_mktemp(char *);
 extern int *_errno(void);
@@ -56,6 +59,7 @@ static int temp_names(void)
 }
 
 static int compare(const void *a, const void *b) { return *(const int *)a - *(const int *)b; }
+static int __cdecl compare_context(void *context, const void *a, const void *b) { return compare(a, b); }
 static int close_to(float value, float expected) { float d = value - expected; return d < 0.001f && d > -0.001f; }
 
 int raven_entry(void)
