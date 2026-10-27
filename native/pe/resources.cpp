@@ -54,10 +54,12 @@ std::vector<PEResource> read_resources(PEDirectory directory,
 		range(offset, 16);
 		const auto named = number(size_t(offset) + 12, 2);
 		const auto count = named + number(size_t(offset) + 14, 2);
-		if (count > 100000 - entries)
+		range(size_t(offset) + 16, size_t(count) * 8);
+		// Every entry takes eight bytes of the directory, so the directory's own size bounds them; large resource libraries hold
+		// hundreds of thousands.
+		if (entries + count > bytes.size() / 8)
 			throw std::runtime_error("PE resource entries exceed policy limit");
 		entries += count;
-		range(size_t(offset) + 16, size_t(count) * 8);
 		std::optional<ResourceKey> previous;
 		for (size_t index = 0; index < count; ++index) {
 			const size_t position = size_t(offset) + 16 + index * 8;
