@@ -141,10 +141,37 @@ public:
 	std::shared_ptr<GuestThread> running;
 };
 
+// A timer of a timer queue: its callback runs on a guest thread when it is due, and again every period until it is deleted.
+class QueueTimer : public KernelObject {
+public:
+	uint64_t handle = 0, callback = 0, parameter = 0;
+	uint32_t period = 0, flags = 0;
+	std::chrono::steady_clock::time_point deadline;
+	bool active = true;
+	std::shared_ptr<GuestThread> running;
+};
+
+class TimerQueue : public KernelObject {
+public:
+	std::vector<std::shared_ptr<QueueTimer>> timers;
+};
+
 class WorkObject : public KernelObject {
 public:
 	uint64_t callback = 0, parameter = 0;
 	std::vector<std::shared_ptr<GuestThread>> running;
+};
+
+// A private pool only bounds its threads; work items run on guest threads whichever pool they name.
+class PoolObject : public KernelObject {
+public:
+	uint32_t minimum = 0, maximum = 500;
+};
+
+// The handles of the work items made with a cleanup group in their environment, closed together with it.
+class CleanupGroupObject : public KernelObject {
+public:
+	std::vector<uint64_t> members;
 };
 
 }
@@ -734,6 +761,15 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(thread ? thread->id : 0);
 		if (!thread) call.set_last_error(6);
 	});
+	// No thread here has I/O requests outstanding in the kernel's sense: overlapped operations complete on their own.
+	registry.add("GetThreadIOPendingFlag", 2, [thread_from](ApiCall &call) {
+		if (!thread_from(call[0])) {
+			call.fail(6, 0);
+			return;
+		}
+		call.store<uint32_t>(call[1], 0);
+		call.ret(1);
+	});
 	registry.add("GetThreadPriority", 1, [thread_from](ApiCall &call) {
 		const auto thread = thread_from(call[0]);
 		if (!thread) {
@@ -960,10 +996,6 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		const auto access = event_access(call.u32(3));
 		if (!access || (call.u32(2) & ~3U)) {
 			call.fail(87);
-			return;
-		}
-		if (call[0] && call.load_pointer(call[0] + call.pointer_width())) {
-			call.fail(50);
 			return;
 		}
 		const bool inherit = inheritable_handle(call, call[0]);
@@ -1197,6 +1229,10 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		work->parameter = call[1];
 		const auto made = objects.add_object(work);
 		call.ret(made.status ? 0 : made.value);
+		// TP_CALLBACK_ENVIRON: the version, then the pool and the cleanup group as pointers.
+		if (!made.status && call[2])
+			if (const auto group = objects.object_as<CleanupGroupObject>(call.load_pointer(call[2] + 2 * call.pointer_width())))
+				group->members.push_back(made.value);
 	});
 	registry.add("SubmitThreadpoolWork", 1, [&objects, &threads, &context](ApiCall &call) {
 		const auto work = objects.object_as<WorkObject>(call[0]);
@@ -1217,6 +1253,53 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		}, std::nullopt);
 	});
 	registry.add("CloseThreadpoolWork", 1, [&objects](ApiCall &call) { objects.close(call[0]); });
+	registry.add("CreateThreadpool", 1, [&objects](ApiCall &call) {
+		const auto made = objects.add_object(std::make_shared<PoolObject>());
+		if (made.status)
+			call.fail(8, 0);
+		else
+			call.ret(made.value);
+	});
+	registry.add("CloseThreadpool", 1, [&objects](ApiCall &call) { objects.close(call[0]); });
+	registry.add("SetThreadpoolThreadMaximum", 2, [&objects](ApiCall &call) {
+		if (const auto pool = objects.object_as<PoolObject>(call[0]))
+			pool->maximum = call.u32(1);
+	});
+	registry.add("SetThreadpoolThreadMinimum", 2, [&objects](ApiCall &call) {
+		const auto pool = objects.object_as<PoolObject>(call[0]);
+		if (!pool) {
+			call.fail(87);
+			return;
+		}
+		pool->minimum = call.u32(1);
+		call.ret(1);
+	});
+	registry.add("CreateThreadpoolCleanupGroup", 0, [&objects](ApiCall &call) {
+		const auto made = objects.add_object(std::make_shared<CleanupGroupObject>());
+		if (made.status)
+			call.fail(8, 0);
+		else
+			call.ret(made.value);
+	});
+	// The members' callbacks finish first (pending ones run too, since submitted work starts at once), then their handles close.
+	registry.add("CloseThreadpoolCleanupGroupMembers", 3, [&objects, &threads](ApiCall &call) {
+		const auto group = objects.object_as<CleanupGroupObject>(call[0]);
+		if (!group)
+			return;
+		std::vector<std::shared_ptr<WorkObject>> works;
+		for (const auto member : group->members)
+			if (const auto work = objects.object_as<WorkObject>(member))
+				works.push_back(work);
+		threads.block([works] {
+			return std::all_of(works.begin(), works.end(), [](const auto &work) {
+				return std::all_of(work->running.begin(), work->running.end(), [](const auto &thread) { return thread->state == GuestThread::State::done; });
+			});
+		}, std::nullopt);
+		for (const auto member : group->members)
+			objects.close(member);
+		group->members.clear();
+	});
+	registry.add("CloseThreadpoolCleanupGroup", 1, [&objects](ApiCall &call) { objects.close(call[0]); });
 
 	// Registered waits are checked whenever every thread waits; a satisfied one starts its callback on a new guest thread.
 	auto registrations = std::make_shared<std::vector<std::shared_ptr<WaitRegistration>>>();
@@ -1290,6 +1373,132 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("UnregisterWait", 1, [unregister_wait](ApiCall &call) { unregister_wait(call, false); });
 	registry.add("UnregisterWaitEx", 2, [unregister_wait](ApiCall &call) { unregister_wait(call, true); });
+
+	// Timer queues: the same pump starts each due timer's callback on a new guest thread, with TRUE for a timer that ran out; a timer
+	// whose callback still runs is not started again. Deleting timers can name an event that is set once their callbacks have returned.
+	struct TimerState {
+		std::vector<std::shared_ptr<QueueTimer>> timers;
+		std::vector<std::pair<std::vector<std::shared_ptr<QueueTimer>>, uint64_t>> completions;
+	};
+	auto timer_state = std::make_shared<TimerState>();
+	const auto finished = [](const std::shared_ptr<QueueTimer> &timer) { return !timer->running || timer->running->state == GuestThread::State::done; };
+	threads.add_pump([timer_state, &objects, &threads, finished] {
+		const auto now = std::chrono::steady_clock::now();
+		for (const auto &timer : timer_state->timers) {
+			if (!timer->active || now < timer->deadline || !finished(timer))
+				continue;
+			const auto thread = threads.create(timer->callback, timer->parameter, 1024 * 1024, false);
+			thread->arguments = {timer->parameter, 1};
+			timer->running = thread;
+			if (!timer->period || (timer->flags & 0x8))
+				timer->active = false;
+			else
+				timer->deadline = std::max(timer->deadline + std::chrono::milliseconds(timer->period), now);
+		}
+		auto &completions = timer_state->completions;
+		for (auto at = completions.begin(); at != completions.end();)
+			if (std::all_of(at->first.begin(), at->first.end(), finished)) {
+				objects.set_event(at->second, true);
+				at = completions.erase(at);
+			} else {
+				++at;
+			}
+	});
+	threads.add_external([timer_state] {
+		return !timer_state->completions.empty() ||
+			std::any_of(timer_state->timers.begin(), timer_state->timers.end(), [](const auto &timer) { return timer->active; });
+	});
+	// Stops timers and reports how their running callbacks end: INVALID_HANDLE_VALUE waits for them, an event is set after them, and with
+	// no event a callback still running fails the call with ERROR_IO_PENDING although the timers are gone.
+	const auto stop_timers = [timer_state, &threads, finished](ApiCall &call, std::vector<std::shared_ptr<QueueTimer>> stopped, uint64_t completion) {
+		for (const auto &timer : stopped) {
+			timer->active = false;
+			std::erase(timer_state->timers, timer);
+		}
+		const bool running = !std::all_of(stopped.begin(), stopped.end(), finished);
+		if (completion == UINT64_MAX || completion == 0xffffffffULL) {
+			threads.block([stopped, finished] { return std::all_of(stopped.begin(), stopped.end(), finished); }, std::nullopt);
+		} else if (completion) {
+			timer_state->completions.emplace_back(std::move(stopped), completion);
+		} else if (running) {
+			call.fail(997);
+			return;
+		}
+		call.ret(1);
+	};
+	registry.add("CreateTimerQueue", 0, [&objects](ApiCall &call) {
+		const auto made = objects.add_object(std::make_shared<TimerQueue>());
+		if (made.status) {
+			call.fail(8, 0);
+			return;
+		}
+		call.ret(made.value);
+	});
+	registry.add("CreateTimerQueueTimer", 7, [&objects, timer_state](ApiCall &call) {
+		if (!call[0] || !call[2]) {
+			call.fail(87, 0);
+			return;
+		}
+		std::shared_ptr<TimerQueue> queue;
+		if (call[1] && !(queue = objects.object_as<TimerQueue>(call[1]))) {
+			call.fail(6, 0);
+			return;
+		}
+		auto timer = std::make_shared<QueueTimer>();
+		timer->callback = call[2];
+		timer->parameter = call[3];
+		timer->period = call.u32(5);
+		timer->flags = call.u32(6);
+		timer->deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(call.u32(4));
+		const auto made = objects.add_object(timer);
+		if (made.status) {
+			call.fail(8, 0);
+			return;
+		}
+		timer->handle = made.value;
+		if (queue)
+			queue->timers.push_back(timer);
+		timer_state->timers.push_back(timer);
+		call.store_pointer(call[0], made.value);
+		call.ret(1);
+	});
+	registry.add("ChangeTimerQueueTimer", 4, [&objects](ApiCall &call) {
+		const auto timer = objects.object_as<QueueTimer>(call[1]);
+		if (!timer) {
+			call.fail(6);
+			return;
+		}
+		timer->deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(call.u32(2));
+		timer->period = call.u32(3);
+		call.ret(1);
+	});
+	const auto delete_timer = [&objects, stop_timers](ApiCall &call, uint64_t completion) {
+		const auto timer = objects.object_as<QueueTimer>(call[1]);
+		if (!timer) {
+			call.fail(6);
+			return;
+		}
+		if (const auto queue = objects.object_as<TimerQueue>(call[0]))
+			std::erase(queue->timers, timer);
+		objects.close(call[1]);
+		stop_timers(call, {timer}, completion);
+	};
+	registry.add("DeleteTimerQueueTimer", 3, [delete_timer](ApiCall &call) { delete_timer(call, call[2]); });
+	registry.add("CancelTimerQueueTimer", 2, [delete_timer](ApiCall &call) { delete_timer(call, 0); });
+	const auto delete_queue = [&objects, stop_timers](ApiCall &call, uint64_t completion) {
+		const auto queue = objects.object_as<TimerQueue>(call[0]);
+		if (!queue) {
+			call.fail(6);
+			return;
+		}
+		auto timers = std::move(queue->timers);
+		for (const auto &timer : timers)
+			objects.close(timer->handle);
+		objects.close(call[0]);
+		stop_timers(call, std::move(timers), completion);
+	};
+	registry.add("DeleteTimerQueueEx", 2, [delete_queue](ApiCall &call) { delete_queue(call, call[1]); });
+	registry.add("DeleteTimerQueue", 1, [delete_queue](ApiCall &call) { delete_queue(call, 0); });
 }
 
 }

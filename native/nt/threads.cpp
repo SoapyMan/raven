@@ -470,6 +470,12 @@ bool NativeThreads::block(std::function<bool()> ready, std::optional<std::chrono
 		const auto now = std::chrono::steady_clock::now();
 		if (now - pumped < std::chrono::milliseconds(1))
 			return false;
+		// A pump may start a callback thread, which maps its stack: a serial guest answered without stopping cannot have memory mapped, so
+		// the call is given up and runs again stopped at its trap.
+		if (process.serving() && !process.parallel()) {
+			process.decline_served();
+			return false;
+		}
 		pumped = now;
 		serve();
 		for (const auto &pump : pumps)

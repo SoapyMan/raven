@@ -380,5 +380,8 @@ int raven_entry(void)
 		!contains(round_trip, L";;;LA)") || !contains(round_trip, L"0x100000;;;BG)")) return 169;
 	LocalFree(round_trip);
 	LocalFree(shared_folder);
+	/* A thread has no I/O pending in the kernel's sense; a key takes its last write time and refuses a class it does not have. */
+	BOOL pending = TRUE;
+	if (!GetThreadIOPendingFlag(GetCurrentThread(), &pending) || pending) return 170;
 	return 0;
 }
