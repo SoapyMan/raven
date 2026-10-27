@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <sys/mman.h>
 
@@ -220,6 +221,44 @@ uint64_t NativeDesktop::compatible_bitmap(std::span<const uint64_t> args)
 		selected->depth,selected->dib_section,selected->dib_section ? height<0 : true);
 }
 
+// A color icon stretched by averaging the source area each target pixel covers, weighted by alpha, so that thin lines survive
+// shrinking as partly transparent pixels; the mask keeps every pixel any part of the icon shows in.
+static IconBitmap stretch_icon(const IconBitmap &image, uint32_t width, uint32_t height)
+{
+	const auto source_width = image.color.width, source_height = image.color.height;
+	IconBitmap out = image;
+	out.has_alpha = true;
+	out.color.width = width;
+	out.color.height = height;
+	out.color.rgba.assign(size_t(width) * height * 4, 0);
+	out.and_mask.assign(size_t(width) * height, 1);
+	out.xor_mask.clear();
+	const double scale_x = double(source_width) / width, scale_y = double(source_height) / height;
+	for (uint32_t y = 0; y < height; ++y)
+		for (uint32_t x = 0; x < width; ++x) {
+			const double left = x * scale_x, right = (x + 1) * scale_x, top = y * scale_y, bottom = (y + 1) * scale_y;
+			double sum[4] = {}, total = 0, shown = 0;
+			for (auto sy = uint32_t(top); sy < source_height && sy < bottom; ++sy)
+				for (auto sx = uint32_t(left); sx < source_width && sx < right; ++sx) {
+					const double weight = (std::min(right, sx + 1.0) - std::max(left, double(sx))) * (std::min(bottom, sy + 1.0) - std::max(top, double(sy)));
+					const size_t at = size_t(sy) * source_width + sx;
+					const double alpha = image.has_alpha ? image.color.rgba[at * 4 + 3] / 255.0 : image.and_mask[at] ? 0.0 : 1.0;
+					for (size_t channel = 0; channel < 3; ++channel)
+						sum[channel] += weight * alpha * image.color.rgba[at * 4 + channel];
+					sum[3] += weight * alpha;
+					total += weight;
+					if (!image.and_mask[at])
+						shown += weight;
+				}
+			const size_t at = size_t(y) * width + x;
+			for (size_t channel = 0; channel < 3; ++channel)
+				out.color.rgba[at * 4 + channel] = sum[3] > 0 ? uint8_t(std::min(255.0, sum[channel] / sum[3] + 0.5)) : 0;
+			out.color.rgba[at * 4 + 3] = total > 0 ? uint8_t(std::min(255.0, sum[3] / total * 255 + 0.5)) : 0;
+			out.and_mask[at] = shown > 0 ? 0 : 1;
+		}
+	return out;
+}
+
 bool NativeDesktop::draw(std::span<const uint64_t> args)
 {
 	const auto *dc = objects.dc(args[0]);
@@ -229,14 +268,23 @@ bool NativeDesktop::draw(std::span<const uint64_t> args)
 		return false;
 	}
 	auto *bitmap = objects.bitmap(dc->bitmap);
-	const auto &image = icon->image;
 	const auto width = int32_t(uint32_t(args[4])), height = int32_t(uint32_t(args[5]));
 	const auto flags = uint32_t(args[8]), mode = flags & 3;
-	if (bitmap->depth != 32 || args[7] || !mode || (flags & ~7U) ||
-		(width && uint32_t(width) != image.color.width) || (height && uint32_t(height) != image.color.height)) {
+	if (bitmap->depth != 32 || args[7] || !mode || (flags & ~7U) || width < 0 || height < 0 || width > 1024 || height > 1024) {
 		environment.set_last_error(120);
 		return false;
 	}
+	// A size other than the icon's own stretches it, as programs draw their check box glyphs smaller than they made them.
+	std::optional<IconBitmap> stretched;
+	if ((width && uint32_t(width) != icon->image.color.width) || (height && uint32_t(height) != icon->image.color.height)) {
+		const auto target_width = width ? uint32_t(width) : icon->image.color.width, target_height = height ? uint32_t(height) : icon->image.color.height;
+		if (icon->monochrome) {
+			stretched = icon->image;
+			resize_icon(*stretched, target_width, target_height, true);
+		} else
+			stretched = stretch_icon(icon->image, target_width, target_height);
+	}
+	const auto &image = stretched ? *stretched : icon->image;
 	const int64_t left = int64_t(int32_t(uint32_t(args[1])))+dc->origin_x;
 	const int64_t top = int64_t(int32_t(uint32_t(args[2])))+dc->origin_y;
 	const auto x0 = std::max(int64_t(0),left), y0 = std::max(int64_t(0),top);

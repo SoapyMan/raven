@@ -303,10 +303,27 @@ int main(int argc, char **argv)
 				process.write_memory(pixels,background);
 				check(!api("DrawIconEx",{bitmap,0,0,icon,0,0,0,0,3}) &&
 					!api("DrawIconEx",{dc,0,0,bitmap,0,0,0,0,3}) &&
-					!api("DrawIconEx",{dc,0,0,icon,width+1,height,0,0,3}) && environment.last_error()==120 &&
 					!api("DrawIconEx",{dc,0,0,icon,0,0,0,1,3}) && environment.last_error()==120 &&
 					process.read_memory(pixels,background.size())==background,"unsupported draw modified pixels");
 				check(process.read_memory(pixels,background.size())==background,"failed drawing changed surface pixels");
+			}
+			// Another size stretches the icon into that rectangle and leaves the rest of the surface alone.
+			process.write_memory(pixels,background);
+			check(api("DrawIconEx",{dc,0,0,icon,0,0,0,0,3}),"icon drawing failed");
+			const bool visible=process.read_memory(pixels,background.size())!=background;
+			process.write_memory(pixels,background);
+			check(api("DrawIconEx",{dc,0,0,icon,width/2,height/2,0,0,3}),"stretched icon drawing failed");
+			{
+				const auto bits=process.read_memory(pixels,background.size());
+				bool inside=false,outside=false;
+				for (uint32_t y=0; y<height; ++y)
+					for (uint32_t x=0; x<width; ++x) {
+						const size_t at=(size_t(y)*width+x)*4;
+						if (!std::equal(bits.begin()+at,bits.begin()+at+4,background.begin()+at))
+							(x<width/2 && y<height/2 ? inside : outside)=true;
+					}
+				check(inside || !visible,"stretched icon drew nothing");
+				check(!outside,"stretched icon was drawn outside its rectangle");
 			}
 			std::filesystem::create_directories(evidence/"draw");
 			for (unsigned mode=1; mode<=3; ++mode) {

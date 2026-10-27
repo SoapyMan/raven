@@ -81,4 +81,7 @@ private:
 	bool frame(std::span<const uint64_t> arguments);
 };
 
+// Stretches an icon's color and masks to a new size, as loading one at another size and drawing it stretched do.
+void resize_icon(IconBitmap &image, uint32_t width, uint32_t height, bool monochrome);
+
 }

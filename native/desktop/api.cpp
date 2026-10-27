@@ -82,7 +82,7 @@ uint64_t NativeDesktop::lookup(std::span<const uint64_t> args)
 	return lookup_icon(entries, uint32_t(width), uint32_t(height), objects.display(), (uint32_t(args[4]) & 1U) != 0);
 }
 
-static void resize_icon(IconBitmap &image, uint32_t width, uint32_t height, bool monochrome)
+void resize_icon(IconBitmap &image, uint32_t width, uint32_t height, bool monochrome)
 {
 	const auto source_width = image.color.width, source_height = image.color.height;
 	const auto stretch = [&](std::span<const uint8_t> pixels, uint32_t channels, uint32_t planes = 1) {
