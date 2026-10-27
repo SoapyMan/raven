@@ -43,6 +43,9 @@ int raven_entry(void)
 	join(cleanup,work,L"moved.txt"); DeleteFileW(cleanup);
 	join(cleanup,work,L"copy.txt"); DeleteFileW(cleanup);
 	join(cleanup,work,L"persist.txt"); DeleteFileW(cleanup);
+	join(cleanup,work,L"second.txt"); DeleteFileW(cleanup);
+	join(cleanup,work,L"link.txt"); DeleteFileW(cleanup);
+	join(cleanup,work,L"hard.txt"); DeleteFileW(cleanup);
 	RemoveDirectoryW(work_no_slash);
 	CHECK(2,CreateDirectoryW(work_no_slash,0));
 	CHECK(3,!CreateDirectoryW(work_no_slash,0) && GetLastError()==ERROR_ALREADY_EXISTS);
@@ -108,6 +111,9 @@ int raven_entry(void)
 	CHECK(24,FindNextFileW(find,&data) && same(data.cFileName,L"moved.txt"));
 	CHECK(25,!FindNextFileW(find,&data) && GetLastError()==ERROR_NO_MORE_FILES);
 	CHECK(26,FindClose(find));
+	join(pattern,work,L"*.txt");
+	find=FindFirstFileExW(pattern,FindExInfoStandard,&data,FindExSearchLimitToDirectories,0,0);
+	CHECK(52,find!=INVALID_HANDLE_VALUE && same(data.cFileName,L"hello.txt") && FindClose(find));
 	join(pattern,work,L"nothing*");
 	find=FindFirstFileW(pattern,&data);
 	CHECK(27,find==INVALID_HANDLE_VALUE && GetLastError()==ERROR_FILE_NOT_FOUND);
@@ -123,6 +129,42 @@ int raven_entry(void)
 	CloseHandle(file);
 	CHECK(32,GetFileAttributesW(full)!=INVALID_FILE_ATTRIBUTES);
 	DeleteFileW(full);
+
+	// CreateFile2 opens as CreateFileW does, with its flags and attributes in the extended parameters or none at all.
+	struct {DWORD size,attributes,flags,quality;SECURITY_ATTRIBUTES *security;HANDLE template_file;} extended={sizeof extended,FILE_ATTRIBUTE_NORMAL,FILE_FLAG_SEQUENTIAL_SCAN,0,0,0};
+	HANDLE (WINAPI *create_file2)(const WCHAR *,DWORD,DWORD,DWORD,void *)=(void *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"),"CreateFile2");
+	CHECK(37,create_file2!=0);
+	join(full,work,L"second.txt");
+	file=create_file2(full,GENERIC_WRITE,0,CREATE_NEW,&extended);
+	CHECK(38,file!=INVALID_HANDLE_VALUE && WriteFile(file,"two",3,&done,0) && done==3);
+	CloseHandle(file);
+	CHECK(39,create_file2(full,GENERIC_READ,0,CREATE_NEW,0)==INVALID_HANDLE_VALUE && GetLastError()==ERROR_FILE_EXISTS);
+	file=create_file2(full,GENERIC_READ,FILE_SHARE_READ,OPEN_EXISTING,0);
+	CHECK(40,file!=INVALID_HANDLE_VALUE && GetFileSize(file,0)==3);
+	// The volume keeps no cached signing levels, and says so for a file it knows.
+	BOOL (WINAPI *get_level)(HANDLE,ULONG *,ULONG *,BYTE *,ULONG *,ULONG *)=(void *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"),"GetCachedSigningLevel");
+	BOOL (WINAPI *set_level)(HANDLE *,ULONG,ULONG,HANDLE)=(void *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"),"SetCachedSigningLevel");
+	ULONG level_flags=0,level=0;
+	CHECK(42,get_level && set_level && !get_level(file,&level_flags,&level,0,0,0) && GetLastError()==ERROR_NOT_SUPPORTED);
+	CHECK(43,!set_level(0,0,0,file) && GetLastError()==ERROR_NOT_SUPPORTED);
+	CloseHandle(file);
+	CHECK(41,DeleteFileW(full));
+
+	// A relative symbolic link reads through to its target and shows as a reparse point; a hard link is the same file under a second name.
+	BOOLEAN (WINAPI *symbolic_link)(const WCHAR *,const WCHAR *,DWORD)=(void *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"),"CreateSymbolicLinkW");
+	BOOL (WINAPI *hard_link)(const WCHAR *,const WCHAR *,SECURITY_ATTRIBUTES *)=(void *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"),"CreateHardLinkW");
+	join(full,work,L"link.txt");
+	CHECK(44,symbolic_link && hard_link && symbolic_link(full,L"HELLO.TXT",0));
+	CHECK(45,!symbolic_link(full,L"hello.txt",0) && GetLastError()==ERROR_ALREADY_EXISTS);
+	CHECK(46,(GetFileAttributesW(full)&FILE_ATTRIBUTE_REPARSE_POINT)!=0);
+	file=CreateFileW(full,GENERIC_READ,FILE_SHARE_READ,0,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,0);
+	CHECK(47,file!=INVALID_HANDLE_VALUE && ReadFile(file,buffer,32,&done,0) && done==11 && bytes_equal(buffer,"hello world",11));
+	CloseHandle(file);
+	CHECK(48,DeleteFileW(full) && GetFileAttributesW(path)!=INVALID_FILE_ATTRIBUTES);
+	join(full,work,L"hard.txt");
+	CHECK(49,hard_link(full,path,0) && GetFileAttributesW(full)!=INVALID_FILE_ATTRIBUTES);
+	CHECK(50,!hard_link(full,path,0) && GetLastError()==ERROR_ALREADY_EXISTS);
+	CHECK(51,DeleteFileW(full) && GetFileAttributesW(path)!=INVALID_FILE_ATTRIBUTES);
 
 	// The last file stays behind so the test driver can check the host file system independently.
 	WCHAR kept[260];

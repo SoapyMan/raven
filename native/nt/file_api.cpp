@@ -126,7 +126,8 @@ FindObject::Entry entry_of(const std::filesystem::path &path, const std::u16stri
 	const bool link = S_ISLNK(metadata.st_mode);
 	if (link && !::stat(path.c_str(), &target))
 		metadata = target;
-	entry.attributes = attributes_of(metadata, path);
+	// A link reports what it points at, marked as the reparse point it is.
+	entry.attributes = attributes_of(metadata, path) | (link ? attribute_reparse : 0);
 	entry.creation = filetime(metadata.st_ctim);
 	entry.access = filetime(metadata.st_atim);
 	entry.write = filetime(metadata.st_mtim);
@@ -213,9 +214,9 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 	};
 	const auto missing = [&](const NativePaths::Resolved &resolved) { return resolved.parent_exists ? 2U : 3U; };
 
-	registry.add("CreateFileW", 7, [&, resolve, missing, file_of](ApiCall &call) {
-		const auto name = call.wide(call[0]);
-		const uint32_t access = call.u32(1), disposition = call.u32(4), flags = call.u32(5);
+	// CreateFileW and CreateFile2 open the same way; each reads its own arguments, the security attributes among them.
+	const auto create_file = [&, resolve, missing](ApiCall &call, const std::u16string &name, uint32_t access, uint32_t disposition, uint32_t flags,
+		uint64_t security) {
 		if (open_pipe_client(context, call, name, access, flags))
 			return;
 		call.ret(invalid_handle);
@@ -226,7 +227,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		if (NativePaths::device(name)) {
 			const int descriptor = ::open("/dev/null", O_RDWR | O_CLOEXEC);
 			const auto made = objects.add_object(std::make_shared<FileObject>(descriptor, access, false, "/dev/null", u"NUL", 0));
-			{ if (!made.status && inheritable_handle(call, optional_argument(call, 3))) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
+			{ if (!made.status && inheritable_handle(call, security)) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
 			return;
 		}
 		const auto resolved = resolve(call, name);
@@ -247,7 +248,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 				return;
 			}
 			const auto made = objects.add_object(std::make_shared<FileObject>(descriptor, access, true, resolved->host, paths.full(name), flags));
-			{ if (!made.status && inheritable_handle(call, optional_argument(call, 3))) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
+			{ if (!made.status && inheritable_handle(call, security)) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
 			return;
 		}
 		int mode = want_read && want_write ? O_RDWR : want_write ? O_WRONLY : O_RDONLY;
@@ -294,7 +295,21 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		if (disposition == 2 && exists && !want_write)
 			::ftruncate(descriptor, 0);
 		const auto made = objects.add_object(std::make_shared<FileObject>(descriptor, access, false, resolved->host, paths.full(name), flags));
-		{ if (!made.status && inheritable_handle(call, optional_argument(call, 3))) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
+		{ if (!made.status && inheritable_handle(call, security)) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
+	};
+	registry.add("CreateFileW", 7, [create_file](ApiCall &call) {
+		create_file(call, call.wide(call[0]), call.u32(1), call.u32(4), call.u32(5), optional_argument(call, 3));
+	});
+	// The extended parameters hold the attributes, the flags and the quality-of-service bits that CreateFileW takes in one word, and the
+	// security attributes.
+	registry.add("CreateFile2", 5, [create_file](ApiCall &call) {
+		uint32_t flags = 0;
+		uint64_t security = 0;
+		if (call[4]) {
+			flags = call.load<uint32_t>(call[4] + 4) | call.load<uint32_t>(call[4] + 8) | call.load<uint32_t>(call[4] + 12);
+			security = call.pointer_width() == 8 ? call.load<uint64_t>(call[4] + 16) : call.load<uint32_t>(call[4] + 16);
+		}
+		create_file(call, call.wide(call[0]), call.u32(1), call.u32(3), flags, security);
 	});
 	registry.add("ReadFile", 5, [&, resolve, missing, file_of](ApiCall &call) {
 		if (transfer_pipe(context, call, true))
@@ -890,6 +905,15 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 	});
+	// The volume keeps no code integrity signing levels with its files, as one without extended attributes: a program that caches a level
+	// it checked is told the file system cannot, and checks the signature again next time.
+	const auto signing_level = [file_of](ApiCall &call) {
+		call.fail(file_of(call[0]) ? 50 : 6);
+	};
+	registry.add("GetCachedSigningLevel", 6, signing_level);
+	registry.add("SetCachedSigningLevel", 4, [file_of](ApiCall &call) {
+		call.fail(file_of(call[3]) ? 50 : 6);
+	});
 	registry.add("GetFileInformationByHandleEx", 4, [&, resolve, missing, file_of](ApiCall &call) {
 		const auto file = file_of(call[0]);
 		struct stat metadata{};
@@ -971,12 +995,16 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			call.ret(attribute_archive);
 			return;
 		}
-		if (!resolved->exists || ::stat(resolved->host.c_str(), &metadata)) {
+		struct stat own{};
+		if (!resolved->exists || ::lstat(resolved->host.c_str(), &own)) {
 			call.set_last_error(missing(*resolved));
 			return;
 		}
+		const bool link = S_ISLNK(own.st_mode);
+		if (!link || ::stat(resolved->host.c_str(), &metadata))
+			metadata = own;
 		call.set_last_error(0);
-		call.ret(attributes_of(metadata, resolved->host));
+		call.ret(attributes_of(metadata, resolved->host) | (link ? attribute_reparse : 0));
 	});
 	registry.add("GetFileAttributesExW", 3, [&, resolve, missing, file_of](ApiCall &call) {
 		const auto name = call.wide(call[0]);
@@ -1047,6 +1075,53 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		if (::unlink(resolved->host.c_str())) {
 			call.fail(errno == EISDIR ? 5 : error_of(errno, !resolved->parent_exists));
+			return;
+		}
+		call.ret(1);
+	});
+	// A symbolic link becomes a host one. A relative target stays relative to the link's directory, so the tree it lives in can move;
+	// the target is spelled as the host names it, since the host lookup through the link does not ignore case.
+	registry.add("CreateSymbolicLinkW", 3, [&, resolve](ApiCall &call) {
+		const auto link_name = paths.full(call.wide(call[0]));
+		const auto target_name = call.wide(call[1]);
+		const auto link = link_name.empty() ? std::nullopt : resolve(call, link_name);
+		if (!link)
+			return;
+		if (target_name.empty()) {
+			call.fail(87);
+			return;
+		}
+		const bool relative = !(target_name.size() > 1 && target_name[1] == u':') && target_name[0] != u'\\';
+		const auto separator = link_name.find_last_of(u'\\');
+		const auto target = resolve(call, relative ? paths.full(link_name.substr(0, separator + 1) + target_name) : target_name);
+		if (!target)
+			return;
+		if (link->exists) {
+			call.set_last_error(183);
+			return;
+		}
+		const auto content = relative ? target->host.lexically_relative(link->host.parent_path()) : target->host;
+		if (::symlink(content.c_str(), link->host.c_str())) {
+			call.fail(error_of(errno, !link->parent_exists));
+			return;
+		}
+		call.ret(1);
+	});
+	registry.add("CreateHardLinkW", 3, [&, resolve, missing](ApiCall &call) {
+		const auto link = resolve(call, call.wide(call[0]));
+		const auto existing = link ? resolve(call, call.wide(call[1])) : std::nullopt;
+		if (!link || !existing)
+			return;
+		if (!existing->exists) {
+			call.set_last_error(missing(*existing));
+			return;
+		}
+		if (link->exists) {
+			call.set_last_error(183);
+			return;
+		}
+		if (::link(existing->host.c_str(), link->host.c_str())) {
+			call.fail(error_of(errno, !link->parent_exists));
 			return;
 		}
 		call.ret(1);
@@ -1562,8 +1637,9 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.write(call[data_argument], find_data(found->entries[0]));
 		found->next = 1;
+		// Search handles take no security attributes; the fourth argument of FindFirstFileExW is the search operation.
 		const auto made = objects.add_object(found);
-		{ if (!made.status && inheritable_handle(call, optional_argument(call, 3))) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
+		call.ret(made.status ? invalid_handle : made.value);
 		call.set_last_error(0);
 	};
 	registry.add("FindFirstFileW", 2, [find_first](ApiCall &call) { find_first(call, 0, 1); });
@@ -1809,6 +1885,23 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		if ((call.u32(6) & close_source) && call[1] != UINT64_MAX && call[1] != UINT64_MAX - 1)
 			objects.close(call[1]);
 		call.ret(1);
+	});
+	// NtDuplicateObject takes the arguments of DuplicateHandle, with OBJ_INHERIT among the attributes, and answers with a status.
+	registry.add("NtDuplicateObject", 7, [duplicate = registry.find("DuplicateHandle")->second](ApiCall &call) {
+		ApiCall inner(call.process, call.environment, {call[0], call[1], call[2], call[3], call[4], (call.u32(5) & 0x2) ? 1u : 0u, call[6]});
+		duplicate(inner);
+		if (inner.result) {
+			call.ret(0);
+			return;
+		}
+		switch (inner.last_error()) {
+		case 5: call.ret(0xc0000022U); break;
+		case 6: call.ret(0xc0000008U); break;
+		case 8: call.ret(0xc000009aU); break;
+		case 87: call.ret(0xc000000dU); break;
+		case 50: call.ret(0xc00000bbU); break;
+		default: call.ret(0xc0000001U); break;
+		}
 	});
 	// Power requests keep the machine awake while a program works, as during a download; the host's own power management decides here, so a
 	// request is a handle that setting and clearing accept.
