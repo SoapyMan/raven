@@ -89,6 +89,8 @@ public:
 		std::chrono::steady_clock::time_point deadline);
 	~NativeThreads();
 	void set_runner(std::function<NativeResult(uint64_t, std::span<const uint64_t>)> invoke) { run = std::move(invoke); }
+	// The stack a thread reserves when its creator names only what to commit: the program's SizeOfStackReserve.
+	uint64_t default_stack_reserve = 1024 * 1024;
 	// Called in a new thread before it starts (reason 2) and after it ends (reason 3): TLS callbacks and DllMain notifications.
 	void set_notifier(std::function<void(uint32_t)> notify) { notifier = std::move(notify); }
 	// From here on a guest runs until it calls the runtime: the process is ending and nothing else should be scheduled behind its back.

@@ -430,7 +430,10 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		}
 		std::shared_ptr<GuestThread> thread;
 		try {
-			thread = threads.create(call[2], call[3], call[1] ? call[1] : 1024 * 1024, flags & 4);
+			// STACK_SIZE_PARAM_IS_A_RESERVATION makes the size the reservation; otherwise it is only the commit, rounded up to a megabyte,
+			// inside the program's own reservation.
+			const uint64_t size = flags & 0x10000U ? call[1] : std::max(threads.default_stack_reserve, (call[1] + 0xfffff) & ~uint64_t(0xfffff));
+			thread = threads.create(call[2], call[3], size ? size : 1024 * 1024, flags & 4);
 		} catch (const std::runtime_error &) {
 			call.fail(8);
 			return;

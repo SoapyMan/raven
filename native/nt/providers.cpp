@@ -2148,6 +2148,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	GuestAllocator allocator(memory, heap);
 	NativeThreads threads(process, environment, memory, &tls, deadline);
 	threads.set_runner(invoke);
+	threads.default_stack_reserve = entry.image.stack_reserve;
 	threads_ptr = &threads;
 	// Other processes ask for handles of this one and send theirs; the scheduler answers them.
 	threads.add_service([&kernel_objects] { receive_handles(kernel_objects); });
