@@ -520,8 +520,11 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 			// The logon SID identifies the same session for every process in this runtime.
 			const auto session = make_sid(5, {5, 0, 1});
 			std::vector<std::vector<uint8_t>> sids{session};
-			if (!logon)
+			// The groups of an interactive desktop logon: programs look for INTERACTIVE to tell a user's session from a service.
+			if (!logon) {
 				sids.insert(sids.begin(), {make_sid(5, {32, 545}), make_sid(5, {32, 544}), make_sid(1, {0})});
+				sids.insert(sids.end(), {make_sid(5, {4}), make_sid(2, {1}), make_sid(5, {11}), make_sid(5, {15}), make_sid(2, {0})});
+			}
 			const size_t first = width == 4 ? 4 : 8;
 			size_t total = first + record * sids.size();
 			for (const auto &item : sids)
@@ -794,8 +797,12 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 		switch (call.u32(0)) {
 		case 0: sid = make_sid(0, {0}); break;
 		case 1: sid = make_sid(1, {0}); break;
-		case 11: case 17: sid = make_sid(5, {11}); break;
-		case 12: case 36: sid = make_sid(5, {12}); break;
+		case 2: sid = make_sid(2, {0}); break;
+		case 11: sid = make_sid(5, {4}); break;
+		case 12: sid = make_sid(5, {6}); break;
+		case 17: sid = make_sid(5, {11}); break;
+		case 18: sid = make_sid(5, {12}); break;
+		case 36: sid = make_sid(5, {32, 555}); break;
 		case 22: sid = make_sid(5, {18}); break;
 		case 23: sid = make_sid(5, {19}); break;
 		case 24: sid = make_sid(5, {20}); break;

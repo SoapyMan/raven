@@ -460,6 +460,18 @@ int raven_entry(void)
 				++found;
 		if (found != 1)
 			return 26;
+		{
+			BYTE interactive[SECURITY_MAX_SID_SIZE];
+			DWORD interactive_size = sizeof(interactive);
+			found = 0;
+			if (!CreateWellKnownSid(WinInteractiveSid, NULL, interactive, &interactive_size) ||
+				*GetSidSubAuthority(interactive, 0) != SECURITY_INTERACTIVE_RID)
+				return 261;
+			for (index = 0; index < groups->GroupCount; ++index)
+				found += EqualSid(groups->Groups[index].Sid, interactive) != 0;
+			if (found != 1)
+				return 262;
+		}
 		HeapFree(GetProcessHeap(), 0, groups);
 		HeapFree(GetProcessHeap(), 0, logon);
 	}
