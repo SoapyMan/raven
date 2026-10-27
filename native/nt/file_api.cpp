@@ -225,6 +225,8 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		if (NativePaths::device(name)) {
+			if (open_console_device(context, call, name, access, inheritable_handle(call, security)))
+				return;
 			const int descriptor = ::open("/dev/null", O_RDWR | O_CLOEXEC);
 			const auto made = objects.add_object(std::make_shared<FileObject>(descriptor, access, false, "/dev/null", u"NUL", 0));
 			{ if (!made.status && inheritable_handle(call, security)) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
@@ -312,7 +314,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		create_file(call, call.wide(call[0]), call.u32(1), call.u32(3), flags, security);
 	});
 	registry.add("ReadFile", 5, [&, resolve, missing, file_of](ApiCall &call) {
-		if (transfer_pipe(context, call, true))
+		if (transfer_pipe(context, call, true) || read_console_file(context, call))
 			return;
 		// The standard handles inherited from the host read straight from their descriptors.
 		if (!file_of(call[0])) {

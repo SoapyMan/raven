@@ -2398,6 +2398,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	register_thread_api(api_registry, kernel);
 	NativeObjectAPI::register_served(api_registry, kernel.objects);
 	register_text_api(api_registry, kernel);
+	register_console_api(api_registry, kernel);
 	register_memory_api(api_registry, kernel);
 	register_file_api(api_registry, kernel);
 	register_shlwapi_api(api_registry, kernel);

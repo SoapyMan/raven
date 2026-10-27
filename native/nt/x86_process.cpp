@@ -110,6 +110,15 @@ constexpr std::array shared_exports{
 // More shared handlers a 32-bit program may use as they are; their words come from the registry and their library from the public
 // export lists. Anything with a pointer-width structure, a 64-bit argument or a callback into x64 conventions is not here.
 constexpr std::string_view shared_allowed[] = {
+	// The console: its records and structures have no pointers, and a COORD argument is one word. Control handlers are left out, as they
+	// call back into the program.
+	"GetConsoleMode", "SetConsoleMode", "WriteConsoleW", "WriteConsoleA", "ReadConsoleW", "ReadConsoleA", "ReadConsoleInputW",
+	"ReadConsoleInputA", "ReadConsoleInputExW", "ReadConsoleInputExA", "PeekConsoleInputW", "PeekConsoleInputA",
+	"GetNumberOfConsoleInputEvents", "FlushConsoleInputBuffer", "GetConsoleScreenBufferInfo", "GetConsoleScreenBufferInfoEx",
+	"GetLargestConsoleWindowSize", "SetConsoleTextAttribute", "SetConsoleCursorPosition", "GetConsoleCursorInfo", "SetConsoleCursorInfo",
+	"FillConsoleOutputCharacterW", "FillConsoleOutputCharacterA", "FillConsoleOutputAttribute", "GetConsoleCP", "GetConsoleOutputCP",
+	"SetConsoleCP", "SetConsoleOutputCP", "GetConsoleTitleW", "GetConsoleTitleA", "GetConsoleWindow", "AttachConsole", "FreeConsole",
+	"GetConsoleProcessList",
 	// WinINet: the accept types array is read at the program's pointer width.
 	"InternetOpenW", "InternetOpenA", "InternetConnectW", "InternetConnectA", "HttpOpenRequestW", "HttpOpenRequestA",
 	"HttpAddRequestHeadersW", "HttpAddRequestHeadersA", "HttpSendRequestW", "HttpSendRequestA", "InternetOpenUrlW", "InternetOpenUrlA",
@@ -1256,6 +1265,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	register_file_api(shared_api, kernel);
 	register_memory_api(shared_api, kernel);
 	register_text_api(shared_api, kernel);
+	register_console_api(shared_api, kernel);
 	register_system_api(shared_api, kernel);
 	register_version_api(shared_api, kernel);
 	register_registry_api(shared_api, kernel, registry);
