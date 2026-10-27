@@ -147,9 +147,17 @@ void register_schannel_api(ApiRegistry &registry, KernelContext &context)
 {
 	auto provider = std::make_shared<Provider>();
 	registry.add("InitSecurityInterfaceA", 0, [](ApiCall &call) { call.fail(50); });
+	// The table is built outside the lock: the guest allocator can give the processor to another guest thread, which may ask for it too on
+	// the same host thread. The first table published is the one every caller gets.
 	registry.add("InitSecurityInterfaceW", 0, [provider, &context](ApiCall &call) {
-		std::lock_guard guard(provider->lock);
-		if (!provider->table) {
+		{
+			std::lock_guard guard(provider->lock);
+			if (provider->table) {
+				call.ret(provider->table);
+				return;
+			}
+		}
+		{
 			// SecurityFunctionTableW: the version, then the entry points in the order of the SSPI header, reserved slots left null.
 			static constexpr const char *entries[] = {"EnumerateSecurityPackagesW", "QueryCredentialsAttributesW", "AcquireCredentialsHandleW",
 				"FreeCredentialsHandle", nullptr, "InitializeSecurityContextW", "AcceptSecurityContext", "CompleteAuthToken",
@@ -168,9 +176,16 @@ void register_schannel_api(ApiRegistry &registry, KernelContext &context)
 			for (size_t index = 0; index < count; ++index)
 				if (entries[index])
 					call.store_pointer(table + width * (index + 1), context.modules.resolve({"secur32.dll", entries[index], 0, false, 0}));
-			provider->table = table;
+			std::unique_lock guard(provider->lock);
+			const bool first = !provider->table;
+			if (first)
+				provider->table = table;
+			const uint64_t published = provider->table;
+			guard.unlock();
+			if (!first)
+				context.allocator.release(table);
+			call.ret(published);
 		}
-		call.ret(provider->table);
 	});
 	registry.add("AcquireCredentialsHandleW", 9, [provider](ApiCall &call) {
 		const auto package = call[1] ? call.wide(call[1]) : std::u16string();

@@ -94,12 +94,14 @@ class Table {
 public:
 	std::function<uint64_t()> allocate;
 	std::function<void(uint64_t)> release;
+	// The guest allocator can give the processor to another guest thread, which may come here on the same host thread: it is never
+	// called, nor an object destroyed, with the lock held.
 	uint64_t add(Object object)
 	{
-		std::lock_guard guard(lock);
 		const uint64_t handle = allocate ? allocate() : 0;
 		if (!handle)
 			return 0;
+		std::lock_guard guard(lock);
 		objects.emplace(handle, std::move(object));
 		return handle;
 	}
@@ -114,9 +116,15 @@ public:
 	}
 	bool remove(uint64_t handle)
 	{
-		std::lock_guard guard(lock);
-		if (!objects.erase(handle))
-			return false;
+		Object removed;
+		{
+			std::lock_guard guard(lock);
+			const auto found = objects.find(handle);
+			if (found == objects.end())
+				return false;
+			removed = std::move(found->second);
+			objects.erase(found);
+		}
 		if (release)
 			release(handle);
 		return true;

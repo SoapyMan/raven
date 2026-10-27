@@ -85,8 +85,40 @@ static int secp256k1(void)
 	return 0;
 }
 
+static volatile LONG hashing_failed;
+
+/* Hashes made and destroyed in a loop while other threads take and give back blocks of the process heap the handles also come from. */
+static DWORD WINAPI hash_loop(void *unused)
+{
+	for (int round = 0; round < 300; ++round) {
+		BCRYPT_HASH_HANDLE hash = NULL;
+		UCHAR digest[32];
+		if (BCryptCreateHash(BCRYPT_SHA256_ALG_HANDLE, &hash, NULL, 0, NULL, 0, 0) || BCryptHashData(hash, (UCHAR *)data, sizeof data, 0) ||
+			BCryptFinishHash(hash, digest, sizeof digest, 0) || BCryptDestroyHash(hash))
+			InterlockedExchange(&hashing_failed, 1);
+	}
+	return 0;
+}
+
+static DWORD WINAPI heap_loop(void *unused)
+{
+	for (int round = 0; round < 3000; ++round)
+		HeapFree(GetProcessHeap(), 0, HeapAlloc(GetProcessHeap(), 0, 16 + round % 512));
+	return 0;
+}
+
+static int concurrent_hashes(void)
+{
+	HANDLE threads[6];
+	for (int index = 0; index < 6; ++index)
+		if (!(threads[index] = CreateThread(NULL, 0, index % 2 ? heap_loop : hash_loop, NULL, 0, NULL))) return 30;
+	if (WaitForMultipleObjects(6, threads, TRUE, 15000) != WAIT_OBJECT_0) return 31;
+	return hashing_failed ? 32 : 0;
+}
+
 int raven_entry(void)
 {
 	int result = gmac();
-	return result ? result : secp256k1();
+	if (!result) result = secp256k1();
+	return result ? result : concurrent_hashes();
 }
