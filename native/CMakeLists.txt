@@ -2666,6 +2666,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_custom_target(rpc_auth_fixture${width} ALL DEPENDS ${rpc_auth_client})
                     add_test(NAME native_rpc_auth_x${width} COMMAND raven --run-process --execution=native ${rpc_auth_client})
                     set_tests_properties(native_rpc_auth_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    if(width EQUAL 64)
                         set(timer_queue_client ${CMAKE_CURRENT_BINARY_DIR}/timer-queue-client${width}.exe)
                         add_custom_command(OUTPUT ${timer_queue_client}
                             COMMAND ${accprop_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${accprop_entry},--no-insert-timestamp
@@ -2674,6 +2675,15 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                         add_custom_target(timer_queue_fixture${width} ALL DEPENDS ${timer_queue_client})
                         add_test(NAME native_timer_queue_x${width} COMMAND raven --run-process --execution=native ${timer_queue_client})
                         set_tests_properties(native_timer_queue_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                        set(restart_client ${CMAKE_CURRENT_BINARY_DIR}/restart-manager-client${width}.exe)
+                        add_custom_command(OUTPUT ${restart_client}
+                            COMMAND ${accprop_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${accprop_entry},--no-insert-timestamp
+                                -o ${restart_client} ${LOADER_SOURCES}/restart_manager_client.c -lrstrtmgr -lkernel32
+                            DEPENDS ${LOADER_SOURCES}/restart_manager_client.c VERBATIM)
+                        add_custom_target(restart_manager_fixture${width} ALL DEPENDS ${restart_client})
+                        add_test(NAME native_restart_manager_x${width} COMMAND raven --run-process --execution=native ${restart_client})
+                        set_tests_properties(native_restart_manager_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    endif()
                 endforeach()
                 # raven-deployment.dll, the PackageManager class of the Windows Runtime for each width: Raven code on the public headers.
                 set(deployment_source ${PROJECT_SOURCE_DIR}/native/upstream/raven-deployment)

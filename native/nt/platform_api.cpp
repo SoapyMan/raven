@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <cstring>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <unistd.h>
 
 namespace raven {
@@ -327,6 +329,87 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(0);
 	});
 	registry.add("IsDestinationReachableW", 2, [](ApiCall &call) { call.ret(0); });
+
+	// The Restart Manager, which installers ask which processes hold the files they replace: sessions are kept with their keys, and no
+	// process is reported holding a registered file, so there is nothing to shut down or restart. The functions answer with error codes.
+	struct RestartSessions {
+		std::mutex lock;
+		uint32_t next = 0;
+		std::map<uint32_t, std::u16string> keys;
+	};
+	auto sessions = std::make_shared<RestartSessions>();
+	const auto known = [sessions](uint32_t handle) {
+		std::lock_guard guard(sessions->lock);
+		return sessions->keys.contains(handle);
+	};
+	registry.add("RmStartSession", 3, [sessions](ApiCall &call) {
+		if (!call[0] || !call[2]) {
+			call.ret(87);
+			return;
+		}
+		uint8_t random[16];
+		if (getrandom(random, sizeof random, 0) != sizeof random) {
+			call.ret(29);
+			return;
+		}
+		std::u16string key;
+		for (const auto byte : random)
+			for (const int shift : {4, 0})
+				key += u"0123456789abcdef"[(byte >> shift) & 15];
+		std::lock_guard guard(sessions->lock);
+		const uint32_t handle = sessions->next++;
+		sessions->keys[handle] = key;
+		call.store<uint32_t>(call[0], handle);
+		call.put_wide(call[2], key, key.size() + 1);
+		call.ret(0);
+	});
+	registry.add("RmJoinSession", 2, [sessions](ApiCall &call) {
+		if (!call[0] || !call[1]) {
+			call.ret(87);
+			return;
+		}
+		const auto key = call.wide(call[1], 33);
+		std::lock_guard guard(sessions->lock);
+		if (std::none_of(sessions->keys.begin(), sessions->keys.end(), [&](const auto &item) { return item.second == key; })) {
+			call.ret(87);
+			return;
+		}
+		const uint32_t handle = sessions->next++;
+		sessions->keys[handle] = key;
+		call.store<uint32_t>(call[0], handle);
+		call.ret(0);
+	});
+	registry.add("RmEndSession", 1, [sessions](ApiCall &call) {
+		std::lock_guard guard(sessions->lock);
+		call.ret(sessions->keys.erase(call.u32(0)) ? 0 : 6);
+	});
+	registry.add("RmGetList", 5, [known](ApiCall &call) {
+		if (!known(call.u32(0))) {
+			call.ret(6);
+			return;
+		}
+		if (!call[1] || !call[2]) {
+			call.ret(87);
+			return;
+		}
+		call.store<uint32_t>(call[1], 0);
+		call.store<uint32_t>(call[2], 0);
+		if (call[4])
+			call.store<uint32_t>(call[4], 0);
+		call.ret(0);
+	});
+	registry.add("RmGetFilterList", 4, [known](ApiCall &call) {
+		if (!known(call.u32(0))) {
+			call.ret(6);
+			return;
+		}
+		if (call[3])
+			call.store<uint32_t>(call[3], 0);
+		call.ret(0);
+	});
+	for (const auto &[name, words] : std::initializer_list<std::pair<const char *, uint32_t>>{{"RmRegisterResources", 7}, {"RmShutdown", 3},
+		{"RmRestart", 3}, {"RmCancelCurrentTask", 1}, {"RmAddFilter", 5}, {"RmRemoveFilter", 4}})
+		registry.add(name, words, [known](ApiCall &call) { call.ret(known(call.u32(0)) ? 0 : 6); });
 	registry.add("ImageNtHeader", 1, [](ApiCall &call) {
 		const auto offset = call.load<uint32_t>(call[0] + 0x3c);
 		call.ret(call[0] + offset);
