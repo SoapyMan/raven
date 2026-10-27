@@ -2676,6 +2676,34 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_test(NAME native_deployment_x${width} COMMAND raven --run-process --execution=native ${deployment_client})
                     set_tests_properties(native_deployment_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                 endforeach()
+                # raven-netlist.dll, the NetworkListManager class of netprofm for each width: Raven code on the public headers.
+                set(netlist_source ${PROJECT_SOURCE_DIR}/native/upstream/raven-netlist)
+                add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/raven-netlist.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-netlist.dll
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/x86
+                    COMMAND ${RAVEN_MINGW64} ${accprop_flags} -Wl,--entry,DllMain,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/raven-netlist.dll
+                        ${netlist_source}/netlist.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c -loleaut32 -liphlpapi -luuid -lkernel32 -lgcc
+                    COMMAND ${RAVEN_MINGW32} ${accprop_flags} -Wl,--entry,_DllMain@12,--kill-at,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-netlist.dll
+                        ${netlist_source}/netlist.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c -loleaut32 -liphlpapi -luuid -lkernel32 -lgcc
+                    DEPENDS ${netlist_source}/netlist.c VERBATIM)
+                add_custom_target(netlist_component ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/raven-netlist.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-netlist.dll)
+                foreach(width 64 32)
+                    set(netlist_client ${CMAKE_CURRENT_BINARY_DIR}/netlist-client${width}.exe)
+                    if(width EQUAL 64)
+                        set(netlist_compiler ${RAVEN_MINGW64})
+                        set(netlist_entry raven_entry)
+                    else()
+                        set(netlist_compiler ${RAVEN_MINGW32})
+                        set(netlist_entry _raven_entry)
+                    endif()
+                    add_custom_command(OUTPUT ${netlist_client}
+                        COMMAND ${netlist_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${netlist_entry},--no-insert-timestamp
+                            -o ${netlist_client} ${LOADER_SOURCES}/netlist_client.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c -loleaut32 -lkernel32 -lgcc
+                        DEPENDS ${LOADER_SOURCES}/netlist_client.c VERBATIM)
+                    add_custom_target(netlist_fixture${width} ALL DEPENDS ${netlist_client} netlist_component)
+                    add_test(NAME native_netlist_x${width} COMMAND raven --run-process --execution=native ${netlist_client})
+                    # A machine without an address beyond loopback answers 30, disconnected, which is as correct.
+                    set_tests_properties(native_netlist_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned (0|30) ")
+                endforeach()
                 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/x86-ucrt-client.exe
                     COMMAND ${RAVEN_MINGW32} -O2 -nostdlib -fno-stack-protector -fno-builtin
                         -Wl,--entry,_raven_entry,--no-insert-timestamp
