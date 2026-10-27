@@ -217,6 +217,194 @@ bool write_all(int descriptor, std::string_view bytes)
 
 }
 
+int character_cells(char32_t character)
+{
+	struct Range {
+		char32_t first, last;
+	};
+	// Combining marks, zero-width spaces and joiners, and variation selectors take no cell of their own.
+	constexpr Range none[] = {{0x0300, 0x036f}, {0x0483, 0x0489}, {0x0591, 0x05bd}, {0x0610, 0x061a}, {0x064b, 0x065f}, {0x0e31, 0x0e31},
+		{0x0e34, 0x0e3a}, {0x0e47, 0x0e4e}, {0x1ab0, 0x1aff}, {0x1dc0, 0x1dff}, {0x200b, 0x200f}, {0x2028, 0x202e}, {0x2060, 0x2064},
+		{0x20d0, 0x20ff}, {0xfe00, 0xfe0f}, {0xfe20, 0xfe2f}, {0xfeff, 0xfeff}, {0xe0100, 0xe01ef}};
+	// Wide and fullwidth East Asian characters and the emoji terminals draw two cells wide.
+	constexpr Range two[] = {{0x1100, 0x115f}, {0x231a, 0x231b}, {0x2329, 0x232a}, {0x23e9, 0x23ec}, {0x23f0, 0x23f0}, {0x23f3, 0x23f3},
+		{0x25fd, 0x25fe}, {0x2614, 0x2615}, {0x2648, 0x2653}, {0x267f, 0x267f}, {0x2693, 0x2693}, {0x26a1, 0x26a1}, {0x26aa, 0x26ab},
+		{0x26bd, 0x26be}, {0x26c4, 0x26c5}, {0x26ce, 0x26ce}, {0x26d4, 0x26d4}, {0x26ea, 0x26ea}, {0x26f2, 0x26f5}, {0x26fa, 0x26fd},
+		{0x2705, 0x2705}, {0x270a, 0x270b}, {0x2728, 0x2728}, {0x274c, 0x274c}, {0x2753, 0x2755}, {0x2757, 0x2757}, {0x2795, 0x2797},
+		{0x27b0, 0x27b0}, {0x27bf, 0x27bf}, {0x2b1b, 0x2b1c}, {0x2b50, 0x2b50}, {0x2b55, 0x2b55}, {0x2e80, 0x303e}, {0x3041, 0x33ff},
+		{0x3400, 0x4dbf}, {0x4e00, 0x9fff}, {0xa000, 0xa4cf}, {0xa960, 0xa97f}, {0xac00, 0xd7a3}, {0xf900, 0xfaff}, {0xfe10, 0xfe19},
+		{0xfe30, 0xfe6f}, {0xff00, 0xff60}, {0xffe0, 0xffe6}, {0x16fe0, 0x16fe4}, {0x17000, 0x18cff}, {0x1b000, 0x1b2ff},
+		{0x1f004, 0x1f004}, {0x1f0cf, 0x1f0cf}, {0x1f18e, 0x1f18e}, {0x1f191, 0x1f19a}, {0x1f200, 0x1f251}, {0x1f300, 0x1f320},
+		{0x1f32d, 0x1f335}, {0x1f337, 0x1f37c}, {0x1f37e, 0x1f393}, {0x1f3a0, 0x1f3ca}, {0x1f3cf, 0x1f3d3}, {0x1f3e0, 0x1f3f0},
+		{0x1f3f4, 0x1f3f4}, {0x1f3f8, 0x1f43e}, {0x1f440, 0x1f440}, {0x1f442, 0x1f4fc}, {0x1f4ff, 0x1f53d}, {0x1f54b, 0x1f54e},
+		{0x1f550, 0x1f567}, {0x1f57a, 0x1f57a}, {0x1f595, 0x1f596}, {0x1f5a4, 0x1f5a4}, {0x1f5fb, 0x1f64f}, {0x1f680, 0x1f6c5},
+		{0x1f6cc, 0x1f6cc}, {0x1f6d0, 0x1f6d2}, {0x1f6d5, 0x1f6d7}, {0x1f6eb, 0x1f6ec}, {0x1f6f4, 0x1f6fc}, {0x1f7e0, 0x1f7eb},
+		{0x1f90c, 0x1f93a}, {0x1f93c, 0x1f945}, {0x1f947, 0x1f9ff}, {0x1fa70, 0x1faff}, {0x20000, 0x2fffd}, {0x30000, 0x3fffd}};
+	const auto inside = [character](const auto &ranges) {
+		for (const auto &range : ranges)
+			if (character >= range.first && character <= range.last)
+				return true;
+		return false;
+	};
+	return inside(none) ? 0 : inside(two) ? 2 : 1;
+}
+
+void CursorTracker::resize(int16_t columns, int16_t rows)
+{
+	width = std::max<int16_t>(columns, 1);
+	height = std::max<int16_t>(rows, 1);
+	clamp();
+}
+
+void CursorTracker::place(int16_t column, int16_t row)
+{
+	x = column;
+	y = row;
+	wrap_pending = false;
+	clamp();
+}
+
+void CursorTracker::clamp()
+{
+	x = std::clamp<int16_t>(x, 0, int16_t(width - 1));
+	y = std::clamp<int16_t>(y, 0, int16_t(height - 1));
+	saved_x = std::clamp<int16_t>(saved_x, 0, int16_t(width - 1));
+	saved_y = std::clamp<int16_t>(saved_y, 0, int16_t(height - 1));
+}
+
+// Down a row; at the bottom the screen scrolls and the cursor stays on the last row.
+void CursorTracker::line_feed()
+{
+	if (y < height - 1)
+		++y;
+}
+
+void CursorTracker::print(int cells)
+{
+	if (!cells)
+		return;
+	if (wrap_pending || x + cells > width) {
+		x = 0;
+		line_feed();
+	}
+	wrap_pending = false;
+	x = int16_t(x + cells);
+	if (x >= width) {
+		x = int16_t(width - 1);
+		wrap_pending = true;
+	}
+}
+
+void CursorTracker::control_sequence(char final)
+{
+	// A private marker (? > < =) makes a mode or report request, which moves nothing; DECSTBM (r) homes the cursor.
+	if (!parameters.empty() && parameters[0] >= '<' && parameters[0] <= '?')
+		return;
+	std::vector<int> numbers{0};
+	for (const char byte : parameters) {
+		if (byte == ';' || byte == ':')
+			numbers.push_back(0);
+		else if (byte >= '0' && byte <= '9')
+			numbers.back() = std::min(numbers.back() * 10 + (byte - '0'), 0x7fff);
+	}
+	const int count = std::max(numbers[0], 1);
+	const int second = numbers.size() > 1 ? std::max(numbers[1], 1) : 1;
+	wrap_pending = false;
+	switch (final) {
+	case 'A': y = int16_t(y - count); break;
+	case 'B': case 'e': y = int16_t(y + count); break;
+	case 'C': case 'a': x = int16_t(x + count); break;
+	case 'D': x = int16_t(x - count); break;
+	case 'E': x = 0; y = int16_t(y + count); break;
+	case 'F': x = 0; y = int16_t(y - count); break;
+	case 'G': case '`': x = int16_t(count - 1); break;
+	case 'd': y = int16_t(count - 1); break;
+	case 'H': case 'f': y = int16_t(count - 1); x = int16_t(second - 1); break;
+	case 's': if (numbers.size() == 1 && !numbers[0]) { saved_x = x; saved_y = y; } break;
+	case 'u': x = saved_x; y = saved_y; break;
+	case 'r': x = 0; y = 0; break;
+	default: break;
+	}
+	clamp();
+}
+
+void CursorTracker::feed(std::string_view bytes, bool return_on_newline)
+{
+	for (const char byte : bytes) {
+		const auto value = uint8_t(byte);
+		switch (state) {
+		case State::text:
+			// A UTF-8 character takes its cells once its last byte is here; one broken off early takes a cell, as its replacement does.
+			if (!character.empty() && (value & 0xc0) != 0x80) {
+				print(1);
+				character.clear();
+			}
+			if (value >= 0x80) {
+				character += byte;
+				char32_t decoded;
+				const size_t used = utf8_character(character, 0, decoded);
+				if (used) {
+					print(character_cells(decoded));
+					character.clear();
+				}
+				break;
+			}
+			switch (value) {
+			case 0x1b: state = State::escape; break;
+			case '\r': x = 0; wrap_pending = false; break;
+			case '\n': case 0x0b: case 0x0c:
+				if (return_on_newline)
+					x = 0;
+				line_feed();
+				wrap_pending = false;
+				break;
+			case '\b': if (x > 0) --x; wrap_pending = false; break;
+			case '\t': x = int16_t(std::min<int>((x / 8 + 1) * 8, width - 1)); break;
+			default:
+				if (value >= 0x20 && value != 0x7f)
+					print(1);
+			}
+			break;
+		case State::escape:
+			state = State::text;
+			switch (byte) {
+			case '[': state = State::control; parameters.clear(); break;
+			case ']': case 'P': case 'X': case '^': case '_': state = State::string; break;
+			case '(': case ')': case '*': case '+': case '#': case '%': state = State::designate; break;
+			case '7': saved_x = x; saved_y = y; break;
+			case '8': x = saved_x; y = saved_y; wrap_pending = false; break;
+			case 'D': line_feed(); break;
+			case 'E': x = 0; line_feed(); break;
+			case 'M': if (y > 0) --y; break;
+			case 'c': x = y = 0; wrap_pending = false; break;
+			default: break;
+			}
+			break;
+		case State::control:
+			if (value >= 0x40 && value <= 0x7e) {
+				control_sequence(byte);
+				state = State::text;
+			} else if (value >= 0x20 && value < 0x40)
+				parameters += byte;
+			else
+				state = value == 0x1b ? State::escape : State::text;
+			break;
+		case State::string:
+			if (value == 0x07)
+				state = State::text;
+			else if (value == 0x1b)
+				state = State::string_escape;
+			break;
+		case State::string_escape:
+			state = byte == '\\' ? State::text : State::string;
+			break;
+		case State::designate:
+			state = State::text;
+			break;
+		}
+	}
+}
+
 size_t decode_terminal_keys(std::string_view bytes, bool flush, bool virtual_terminal, std::vector<ConsoleKey> &keys)
 {
 	size_t at = 0;
@@ -420,7 +608,34 @@ void TerminalConsole::set_output_mode(int descriptor, uint32_t mode)
 	::tcsetattr(descriptor, TCSADRAIN, &settings);
 }
 
-bool TerminalConsole::write(int descriptor, std::string_view bytes) { return write_all(descriptor, bytes); }
+bool TerminalConsole::write(int descriptor, std::string_view bytes)
+{
+	const bool written = write_all(descriptor, bytes);
+	note_output(descriptor, bytes);
+	return written;
+}
+
+void TerminalConsole::follow_size(int descriptor)
+{
+	const auto window = size(descriptor);
+	if (sized && window.columns == tracker.columns() && window.rows == tracker.rows())
+		return;
+	tracker.resize(window.columns, window.rows);
+	if (!sized)
+		// Until the terminal says otherwise, the cursor starts a line at the bottom, where a shell leaves it after a while.
+		tracker.place(0, int16_t(window.rows - 1));
+	else
+		stale = true;
+	sized = true;
+}
+
+void TerminalConsole::note_output(int descriptor, std::string_view bytes)
+{
+	follow_size(descriptor);
+	termios settings{};
+	const bool return_on_newline = ::tcgetattr(descriptor, &settings) || ((settings.c_oflag & OPOST) && (settings.c_oflag & ONLCR));
+	tracker.feed(bytes, return_on_newline);
+}
 
 void TerminalConsole::gather(int descriptor, bool raw)
 {
@@ -477,6 +692,10 @@ bool TerminalConsole::line_ready(int descriptor)
 		return false;
 	const size_t length = newline == pending.npos ? pending.size() : newline + 1;
 	line = from_utf8(std::string_view(pending).substr(0, length));
+	// The terminal echoed the line as it was typed, so the cursor moved over it and onto the next line.
+	termios settings{};
+	if (!::tcgetattr(descriptor, &settings) && (settings.c_lflag & ECHO))
+		note_output(descriptor, std::string_view(pending).substr(0, length));
 	pending.erase(0, length);
 	line_complete = false;
 	if (!line.empty() && line.back() == u'\n' && (line.size() < 2 || line[line.size() - 2] != u'\r'))
@@ -493,6 +712,19 @@ std::u16string TerminalConsole::take_line(size_t limit)
 
 bool TerminalConsole::keys_ready(int descriptor, bool settle)
 {
+	if (resized_flag) {
+		resized_flag = 0;
+		follow_size(descriptor);
+		stale = true;
+		if (extra_input & console_window_input) {
+			const auto window = size(descriptor);
+			ConsoleKey event;
+			event.event = 4;
+			event.key = uint16_t(window.columns);
+			event.scan = uint16_t(window.rows);
+			keys.push_back(event);
+		}
+	}
 	const size_t before = pending.size();
 	gather(descriptor, true);
 	// An escape sequence still cut off after a moment is not coming: its ESC was the Escape key.
@@ -523,7 +755,7 @@ std::u16string TerminalConsole::take_characters(size_t limit)
 	while (!keys.empty() && characters.size() < limit) {
 		const auto key = keys.front();
 		keys.pop_front();
-		if (key.down && key.character)
+		if (key.event == 1 && key.down && key.character)
 			characters += key.character;
 	}
 	return characters;
@@ -546,7 +778,18 @@ TerminalConsole::Size TerminalConsole::size(int descriptor) const
 	return {int16_t(std::min<int>(window.ws_col, 0x7fff)), int16_t(std::min<int>(window.ws_row, 0x7fff))};
 }
 
-std::optional<std::pair<int16_t, int16_t>> TerminalConsole::cursor(int descriptor)
+std::pair<int16_t, int16_t> TerminalConsole::cursor(int descriptor)
+{
+	follow_size(descriptor);
+	if (stale && cursor_answers) {
+		if (const auto position = query_cursor(descriptor))
+			tracker.place(position->first, position->second);
+	}
+	stale = false;
+	return {tracker.column(), tracker.row()};
+}
+
+std::optional<std::pair<int16_t, int16_t>> TerminalConsole::query_cursor(int descriptor)
 {
 	if (!cursor_answers)
 		return std::nullopt;
@@ -609,9 +852,37 @@ std::optional<std::pair<int16_t, int16_t>> TerminalConsole::cursor(int descripto
 	return position;
 }
 
+std::string TerminalConsole::motion(int16_t column, int16_t row) const
+{
+	std::string sequence;
+	const int rows = row - tracker.row();
+	if (rows < 0)
+		sequence += "\x1b[" + std::to_string(-rows) + 'A';
+	else if (rows > 0)
+		sequence += "\x1b[" + std::to_string(rows) + 'B';
+	return sequence + "\x1b[" + std::to_string(column + 1) + 'G';
+}
+
 bool TerminalConsole::move_cursor(int descriptor, int16_t column, int16_t row)
 {
-	return write_all(descriptor, "\x1b[" + std::to_string(row + 1) + ';' + std::to_string(column + 1) + 'H');
+	cursor(descriptor);
+	return write(descriptor, motion(column, row));
+}
+
+bool TerminalConsole::write_characters(int descriptor, std::u16string_view text, int16_t column, int16_t row)
+{
+	cursor(descriptor);
+	return write(descriptor, "\x1b" "7" + motion(column, row) + to_utf8(text) + "\x1b" "8");
+}
+
+bool TerminalConsole::scroll(int descriptor, int16_t top, int16_t bottom, int lines)
+{
+	if (!lines)
+		return true;
+	// Inside a scrolling region of just those rows; setting the region homes the cursor, so it is saved and put back around it.
+	const auto amount = std::to_string(lines > 0 ? lines : -lines);
+	return write(descriptor, "\x1b" "7\x1b[" + std::to_string(top + 1) + ';' + std::to_string(bottom + 1) + 'r' + "\x1b[" + amount +
+		(lines > 0 ? 'S' : 'T') + "\x1b[r\x1b" "8");
 }
 
 bool TerminalConsole::set_attribute(int descriptor, uint16_t attribute)
@@ -634,13 +905,14 @@ bool TerminalConsole::fill_characters(int descriptor, char16_t character, uint32
 	const auto window = size(descriptor);
 	// Blanking the whole screen, as programs clear it, is one erase in the current colours.
 	if (character == u' ' && !column && !row && count >= uint32_t(window.columns) * uint32_t(window.rows))
-		return write_all(descriptor, "\x1b" "7\x1b[H\x1b[2J\x1b" "8");
+		return write(descriptor, "\x1b" "7\x1b[H\x1b[2J\x1b" "8");
 	const uint32_t cells = std::min<uint32_t>(count, uint32_t(window.columns) * uint32_t(window.rows));
-	std::string sequence = "\x1b" "7\x1b[" + std::to_string(row + 1) + ';' + std::to_string(column + 1) + 'H';
+	cursor(descriptor);
+	std::string sequence = "\x1b" "7" + motion(column, row);
 	const auto glyph = utf8_of(character);
 	for (uint32_t index = 0; index < cells; ++index)
 		sequence += glyph;
-	return write_all(descriptor, sequence + "\x1b" "8");
+	return write(descriptor, sequence + "\x1b" "8");
 }
 
 bool TerminalConsole::set_title(int descriptor, std::u16string text)

@@ -1,4 +1,5 @@
 #include "child_process.h"
+#include "console.h"
 #include "event.h"
 #include "mutex.h"
 #include "threads.h"
@@ -391,6 +392,8 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(error_of(errno));
 			return;
 		}
+		if (count > 0 && ::isatty(file->descriptor))
+			TerminalConsole::instance().note_output(file->descriptor, std::string_view(reinterpret_cast<const char *>(bytes.data()), size_t(count)));
 		if (call[3]) call.store<uint32_t>(call[3], uint32_t(count));
 		if (call[4] && (file->flags & 0x40000000U)) {
 			complete_file_io(context, *file, call[4], call.pointer_width(), 0, uint64_t(count));

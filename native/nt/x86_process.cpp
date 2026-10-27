@@ -118,7 +118,8 @@ constexpr std::string_view shared_allowed[] = {
 	"GetLargestConsoleWindowSize", "SetConsoleTextAttribute", "SetConsoleCursorPosition", "GetConsoleCursorInfo", "SetConsoleCursorInfo",
 	"FillConsoleOutputCharacterW", "FillConsoleOutputCharacterA", "FillConsoleOutputAttribute", "GetConsoleCP", "GetConsoleOutputCP",
 	"SetConsoleCP", "SetConsoleOutputCP", "GetConsoleTitleW", "GetConsoleTitleA", "GetConsoleWindow", "AttachConsole", "FreeConsole",
-	"GetConsoleProcessList",
+	"GetConsoleProcessList", "WriteConsoleOutputCharacterW", "WriteConsoleOutputCharacterA", "WriteConsoleOutputAttribute",
+	"ScrollConsoleScreenBufferW", "ScrollConsoleScreenBufferA",
 	// WinINet: the accept types array is read at the program's pointer width.
 	"InternetOpenW", "InternetOpenA", "InternetConnectW", "InternetConnectA", "HttpOpenRequestW", "HttpOpenRequestA",
 	"HttpAddRequestHeadersW", "HttpAddRequestHeadersA", "HttpSendRequestW", "HttpSendRequestA", "InternetOpenUrlW", "InternetOpenUrlA",

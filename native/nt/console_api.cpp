@@ -120,14 +120,19 @@ std::vector<uint8_t> input_records(const std::vector<ConsoleKey> &keys, bool wid
 	for (size_t index = 0; index < keys.size(); ++index) {
 		const auto &key = keys[index];
 		uint8_t *record = records.data() + index * 20;
-		const uint16_t type = 1;
+		std::memcpy(record, &key.event, 2);
+		if (key.event == 4) {
+			// WINDOW_BUFFER_SIZE_RECORD: the new size as a COORD.
+			std::memcpy(record + 4, &key.key, 2);
+			std::memcpy(record + 6, &key.scan, 2);
+			continue;
+		}
 		const uint32_t down = key.down;
 		uint16_t character = key.character;
 		if (!wide && character) {
 			const auto narrow = encode(std::u16string_view(&key.character, 1), page);
 			character = narrow.size() == 1 ? uint8_t(narrow[0]) : 0;
 		}
-		std::memcpy(record, &type, 2);
 		std::memcpy(record + 4, &down, 4);
 		std::memcpy(record + 8, &key.repeat, 2);
 		std::memcpy(record + 10, &key.key, 2);
@@ -327,8 +332,11 @@ void register_console_api(ApiRegistry &registry, KernelContext &context)
 	// The screen buffer is the terminal's window: its size is the window's, and the cursor is where the terminal says it is.
 	const auto screen_info = [&console](int descriptor, size_t size) {
 		std::vector<uint8_t> info(size);
+		// While a child program shares the terminal, what it wrote moved the cursor without this process seeing it.
+		if (children_running())
+			console.mark_stale();
+		const auto cursor = console.cursor(descriptor);
 		const auto window = console.size(descriptor);
-		const auto cursor = console.cursor(descriptor).value_or(std::pair<int16_t, int16_t>{0, 0});
 		const uint16_t attribute = console.attribute();
 		const size_t base = size == 22 ? 0 : 4;
 		put_coordinate(info, base, window.columns, window.rows);
@@ -442,7 +450,77 @@ void register_console_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("FillConsoleOutputCharacterW", 5, [fill_characters](ApiCall &call) { fill_characters(call, true); });
 	registry.add("FillConsoleOutputCharacterA", 5, [fill_characters](ApiCall &call) { fill_characters(call, false); });
+	const auto write_characters = [output_of, coordinate, inside, &console](ApiCall &call, bool wide) {
+		const auto found = output_of(call);
+		if (!found)
+			return;
+		const auto cell = coordinate(call.u32(3));
+		if (!inside(found->descriptor, cell)) {
+			call.fail(87);
+			return;
+		}
+		const auto window = console.size(found->descriptor);
+		const uint32_t room = uint32_t(window.columns) * uint32_t(window.rows) - uint32_t(cell.second * window.columns + cell.first);
+		const uint32_t count = std::min(call.u32(2), room);
+		const auto bytes = call.read(call[1], size_t(count) * (wide ? 2 : 1));
+		std::u16string text;
+		if (wide) {
+			text.resize(count);
+			std::memcpy(text.data(), bytes.data(), bytes.size());
+		} else
+			text = decode(std::string_view(reinterpret_cast<const char *>(bytes.data()), bytes.size()), console.output_code_page);
+		if (!console.write_characters(found->descriptor, text, cell.first, cell.second)) {
+			call.fail(232);
+			return;
+		}
+		call.store<uint32_t>(call[4], count);
+		call.ret(1);
+	};
+	registry.add("WriteConsoleOutputCharacterW", 5, [write_characters](ApiCall &call) { write_characters(call, true); });
+	registry.add("WriteConsoleOutputCharacterA", 5, [write_characters](ApiCall &call) { write_characters(call, false); });
+	// Scrolling moves whole rows of the window: a rectangle as wide as the window moved straight up or down, the rows it uncovers
+	// blanked. Other moves cannot be made on a terminal, which cannot read its cells back; they leave the screen as it is.
+	const auto scroll = [output_of, &console](ApiCall &call) {
+		const auto found = output_of(call);
+		if (!found)
+			return;
+		const auto rectangle = call.read(call[1], 8);
+		int16_t left, top, right, bottom;
+		std::memcpy(&left, rectangle.data(), 2);
+		std::memcpy(&top, rectangle.data() + 2, 2);
+		std::memcpy(&right, rectangle.data() + 4, 2);
+		std::memcpy(&bottom, rectangle.data() + 6, 2);
+		const auto window = console.size(found->descriptor);
+		const auto destination = std::pair{int16_t(call.u32(3) & 0xffff), int16_t(call.u32(3) >> 16)};
+		if (left > right || top > bottom) {
+			call.fail(87);
+			return;
+		}
+		top = std::max<int16_t>(top, 0);
+		bottom = std::min<int16_t>(bottom, int16_t(window.rows - 1));
+		const bool whole_rows = left <= 0 && right >= window.columns - 1 && destination.first == left;
+		const int lines = top - destination.second;
+		if (whole_rows && lines && top <= bottom) {
+			// The region spans the rows that move and the rows they move into.
+			const int16_t first = std::max<int16_t>(std::min<int16_t>(top, destination.second), 0);
+			const int16_t last = std::min<int16_t>(std::max<int16_t>(bottom, int16_t(destination.second + bottom - top)), int16_t(window.rows - 1));
+			if (!console.scroll(found->descriptor, first, last, lines)) {
+				call.fail(232);
+				return;
+			}
+		}
+		call.ret(1);
+	};
+	registry.add("ScrollConsoleScreenBufferW", 5, scroll);
+	registry.add("ScrollConsoleScreenBufferA", 5, scroll);
 	// A terminal cannot recolour cells already drawn: the attribute is taken as applied, and later text is drawn in the current one.
+	registry.add("WriteConsoleOutputAttribute", 5, [output_of, &console](ApiCall &call) {
+		const auto found = output_of(call);
+		if (!found)
+			return;
+		call.store<uint32_t>(call[4], call.u32(2));
+		call.ret(1);
+	});
 	registry.add("FillConsoleOutputAttribute", 5, [output_of, coordinate, inside, &console](ApiCall &call) {
 		const auto found = output_of(call);
 		if (!found)
@@ -542,8 +620,16 @@ void register_console_api(ApiRegistry &registry, KernelContext &context)
 		handlers.routines.erase(std::next(found).base());
 		call.ret(1);
 	});
-	// Ctrl+C reaches 64-bit programs only: a 32-bit one keeps the host's default, which ends it.
 	const bool terminal = ::isatty(0) || ::isatty(1) || ::isatty(2);
+	// The window changing size: the cursor must be asked for again, and programs that asked for window input get an event.
+	if (terminal) {
+		struct sigaction resized{};
+		resized.sa_handler = [](int) { TerminalConsole::instance().note_resize(); };
+		resized.sa_flags = SA_RESTART;
+		sigemptyset(&resized.sa_mask);
+		::sigaction(SIGWINCH, &resized, nullptr);
+	}
+	// Ctrl+C reaches 64-bit programs only: a 32-bit one keeps the host's default, which ends it.
 	if (!terminal || context.process.mode() == NativeMode::x86 || control_handlers)
 		return;
 	control_handlers = &handlers;

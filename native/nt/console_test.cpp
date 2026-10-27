@@ -9,6 +9,7 @@
 #include <pty.h>
 #include <stdexcept>
 #include <string>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -85,6 +86,51 @@ static void decoding()
 	check(keys.size() == 1 && keys[0].character == u'p', "sequences no key sends were not dropped");
 }
 
+static void tracking()
+{
+	raven::CursorTracker tracker;
+	tracker.resize(10, 5);
+	tracker.place(0, 0);
+	const auto at = [&](int column, int row, const char *what) {
+		check(tracker.column() == column && tracker.row() == row, std::string(what) + ": the cursor is at " + std::to_string(tracker.column()) +
+			"," + std::to_string(tracker.row()) + " rather than " + std::to_string(column) + "," + std::to_string(row));
+	};
+	tracker.feed("abc");
+	at(3, 0, "text");
+	tracker.feed("\r0123456789");
+	at(9, 0, "a full row holds the cursor in the last column");
+	tracker.feed("X");
+	at(1, 1, "the next character wraps");
+	tracker.feed("\n");
+	at(0, 2, "a line feed");
+	tracker.feed("\x1b[2;4H");
+	at(3, 1, "an absolute move");
+	tracker.feed("\x1b[A\x1b[9B");
+	at(3, 4, "relative moves stop at the edges");
+	tracker.feed("\x1b" "7\x1b[H\x1b" "8");
+	at(3, 4, "save and restore");
+	tracker.feed("\n\n");
+	at(0, 4, "the bottom row scrolls");
+	tracker.feed("\x1b[");
+	tracker.feed("3G");
+	at(2, 4, "a sequence in two pieces");
+	tracker.feed("\xf0\x9f");
+	tracker.feed("\x99\x82");
+	at(4, 4, "an emoji in two pieces takes two cells");
+	tracker.feed("\xc3\xa9" "e" "\xcc\x81");
+	at(6, 4, "accented and combining characters take one cell");
+	tracker.feed("\x1b]0;title\a\x1b[?25l\x1b[1;31m");
+	at(6, 4, "titles, modes and colours");
+	tracker.feed("\t\b");
+	at(7, 4, "a tab to column 8 and a backspace");
+	tracker.feed("\x1b[2;3r");
+	at(0, 0, "a scrolling region homes the cursor");
+	tracker.feed("ab\n", false);
+	at(2, 1, "a line feed without the carriage return");
+	check(raven::character_cells(U'a') == 1 && raven::character_cells(0x4e2d) == 2 && raven::character_cells(0x301) == 0,
+		"character widths differ");
+}
+
 static void attributes()
 {
 	check(raven::attribute_sequence(7) == "\x1b[0m", "the default attribute is not the terminal's own colours");
@@ -112,11 +158,14 @@ public:
 			check(count > 0, "the program closed the terminal before writing \"" + printable(text) + "\": \"" + printable(seen.substr(scanned)) +
 				"\"");
 			seen.append(chunk, size_t(count));
-			for (size_t at; (at = seen.find("\x1b[6n", answered)) != seen.npos; answered = at + 4)
+			for (size_t at; (at = seen.find("\x1b[6n", answered)) != seen.npos; answered = at + 4) {
 				type("\x1b[5;10R");
+				++asked;
+			}
 		}
 		scanned = seen.find(text, scanned) + text.size();
 	}
+	size_t queries() const { return asked; }
 	void type(std::string_view bytes) { check(::write(master, bytes.data(), bytes.size()) == ssize_t(bytes.size()), "typing failed"); }
 	void drain()
 	{
@@ -140,7 +189,7 @@ private:
 	}
 	int master;
 	std::string seen;
-	size_t scanned = 0, answered = 0;
+	size_t scanned = 0, answered = 0, asked = 0;
 };
 
 static void terminal(const char *raven, const char *client)
@@ -160,6 +209,11 @@ static void terminal(const char *raven, const char *client)
 		screen.expect("\x1b[0;91mcaf\xc3\xa9 \xf0\x9f\x99\x82\r\n\x1b[0m");
 		screen.expect("READY-LINE: type hello and press Enter\r\n");
 		screen.type("hello\r");
+		// Relative moves from the followed cursor at row 7: up to row 5, a write at the top left, a scroll, and back down.
+		screen.expect("\x1b[2A\x1b[5G");
+		screen.expect("\x1b" "7\x1b[5A\x1b[1GXY\x1b" "8");
+		screen.expect("\x1b" "7\x1b[1;30r\x1b[1S\x1b[r\x1b" "8");
+		screen.expect("\x1b[2B\x1b[1G");
 		screen.expect("READY-KEYS: press Up, x, Ctrl+Right, Esc\r\n");
 		screen.type("\x1b[Ax\x1b[1;5C");
 		::usleep(100000);
@@ -167,6 +221,11 @@ static void terminal(const char *raven, const char *client)
 		screen.expect("READY-CHAR: type q\r\n");
 		screen.type("q");
 		screen.expect("via-conout\r\n");
+		screen.expect("READY-SIZE: resize the window\r\n");
+		winsize larger{};
+		larger.ws_col = 120;
+		larger.ws_row = 40;
+		check(!::ioctl(master, TIOCSWINSZ, &larger), "the window could not be resized");
 		screen.expect("READY-FILE: type abc and press Enter\r\n");
 		screen.type("abc\r");
 		screen.expect("\x1b]0;Raven test\a");
@@ -187,6 +246,8 @@ static void terminal(const char *raven, const char *client)
 	check(WIFEXITED(status), "the program was killed by signal " + std::to_string(WIFSIGNALED(status) ? WTERMSIG(status) : 0));
 	check(WEXITSTATUS(status) == 0x3a, "the unhandled Ctrl+C ended the program with " + std::to_string(WEXITSTATUS(status)) +
 		" rather than STATUS_CONTROL_C_EXIT");
+	check(screen.queries() == 1, "the terminal was asked for the cursor " + std::to_string(screen.queries()) +
+		" times rather than once; the console did not follow it");
 	termios settings{};
 	check(!::tcgetattr(master, &settings) && (settings.c_lflag & ICANON) && (settings.c_lflag & ECHO) && (settings.c_iflag & ICRNL),
 		"the terminal was not put back into line mode");
@@ -198,9 +259,10 @@ int main(int argc, char **argv)
 	try {
 		decoding();
 		attributes();
+		tracking();
 		if (argc == 3)
 			terminal(argv[1], argv[2]);
-		std::cout << "Console key decoding, attributes" << (argc == 3 ? " and the terminal console" : "") << " passed\n";
+		std::cout << "Console key decoding, attributes, cursor tracking" << (argc == 3 ? " and the terminal console" : "") << " passed\n";
 	} catch (const std::exception &error) {
 		std::cerr << error.what() << '\n';
 		return 1;

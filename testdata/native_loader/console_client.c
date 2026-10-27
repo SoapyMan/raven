@@ -120,6 +120,28 @@ int raven_entry(void)
 	if (!ReadConsoleW(input, line, 64, &count, NULL) || count != 7 || !same(line, L"hello\r\n", 7))
 		return failed(9);
 
+	/* The cursor is followed through the output and the echoed line, not asked of the terminal again: below the two lines written
+	   since the first query, which found it at row 5, column 10. Moves are relative, so they hold on a terminal that never answers. */
+	BOOL exact = argument(L"--exact");
+	CONSOLE_SCREEN_BUFFER_INFO before;
+	if (!GetConsoleScreenBufferInfo(output, &before) || (exact && (before.dwCursorPosition.X != 0 || before.dwCursorPosition.Y != 7)))
+		return failed(25);
+	COORD cell = {4, (SHORT)(before.dwCursorPosition.Y > 2 ? before.dwCursorPosition.Y - 2 : 0)};
+	if (!SetConsoleCursorPosition(output, cell) || !GetConsoleScreenBufferInfo(output, &info) || info.dwCursorPosition.X != cell.X ||
+		info.dwCursorPosition.Y != cell.Y)
+		return failed(26);
+	COORD corner = {0, 0};
+	if (!WriteConsoleOutputCharacterW(output, L"XY", 2, corner, &count) || count != 2 || !GetConsoleScreenBufferInfo(output, &info) ||
+		info.dwCursorPosition.X != cell.X || info.dwCursorPosition.Y != cell.Y)
+		return failed(27);
+	SMALL_RECT rows = {0, 1, (SHORT)(info.dwSize.X - 1), (SHORT)(info.dwSize.Y - 1)};
+	CHAR_INFO blank = {{L' '}, 7};
+	if (!ScrollConsoleScreenBufferW(output, &rows, NULL, corner, &blank) || !GetConsoleScreenBufferInfo(output, &info) ||
+		info.dwCursorPosition.X != cell.X || info.dwCursorPosition.Y != cell.Y)
+		return failed(28);
+	if (!SetConsoleCursorPosition(output, before.dwCursorPosition))
+		return failed(29);
+
 	if (!SetConsoleMode(input, ENABLE_PROCESSED_INPUT) || !GetConsoleMode(input, &mode) || (mode & 7) != ENABLE_PROCESSED_INPUT)
 		return failed(10);
 	say("READY-KEYS: press Up, x, Ctrl+Right, Esc\n");
@@ -142,6 +164,21 @@ int raven_entry(void)
 	if (screen == INVALID_HANDLE_VALUE || !GetConsoleMode(screen, &mode) || !WriteFile(screen, "via-conout\n", 11, &count, NULL))
 		return failed(17);
 	CloseHandle(screen);
+
+	/* A program that asks for window input hears of a new size. */
+	if (!SetConsoleMode(input, ENABLE_PROCESSED_INPUT | ENABLE_WINDOW_INPUT))
+		return failed(30);
+	say("READY-SIZE: resize the window\n");
+	for (;;) {
+		INPUT_RECORD record;
+		if (!ReadConsoleInputW(input, &record, 1, &count) || count != 1)
+			return failed(31);
+		if (record.EventType != WINDOW_BUFFER_SIZE_EVENT)
+			continue;
+		if (exact && (record.Event.WindowBufferSizeEvent.dwSize.X != 120 || record.Event.WindowBufferSizeEvent.dwSize.Y != 40))
+			return failed(32);
+		break;
+	}
 
 	if (!SetConsoleMode(input, 0x1f7))
 		return failed(18);
