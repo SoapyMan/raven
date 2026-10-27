@@ -147,6 +147,10 @@ struct WaylandPresentation::State {
 	bool input_failed=false;
 	// Serial of the newest input event; popup grabs must quote one.
 	uint32_t last_serial=0;
+	// Pointer buttons held down, and a window whose move the window menu asked for while none was: the compositor starts a move only
+	// from a press, so the move begins with the next press on that window, as a click ends the move on Windows; a key cancels it.
+	uint32_t buttons_down=0;
+	uint64_t pending_move=0;
 	const char *input_error="unsupported native input event or input queue exhaustion";
 	std::vector<DesktopEvent> pending;
 	// Host selection: text offered by other clients is fetched on demand, text from the guest is served to whoever asks.
@@ -299,8 +303,20 @@ struct WaylandPresentation::State {
 					state.pointer_event(DesktopEventKind::pointer_motion);
 				};
 				value.button=[](void *data,wl_pointer *,uint32_t serial,uint32_t,uint32_t button,uint32_t pressed) {
-					static_cast<State *>(data)->last_serial=serial;
-					static_cast<State *>(data)->pointer_event(DesktopEventKind::pointer_button,button,pressed);
+					auto &state=*static_cast<State *>(data);
+					state.last_serial=serial;
+					state.buttons_down=pressed ? state.buttons_down+1 : state.buttons_down ? state.buttons_down-1 : 0;
+					if (pressed && state.pending_move) {
+						const auto found=state.surfaces.find(state.pending_move);
+						const bool here=state.pending_move==state.pointer_window;
+						state.pending_move=0;
+						if (here && found!=state.surfaces.end() && found->second->role) {
+							xdg_toplevel_move(found->second->role,state.seat,serial);
+							state.buttons_down=0;
+							return;
+						}
+					}
+					state.pointer_event(DesktopEventKind::pointer_button,button,pressed);
 				};
 				value.axis=[](void *data,wl_pointer *,uint32_t,uint32_t axis,wl_fixed_t amount) {
 					auto &state=*static_cast<State *>(data);
@@ -357,6 +373,7 @@ struct WaylandPresentation::State {
 				value.key=[](void *data,wl_keyboard *,uint32_t serial,uint32_t,uint32_t key,uint32_t pressed) {
 					auto &state=*static_cast<State *>(data);
 					state.last_serial=serial;
+					if (pressed) state.pending_move=0;
 					if (std::getenv("RAVEN_TRACE_KEYS")) {
 						timespec now{}; clock_gettime(CLOCK_REALTIME,&now);
 						fprintf(stderr,"key %u %s at %lld ns\n",key,pressed ? "down" : "up",(long long)now.tv_sec*1000000000LL+now.tv_nsec);
@@ -901,7 +918,8 @@ DesktopPresentation WaylandPresentation::callbacks()
 	},[this](uint64_t handle,uint32_t action) {
 		const auto found=state->surfaces.find(handle);
 		if (found==state->surfaces.end() || !state->seat || found->second->is_popup || !found->second->role) return;
-		if (action==0) xdg_toplevel_move(found->second->role,state->seat,state->last_serial);
+		if (action==0 && !state->buttons_down) state->pending_move=handle;
+		else if (action==0) xdg_toplevel_move(found->second->role,state->seat,state->last_serial);
 		else xdg_toplevel_resize(found->second->role,state->seat,state->last_serial,action);
 		wl_display_flush(state->display);
 	},[this](std::string_view text) { state->publish_text(text); },
