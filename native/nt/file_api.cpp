@@ -787,6 +787,19 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		call.write(call[1], bytes);
 		call.ret(1);
 	});
+	// The host file systems keep no 8.3 names: a valid request on an open file is accepted and leaves nothing to record, as a volume with
+	// short name generation turned off does.
+	registry.add("SetFileShortNameW", 2, [file_of](ApiCall &call) {
+		if (!file_of(call[0])) {
+			call.fail(6);
+			return;
+		}
+		if (!call[1] || call.wide(call[1], 13).size() > 12) {
+			call.fail(87);
+			return;
+		}
+		call.ret(1);
+	});
 	// The information classes programs set on an open file: times, renaming, deletion on close, the file's length and I/O hints.
 	registry.add("SetFileInformationByHandle", 4, [&, resolve, missing, file_of](ApiCall &call) {
 		const auto file = file_of(call[0]);
