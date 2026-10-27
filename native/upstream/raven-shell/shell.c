@@ -697,7 +697,9 @@ static BOOL builtin_class(REFCLSID clsid)
 
 /* Class registry -------------------------------------------------------------------------------------------- */
 
-HRESULT WINAPI CoCreateInstance(REFCLSID clsid, LPUNKNOWN outer, DWORD context, REFIID iid, LPVOID *out)
+/* Both creation entry points share this: programs that hook one of them call the other as the original, so neither may go through the
+ * other's export. */
+static HRESULT create_instance(REFCLSID clsid, LPUNKNOWN outer, DWORD context, REFIID iid, LPVOID *out)
 {
 	trace("CoCreateInstance", clsid);
 	trace("  requested", iid);
@@ -711,6 +713,11 @@ HRESULT WINAPI CoCreateInstance(REFCLSID clsid, LPUNKNOWN outer, DWORD context, 
 	}
 	/* Any other class is served by the library the registry names for it. */
 	return raven_create_registered(clsid, outer, context, iid, out);
+}
+
+HRESULT WINAPI CoCreateInstance(REFCLSID clsid, LPUNKNOWN outer, DWORD context, REFIID iid, LPVOID *out)
+{
+	return create_instance(clsid, outer, context, iid, out);
 }
 
 HRESULT WINAPI CoGetClassObject(REFCLSID clsid, DWORD context, LPVOID server, REFIID iid, LPVOID *out)
@@ -729,6 +736,32 @@ HRESULT WINAPI CoGetClassObject(REFCLSID clsid, DWORD context, LPVOID server, RE
 		return result;
 	}
 	return raven_registered_class_object(clsid, context, iid, out);
+}
+
+/* One object asked for several interfaces at once. Every class here is served in the process, so a server name changes nothing. */
+HRESULT WINAPI CoCreateInstanceEx(REFCLSID clsid, LPUNKNOWN outer, DWORD context, COSERVERINFO *server, DWORD count, MULTI_QI *results)
+{
+	IUnknown *object;
+	DWORD found = 0;
+	if (!count || !results)
+		return E_INVALIDARG;
+	for (DWORD index = 0; index < count; ++index) {
+		results[index].pItf = NULL;
+		results[index].hr = E_NOINTERFACE;
+	}
+	const HRESULT result = create_instance(clsid, outer, context, &IID_IUnknown, (void **)&object);
+	if (FAILED(result)) {
+		for (DWORD index = 0; index < count; ++index)
+			results[index].hr = result;
+		return result;
+	}
+	for (DWORD index = 0; index < count; ++index) {
+		results[index].hr = IUnknown_QueryInterface(object, results[index].pIID, (void **)&results[index].pItf);
+		if (SUCCEEDED(results[index].hr))
+			++found;
+	}
+	IUnknown_Release(object);
+	return found == count ? S_OK : found ? CO_S_NOTALLINTERFACES : E_NOINTERFACE;
 }
 
 /* shlwapi names this export by its ordinal (176): ask an object for a service through its service provider. */

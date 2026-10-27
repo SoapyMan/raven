@@ -75,6 +75,23 @@ HRESULT raven_create_registered(REFCLSID clsid, LPUNKNOWN outer, DWORD context, 
 	return result;
 }
 
+/* A class the registry marks as emulated by another one: HKEY_CLASSES_ROOT\CLSID\{class}\TreatAs. S_FALSE hands back the class itself. */
+HRESULT WINAPI CoGetTreatAsClass(REFCLSID original, LPCLSID result)
+{
+	WCHAR key[MAX_PATH], text[MAX_PATH];
+	if (!original || !result)
+		return E_INVALIDARG;
+	*result = *original;
+	class_key(original, L"\\TreatAs", key);
+	if (!class_value(key, text, MAX_PATH))
+		return S_FALSE;
+	if (FAILED(CLSIDFromString(text, result))) {
+		*result = *original;
+		return REGDB_E_INVALIDVALUE;
+	}
+	return S_OK;
+}
+
 HRESULT WINAPI CLSIDFromProgID(LPCOLESTR identifier, LPCLSID clsid)
 {
 	WCHAR key[MAX_PATH], text[MAX_PATH];
