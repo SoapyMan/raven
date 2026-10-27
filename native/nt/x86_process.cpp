@@ -49,6 +49,11 @@ namespace raven {
 
 namespace {
 
+// The task allocator as an IMalloc, for CoGetMalloc: its memory is the memory CoTaskMemAlloc hands out.
+constexpr ComMethod malloc_methods[] = {{"IMalloc", "QueryInterface", 0, 3}, {"IMalloc", "AddRef", 1, 1}, {"IMalloc", "Release", 2, 1},
+	{"IMalloc", "Alloc", 3, 2}, {"IMalloc", "Realloc", 4, 3}, {"IMalloc", "Free", 5, 2}, {"IMalloc", "GetSize", 6, 2}, {"IMalloc", "DidAlloc", 7, 2},
+	{"IMalloc", "HeapMinimize", 8, 1}};
+
 // stdcall argument counts for every API the x86 process runner can dispatch.
 constexpr std::array<std::pair<std::string_view, uint32_t>, 115> kernel32_exports{{
 	{"CloseHandle", 1}, {"CreateEventA", 4}, {"CreateEventW", 4}, {"CreateThread", 6}, {"DeleteCriticalSection", 1}, {"EnterCriticalSection", 1}, {"ExitProcess", 1}, {"ExitThread", 1}, {"FindResourceA", 3},
@@ -626,6 +631,8 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	static constexpr std::array<std::string_view, 8> version_exports{"GetFileVersionInfoA", "GetFileVersionInfoExW", "GetFileVersionInfoSizeA",
 		"GetFileVersionInfoSizeExW", "GetFileVersionInfoSizeW", "GetFileVersionInfoW", "VerQueryValueA", "VerQueryValueW"};
 	static constexpr std::array<std::string_view, 1> controls_exports{"InitCommonControlsEx"};
+	const auto malloc_names = com_names(malloc_methods);
+	add_library("raven-com.dll", malloc_names, {}, [](std::string_view name) { return com_words(malloc_methods, name); });
 	add_library("winmm.dll", winmm_exports, {}, [](std::string_view name) { return uint32_t(name == "PlaySoundW" ? 3 : name == "timeGetTime" ? 0 : 1); });
 	const auto dsound_methods = NativeX86DirectSound::method_names();
 	add_library("dsound.dll", NativeX86DirectSound::entry_names(), {}, [](std::string_view name) { return NativeX86DirectSound::entry_words(name); });
@@ -720,12 +727,14 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	NativeEnvironment environment(process, entry.loaded.base(), uint32_t(::getpid()), 1);
 	NativeX86D3D9 direct3d9(process);
 	NativeX86DirectSound directsound(process);
+	NativeX86Com task_malloc(process, malloc_methods);
 	{
 		std::map<std::string, uint64_t> method_traps;
 		for (const auto &[address, api] : traps)
-			if (direct3d9.com().owns(api.first) || directsound.com().owns(api.first))
+			if (direct3d9.com().owns(api.first) || directsound.com().owns(api.first) || task_malloc.owns(api.first))
 				method_traps.emplace(std::string(api.first), address);
 		direct3d9.com().set_trap_addresses(method_traps);
+		task_malloc.set_trap_addresses(method_traps);
 		directsound.com().set_trap_addresses(std::move(method_traps));
 	}
 	if (!launch) {
@@ -849,6 +858,59 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	windows.set_presentation(std::move(presentation));
 	desktop.set_updated([&](uint64_t window) { windows.drawing(window); });
 	struct ProcessExit { uint32_t code; uint64_t instruction; };
+	// CoGetMalloc hands out one allocator object, whose methods are the task allocator's handlers.
+	uint64_t malloc_object = 0;
+	const auto malloc_dispatch = [&](std::string_view api) {
+		const auto through = [&](const char *name, std::vector<uint64_t> arguments) {
+			ApiCall inner(process, environment, std::move(arguments));
+			shared_api.find(name)->second(inner);
+			return inner.result;
+		};
+		if (api == "CoGetMalloc") {
+			const auto args = process.api_arguments(2);
+			// MEMCTX_TASK is the only context; S_OK, E_INVALIDARG or E_POINTER.
+			if (!args[1]) {
+				process.return_api(0x80004003U);
+			} else if (args[0] != 1) {
+				task_malloc.write32(args[1], 0);
+				process.return_api(0x80070057U);
+			} else {
+				if (!malloc_object)
+					malloc_object = task_malloc.make_object("IMalloc");
+				task_malloc.write32(args[1], uint32_t(malloc_object));
+				process.return_api(0);
+			}
+			return true;
+		}
+		if (!task_malloc.owns(api))
+			return false;
+		const auto args = process.api_arguments(task_malloc.words(api));
+		const auto method = task_malloc.split(api).second;
+		if (method == "AddRef" || method == "Release") {
+			process.return_api(1);
+		} else if (method == "QueryInterface") {
+			// IID_IUnknown and IID_IMalloc: {00000000-...} and {00000002-0000-0000-C000-000000000046}.
+			const auto iid = args[1] ? process.read_memory(args[1], 16) : std::vector<uint8_t>(16, 0xff);
+			static constexpr uint8_t tail[12] = {0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46};
+			const bool known = (iid[0] == 0 || iid[0] == 2) && !iid[1] && !iid[2] && !iid[3] && std::equal(std::begin(tail), std::end(tail), iid.begin() + 4);
+			if (args[2])
+				task_malloc.write32(args[2], known ? uint32_t(args[0]) : 0);
+			process.return_api(!args[2] ? 0x80004003U : known ? 0 : 0x80004002U);
+		} else if (method == "Alloc") {
+			process.return_api(through("CoTaskMemAlloc", {args[1]}));
+		} else if (method == "Realloc") {
+			process.return_api(through("CoTaskMemRealloc", {args[1], args[2]}));
+		} else if (method == "Free") {
+			through("CoTaskMemFree", {args[1]});
+			process.return_api(0);
+		} else if (method == "GetSize" || method == "DidAlloc") {
+			// The size is not known and every block may be this allocator's.
+			process.return_api(0xffffffffU);
+		} else {
+			process.return_api(0);
+		}
+		return true;
+	};
 	const auto remaining = [&] { return std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()); };
 	// Runs one guest call, answering every API trap until the call returns or stops for another reason.
 	const auto invoke = [&](uint64_t address, std::span<const uint64_t> arguments) {
@@ -1106,6 +1168,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				throw ProcessExit{code, result.instruction};
 			}
 			if (!environment.dispatch(api) && !thread_api.dispatch(api) && !system_api.dispatch(api) && !compat.dispatch(api) && !direct3d9.dispatch(api) && !directsound.dispatch(api) &&
+				!malloc_dispatch(api) &&
 #ifdef RAVEN_VULKAN_THUNK32
 				!vulkan32.dispatch(api) &&
 #endif
