@@ -1325,7 +1325,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             # The components are copied whenever they change, whether or not the runtime itself was rebuilt.
             set(installer_copies)
             foreach(component msi.dll cabinet.dll sxs.dll rpcrt4.dll raven-storage.dll msiexec.exe libxslt.dll msxml3.dll regsvr32.exe atl100.dll oleaut32.dll
-                libpng.dll libjpeg.dll libtiff.dll propsys.dll mlang.dll windowscodecs.dll gdiplus.dll urlmon.dll riched20.dll msftedit.dll msvfw32.dll advpack.dll raven-setupapi.dll)
+                libpng.dll libjpeg.dll libtiff.dll propsys.dll mlang.dll windowscodecs.dll gdiplus.dll urlmon.dll riched20.dll msftedit.dll msvfw32.dll advpack.dll raven-setupapi.dll xmllite.dll)
                 if(NOT EXISTS "${installer_dir}/${component}")
                     message(FATAL_ERROR "Configured installer component does not exist: ${installer_dir}/${component}")
                 endif()
@@ -2648,6 +2648,22 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_custom_target(stream_fixture${width} ALL DEPENDS ${stream_client})
                     add_test(NAME native_global_stream_x${width} COMMAND raven --run-process --execution=native ${stream_client})
                     set_tests_properties(native_global_stream_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(msxml6_client ${CMAKE_CURRENT_BINARY_DIR}/msxml6-client${width}.exe)
+                    add_custom_command(OUTPUT ${msxml6_client}
+                        COMMAND ${accprop_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${accprop_entry},--no-insert-timestamp
+                            -o ${msxml6_client} ${LOADER_SOURCES}/msxml6_client.c -lole32 -loleaut32 -luuid -lkernel32
+                        DEPENDS ${LOADER_SOURCES}/msxml6_client.c VERBATIM)
+                    add_custom_target(msxml6_fixture${width} ALL DEPENDS ${msxml6_client})
+                    add_test(NAME native_msxml6_x${width} COMMAND raven --run-process --execution=native ${msxml6_client})
+                    set_tests_properties(native_msxml6_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(xmllite_client ${CMAKE_CURRENT_BINARY_DIR}/xmllite-client${width}.exe)
+                    add_custom_command(OUTPUT ${xmllite_client}
+                        COMMAND ${accprop_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${accprop_entry},--no-insert-timestamp
+                            -o ${xmllite_client} ${LOADER_SOURCES}/xmllite_client.c -lxmllite -lole32 -luuid -lkernel32
+                        DEPENDS ${LOADER_SOURCES}/xmllite_client.c VERBATIM)
+                    add_custom_target(xmllite_fixture${width} ALL DEPENDS ${xmllite_client})
+                    add_test(NAME native_xmllite_x${width} COMMAND raven --run-process --execution=native ${xmllite_client})
+                    set_tests_properties(native_xmllite_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                     set(integrity_client ${CMAKE_CURRENT_BINARY_DIR}/integrity-client${width}.exe)
                     add_custom_command(OUTPUT ${integrity_client}
                         COMMAND ${accprop_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${accprop_entry},--no-insert-timestamp

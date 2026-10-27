@@ -2,11 +2,65 @@
 #define CINTERFACE
 #include <windows.h>
 #include <objbase.h>
+#include <initguid.h>
 #include <msxml2.h>
 
 /* The XML document object as installers and their bootstrappers use it: found by its program identifier through the registry, made by
    the library registered for its class, parsing a document and answering an XPath query; then loading the same document from a file in a
-   folder named like a bootstrapper's, through its URL. */
+   folder named like a bootstrapper's, through its URL. Last, a schema whose patterns use the code unit escapes of MSXML 6 inside character
+   classes, as the deployment schema of Click-to-Run Office does, validating one document that matches and one that does not. */
+
+static int validate(const WCHAR *xml, HRESULT *result)
+{
+	CLSID clsid;
+	IXMLDOMDocument2 *schema = NULL, *document = NULL;
+	IXMLDOMSchemaCollection *cache = NULL;
+	IXMLDOMParseError *error = NULL;
+	VARIANT_BOOL loaded = VARIANT_FALSE;
+	BSTR text, name;
+	VARIANT value;
+	if (CLSIDFromProgID(L"Msxml2.DOMDocument.6.0", &clsid) != S_OK ||
+		CoCreateInstance(&clsid, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLDOMDocument2, (void **)&schema) != S_OK ||
+		CoCreateInstance(&clsid, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLDOMDocument2, (void **)&document) != S_OK)
+		return 11;
+	text = SysAllocString(L"<xs:schema xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" targetNamespace=\"urn:raven\" elementFormDefault=\"qualified\">"
+		L"<xs:element name=\"v\"><xs:simpleType><xs:restriction base=\"xs:string\">"
+		L"<xs:pattern value=\"[\\u0041-\\u0043]+[^&quot;\\u0000-\\u0020\\u007F]*\"/>"
+		L"</xs:restriction></xs:simpleType></xs:element></xs:schema>");
+	if (IXMLDOMDocument2_loadXML(schema, text, &loaded) != S_OK || loaded != VARIANT_TRUE)
+		return 12;
+	SysFreeString(text);
+	if (CLSIDFromProgID(L"Msxml2.XMLSchemaCache.6.0", &clsid) != S_OK ||
+		CoCreateInstance(&clsid, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLDOMSchemaCollection, (void **)&cache) != S_OK)
+		return 13;
+	name = SysAllocString(L"urn:raven");
+	V_VT(&value) = VT_DISPATCH;
+	V_DISPATCH(&value) = (IDispatch *)schema;
+	if (IXMLDOMSchemaCollection_add(cache, name, value) != S_OK)
+		return 14;
+	V_VT(&value) = VT_DISPATCH;
+	V_DISPATCH(&value) = (IDispatch *)cache;
+	if (IXMLDOMDocument2_putref_schemas(document, value) != S_OK)
+		return 15;
+	text = SysAllocString(xml);
+	loaded = VARIANT_FALSE;
+	if (IXMLDOMDocument2_put_validateOnParse(document, VARIANT_FALSE) != S_OK || IXMLDOMDocument2_loadXML(document, text, &loaded) != S_OK ||
+		loaded != VARIANT_TRUE)
+		return 16;
+	if (IXMLDOMDocument2_validate(document, &error) == E_NOTIMPL)
+		return 17;
+	*result = S_OK;
+	if (error)
+		IXMLDOMParseError_get_errorCode(error, (LONG *)result);
+	if (error)
+		IXMLDOMParseError_Release(error);
+	SysFreeString(text);
+	SysFreeString(name);
+	IXMLDOMSchemaCollection_Release(cache);
+	IXMLDOMDocument2_Release(document);
+	IXMLDOMDocument2_Release(schema);
+	return 0;
+}
 
 int raven_entry(void)
 {
@@ -62,6 +116,16 @@ int raven_entry(void)
 	SysFreeString(text);
 	IXMLDOMNode_Release(node);
 	IXMLDOMDocument_Release(document);
+	HRESULT matched = E_FAIL, refused = S_OK;
+	int failed = validate(L"<v xmlns=\"urn:raven\">CAB-x</v>", &matched);
+	if (failed)
+		return failed;
+	if (matched != S_OK)
+		return 18;
+	if ((failed = validate(L"<v xmlns=\"urn:raven\">CA B</v>", &refused)))
+		return failed;
+	if (refused == S_OK)
+		return 19;
 	CoUninitialize();
 	return 0;
 }
