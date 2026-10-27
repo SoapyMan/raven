@@ -2585,6 +2585,34 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     DEPENDS ${taskschd_source}/taskschd.c ${taskschd_source}/taskschd_tables.h ${taskschd_source}/taskschd64.def ${taskschd_source}/taskschd32.def
                         ${taskschd_source}/ravenhost64.def ${taskschd_source}/ravenhost32.def VERBATIM)
                 add_custom_target(taskschd_component ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/taskschd.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/taskschd.dll)
+                # webservices.dll, the XML reading of the Web Services API, for each width: Raven code on the public headers.
+                set(webservices_source ${PROJECT_SOURCE_DIR}/native/upstream/raven-webservices)
+                set(webservices_flags -O2 -Wall -Wno-unused-parameter -ffreestanding -fno-builtin -shared -nostdlib -ffile-prefix-map=${PROJECT_SOURCE_DIR}=raven)
+                add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/webservices.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/webservices.dll
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/x86
+                    COMMAND ${RAVEN_MINGW64} ${webservices_flags} -Wl,--entry,DllMain,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/webservices.dll
+                        ${webservices_source}/webservices.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c -lkernel32 -lgcc
+                    COMMAND ${RAVEN_MINGW32} ${webservices_flags} -Wl,--entry,_DllMain@12,--kill-at,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/x86/webservices.dll
+                        ${webservices_source}/webservices.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c -lkernel32 -lgcc
+                    DEPENDS ${webservices_source}/webservices.c VERBATIM)
+                add_custom_target(webservices_component ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/webservices.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/webservices.dll)
+                foreach(width 64 32)
+                    set(webservices_client ${CMAKE_CURRENT_BINARY_DIR}/webservices-client${width}.exe)
+                    if(width EQUAL 64)
+                        set(webservices_compiler ${RAVEN_MINGW64})
+                        set(webservices_entry raven_entry)
+                    else()
+                        set(webservices_compiler ${RAVEN_MINGW32})
+                        set(webservices_entry _raven_entry)
+                    endif()
+                    add_custom_command(OUTPUT ${webservices_client}
+                        COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${webservices_entry},--no-insert-timestamp
+                            -o ${webservices_client} ${LOADER_SOURCES}/webservices_client.c -lwebservices -lkernel32
+                        DEPENDS ${LOADER_SOURCES}/webservices_client.c VERBATIM)
+                    add_custom_target(webservices_fixture${width} ALL DEPENDS ${webservices_client} webservices_component)
+                    add_test(NAME native_webservices_x${width} COMMAND raven --run-process --execution=native ${webservices_client})
+                    set_tests_properties(native_webservices_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                endforeach()
                 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/x86-ucrt-client.exe
                     COMMAND ${RAVEN_MINGW32} -O2 -nostdlib -fno-stack-protector -fno-builtin
                         -Wl,--entry,_raven_entry,--no-insert-timestamp
