@@ -1752,6 +1752,18 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             add_custom_target(socket_message_fixture ALL DEPENDS ${SOCKET_MESSAGE_CLIENT})
             add_test(NAME native_socket_messages_x64 COMMAND raven --run-process --execution=native ${SOCKET_MESSAGE_CLIENT})
             set_tests_properties(native_socket_messages_x64 PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+            # WinHTTP against a server of the test's own, internationalized domain names, and the task allocator as an IMalloc.
+            if(OPENSSL_FOUND)
+                set(WINHTTP_CLIENT ${CMAKE_CURRENT_BINARY_DIR}/winhttp-client.exe)
+                add_custom_command(OUTPUT ${WINHTTP_CLIENT}
+                    COMMAND ${RAVEN_MINGW64} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                        -Wl,--entry,raven_entry,--no-insert-timestamp -o ${WINHTTP_CLIENT}
+                        ${PROJECT_SOURCE_DIR}/testdata/native_loader/winhttp_client.c -lwinhttp -lnormaliz -lole32 -luuid -lws2_32 -lkernel32
+                    DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/winhttp_client.c VERBATIM)
+                add_custom_target(winhttp_fixture ALL DEPENDS ${WINHTTP_CLIENT})
+                add_test(NAME native_winhttp_x64 COMMAND raven --run-process --execution=native ${WINHTTP_CLIENT})
+                set_tests_properties(native_winhttp_x64 PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+            endif()
             find_program(RAVEN_OPENSSL_TOOL openssl)
             if(OPENSSL_FOUND AND RAVEN_OPENSSL_TOOL AND Python3_EXECUTABLE)
                 set(SCHANNEL_CLIENT ${CMAKE_CURRENT_BINARY_DIR}/schannel-client.exe)
@@ -2447,6 +2459,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                 add_custom_target(x86_socket_message_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/x86-socket-message-client.exe)
                 add_test(NAME native_socket_messages_x32 COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/x86-socket-message-client.exe)
                 set_tests_properties(native_socket_messages_x32 PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                if(OPENSSL_FOUND)
+                    add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/x86-winhttp-client.exe
+                        COMMAND ${RAVEN_MINGW32} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,_raven_entry,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/x86-winhttp-client.exe
+                            ${LOADER_SOURCES}/winhttp_client.c -lwinhttp -lnormaliz -lole32 -luuid -lws2_32 -lkernel32
+                        DEPENDS ${LOADER_SOURCES}/winhttp_client.c VERBATIM)
+                    add_custom_target(x86_winhttp_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/x86-winhttp-client.exe)
+                    add_test(NAME native_winhttp_x32 COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/x86-winhttp-client.exe)
+                    set_tests_properties(native_winhttp_x32 PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                endif()
                 # Dark visual style variants, and the dark mode functions taken by number.
                 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/x86-theme-client.exe
                     COMMAND ${RAVEN_MINGW32} -nostdlib -O1 -fno-builtin -fno-stack-protector

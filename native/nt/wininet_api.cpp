@@ -18,7 +18,9 @@
 #include <cstring>
 #include <functional>
 #include <future>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 
 namespace raven {
@@ -34,7 +36,7 @@ constexpr uint32_t error_invalid_handle = 6, error_insufficient_buffer = 122, er
 // Request flags and security flags that change how a request is made.
 constexpr uint32_t flag_secure = 0x00800000, flag_no_auto_redirect = 0x00200000, flag_ignore_cn = 0x00001000, flag_ignore_date = 0x00002000;
 constexpr uint32_t security_ignore_unknown_ca = 0x100, security_ignore_cn = 0x1000, security_ignore_date = 0x2000, security_secure = 0x1;
-constexpr uint32_t query_flag_number = 0x20000000, query_flag_request = 0x80000000, query_modifiers = 0xf0000000;
+constexpr uint32_t query_flag_number = 0x20000000, query_flag_number64 = 0x08000000, query_flag_request = 0x80000000, query_modifiers = 0xf8000000;
 
 bool tracing()
 {
@@ -54,12 +56,74 @@ std::string trim(std::string_view text)
 	return first == text.npos ? std::string() : std::string(text.substr(first, last - first + 1));
 }
 
-// One HTTP exchange on its own connection: it runs on a host thread while the guest thread that asked waits, so it never touches guest
-// memory.
+using TlsContext = std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)>;
+using TlsSession = std::unique_ptr<SSL, decltype(&SSL_free)>;
+
+// A connection whose last response was read to its end and that the server keeps open, waiting for the next request to the same server.
+struct IdleConnection {
+	int descriptor = -1;
+	TlsContext tls_context{nullptr, SSL_CTX_free};
+	TlsSession tls{nullptr, SSL_free};
+};
+
+// Connections kept alive between requests, by server, port, scheme and the certificate checks they were opened with, as WinINet keeps
+// them: a program that reads a file in many small ranges pays for one connection, not for one per range.
+class ConnectionPool {
+public:
+	static ConnectionPool &instance()
+	{
+		static ConnectionPool pool;
+		return pool;
+	}
+
+	void put(const std::string &key, IdleConnection connection)
+	{
+		std::lock_guard lock(mutex);
+		auto &idle = connections[key];
+		if (idle.size() >= 8) {
+			close(idle.front());
+			idle.erase(idle.begin());
+		}
+		idle.push_back(std::move(connection));
+	}
+
+	// The most recently used connection the server has not closed meanwhile, if any.
+	std::optional<IdleConnection> take(const std::string &key)
+	{
+		std::lock_guard lock(mutex);
+		auto &idle = connections[key];
+		while (!idle.empty()) {
+			auto connection = std::move(idle.back());
+			idle.pop_back();
+			// Bytes or the end of the stream on a connection that owes nothing mean the server has given it up.
+			pollfd ready{connection.descriptor, POLLIN, 0};
+			if (::poll(&ready, 1, 0) == 0)
+				return connection;
+			close(connection);
+		}
+		return std::nullopt;
+	}
+
+private:
+	static void close(IdleConnection &connection)
+	{
+		connection.tls.reset();
+		if (connection.descriptor >= 0) ::close(connection.descriptor);
+		connection.descriptor = -1;
+	}
+
+	std::mutex mutex;
+	std::map<std::string, std::vector<IdleConnection>> connections;
+};
+
+// One HTTP exchange: it runs on a host thread while the guest thread that asked waits, so it never touches guest memory. Its connection
+// comes from the pool when one to the same server is idle, and goes back there when the response was read to its end.
 struct Exchange {
 	int descriptor = -1;
-	std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> tls_context{nullptr, SSL_CTX_free};
-	std::unique_ptr<SSL, decltype(&SSL_free)> tls{nullptr, SSL_free};
+	TlsContext tls_context{nullptr, SSL_CTX_free};
+	TlsSession tls{nullptr, SSL_free};
+	std::string pool_key;
+	bool reused = false;
 	std::chrono::milliseconds connect_timeout{60000}, receive_timeout{60000};
 	std::string input, body;
 	std::string version, status_text;
@@ -72,8 +136,52 @@ struct Exchange {
 
 	~Exchange()
 	{
+		if (descriptor >= 0 && keeps_connection()) {
+			ConnectionPool::instance().put(pool_key, IdleConnection{descriptor, std::move(tls_context), std::move(tls)});
+			return;
+		}
 		tls.reset();
 		if (descriptor >= 0) ::close(descriptor);
+	}
+
+	// HTTP/1.1 keeps a connection unless either side says close; HTTP/1.0 only when the server says keep-alive. Only a response read to its
+	// end with nothing after it leaves the connection ready for another request.
+	bool keeps_connection() const
+	{
+		if (pool_key.empty() || !finished || framing == Framing::close || !input.empty() || !status) return false;
+		bool keep = version == "HTTP/1.1";
+		for (const auto &[name, value] : headers)
+			if (lower(name) == "connection") {
+				const auto option = lower(value);
+				if (option.find("close") != option.npos) return false;
+				if (option.find("keep-alive") != option.npos) keep = true;
+			}
+		return keep;
+	}
+
+	// Opens the connection, sends the request and reads the response head. A reused connection the server closed before answering is
+	// replaced by a new one and the request sent again.
+	uint32_t request(const std::string &host, uint16_t port, bool secure, uint32_t security, const std::string &data)
+	{
+		pool_key = host + ":" + std::to_string(port) + (secure ? ":tls:" + std::to_string(security) : ":plain");
+		if (auto idle = ConnectionPool::instance().take(pool_key)) {
+			descriptor = idle->descriptor;
+			tls_context = std::move(idle->tls_context);
+			tls = std::move(idle->tls);
+			reused = true;
+			const uint32_t error = send(data);
+			if (!error && !read_head()) return 0;
+			tls.reset();
+			::close(descriptor);
+			descriptor = -1;
+			reused = false;
+			input.clear();
+			headers.clear();
+			status = 0;
+		}
+		if (const auto failed = open(host, port, secure, security)) return failed;
+		if (const auto failed = send(data)) return failed;
+		return read_head();
 	}
 
 	uint32_t open(const std::string &host, uint16_t port, bool secure, uint32_t security)
@@ -272,6 +380,11 @@ struct InternetHandle : KernelObject {
 	std::chrono::milliseconds connect_timeout{60000}, receive_timeout{60000};
 	std::unique_ptr<Exchange> exchange;
 	std::string url;
+	// A WinHTTP request between WinHttpSendRequest and the sending: its extra headers and the body gathered so far.
+	std::string pending_headers, upload;
+	uint64_t upload_total = 0;
+	bool waiting = false;
+	uint32_t redirect_policy = 1;
 };
 
 // Splits a URL into scheme, host, port and the path with its query; false when it is not an http or https URL.
@@ -454,7 +567,9 @@ void register_wininet_api(ApiRegistry &registry, KernelContext &context)
 			std::string head = request.verb + " " + request.path + " HTTP/1.1\r\nHost: " + request.host;
 			if (request.port != (secure ? 443 : 80)) head += ":" + std::to_string(request.port);
 			head += "\r\n";
-			if (!agent.empty()) head += "User-Agent: " + agent + "\r\n";
+			// A User-Agent header added to the request takes the place of the session's agent.
+			const auto own_agent = ("\r\n" + lower(request.request_headers + extra)).find("\r\nuser-agent:") != std::string::npos;
+			if (!agent.empty() && !own_agent) head += "User-Agent: " + agent + "\r\n";
 			if (!request.referrer.empty()) head += "Referer: " + request.referrer + "\r\n";
 			head += request.request_headers + extra;
 			if (!extra.empty() && !extra.ends_with("\r\n")) head += "\r\n";
@@ -467,15 +582,15 @@ void register_wininet_api(ApiRegistry &registry, KernelContext &context)
 			const uint16_t port = request.port;
 			const uint32_t security = request.security;
 			auto *raw = exchange.get();
-			const uint32_t error = offload([raw, host, port, secure, security, head, body] {
-				if (const auto failed = raw->open(host, port, secure, security)) return failed;
-				if (const auto failed = raw->send(head + body)) return failed;
-				return raw->read_head();
-			});
+			const uint32_t error = offload([raw, host, port, secure, security, head, body] { return raw->request(host, port, secure, security, head + body); });
 			if (tracing())
 				std::fprintf(stderr, "raven: wininet %s %s://%s:%u%s -> %u (error %u)\n", request.verb.c_str(), secure ? "https" : "http",
 					host.c_str(), unsigned(port), request.path.c_str(), raw->status, error);
+			if (tracing())
+				std::fprintf(stderr, "raven: wininet request head:\n%s", head.c_str());
 			if (error) return error;
+			// The answer to HEAD has the head of a GET, and no body whatever its length says.
+			if (request.verb == "HEAD") exchange->finished = true;
 			request.exchange = std::move(exchange);
 			const auto status = request.exchange->status;
 			const bool redirect = status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
@@ -576,14 +691,14 @@ void register_wininet_api(ApiRegistry &registry, KernelContext &context)
 		{33, "location"}, {37, "server"}, {42, "accept-ranges"}, {43, "set-cookie"}, {44, "cookie"}, {47, "content-disposition"},
 		{49, "cache-control"}, {54, "etag"}, {59, "host"}, {63, "transfer-encoding"}, {35, "user-agent"}, {39, "www-authenticate"},
 		{45, "proxy-authenticate"}, {48, "content-range"}};
-	const auto query_info = [handle_of, fail_handle](ApiCall &call, bool wide) {
-		const auto request = handle_of(call[0], 13);
-		if (!request) { fail_handle(call, call[0]); return; }
-		if (!call[3]) { call.fail(error_invalid_parameter); return; }
+	// WinHTTP passes the custom header name apart, so its buffer, length and index come one argument later than WinINet's.
+	const auto answer_header = [](ApiCall &call, std::shared_ptr<InternetHandle> request, bool wide, uint64_t custom, size_t first) {
+		const uint64_t buffer = call[first], length = call[first + 1], index_at = call[first + 2];
+		if (!length) { call.fail(error_invalid_parameter); return; }
 		const uint32_t level = call.u32(1) & ~query_modifiers, modifiers = call.u32(1) & query_modifiers;
 		if ((modifiers & query_flag_request) || !request->exchange) { call.fail(http_header_not_found); return; }
 		const auto &exchange = *request->exchange;
-		const uint32_t index = call[4] ? call.load<uint32_t>(call[4]) : 0;
+		const uint32_t index = index_at ? call.load<uint32_t>(index_at) : 0;
 		std::optional<std::string> answer;
 		if (level == 19) answer = std::to_string(exchange.status);
 		else if (level == 20) answer = exchange.status_text;
@@ -598,7 +713,7 @@ void register_wininet_api(ApiRegistry &registry, KernelContext &context)
 			answer = text;
 		} else {
 			std::string wanted;
-			if (level == 65535) wanted = lower(wide ? to_utf8(call.wide(call[2])) : call.narrow(call[2]));
+			if (level == 65535 && custom) wanted = lower(wide ? to_utf8(call.wide(custom)) : call.narrow(custom));
 			for (const auto &[id, name] : names)
 				if (id == level) wanted = name;
 			if (wanted.empty()) { call.fail(http_header_not_found); return; }
@@ -607,28 +722,37 @@ void register_wininet_api(ApiRegistry &registry, KernelContext &context)
 				if (lower(name) == wanted && seen++ == index) { answer = value; break; }
 		}
 		if (!answer) { call.fail(http_header_not_found); return; }
-		const uint32_t capacity = call.load<uint32_t>(call[3]);
+		const uint32_t capacity = call.load<uint32_t>(length);
 		if (modifiers & query_flag_number) {
-			if (capacity < 4 || !call[2]) { call.store<uint32_t>(call[3], 4); call.fail(error_insufficient_buffer); return; }
-			call.store<uint32_t>(call[2], uint32_t(std::strtoul(answer->c_str(), nullptr, 10)));
-			call.store<uint32_t>(call[3], 4);
+			if (capacity < 4 || !buffer) { call.store<uint32_t>(length, 4); call.fail(error_insufficient_buffer); return; }
+			call.store<uint32_t>(buffer, uint32_t(std::strtoul(answer->c_str(), nullptr, 10)));
+			call.store<uint32_t>(length, 4);
+		} else if (call.u32(1) & query_flag_number64) {
+			if (capacity < 8 || !buffer) { call.store<uint32_t>(length, 8); call.fail(error_insufficient_buffer); return; }
+			call.store<uint64_t>(buffer, std::strtoull(answer->c_str(), nullptr, 10));
+			call.store<uint32_t>(length, 8);
 		} else if (wide) {
 			const auto text = from_utf8(*answer);
 			const size_t bytes = text.size() * 2;
-			if (!call[2] || capacity < bytes + 2) { call.store<uint32_t>(call[3], uint32_t(bytes + 2)); call.fail(error_insufficient_buffer); return; }
+			if (!buffer || capacity < bytes + 2) { call.store<uint32_t>(length, uint32_t(bytes + 2)); call.fail(error_insufficient_buffer); return; }
 			std::vector<uint8_t> out(bytes + 2, 0);
 			std::memcpy(out.data(), text.data(), bytes);
-			call.write(call[2], out);
-			call.store<uint32_t>(call[3], uint32_t(bytes));
+			call.write(buffer, out);
+			call.store<uint32_t>(length, uint32_t(bytes));
 		} else {
-			if (!call[2] || capacity < answer->size() + 1) { call.store<uint32_t>(call[3], uint32_t(answer->size() + 1)); call.fail(error_insufficient_buffer); return; }
+			if (!buffer || capacity < answer->size() + 1) { call.store<uint32_t>(length, uint32_t(answer->size() + 1)); call.fail(error_insufficient_buffer); return; }
 			std::vector<uint8_t> out(answer->begin(), answer->end());
 			out.push_back(0);
-			call.write(call[2], out);
-			call.store<uint32_t>(call[3], uint32_t(answer->size()));
+			call.write(buffer, out);
+			call.store<uint32_t>(length, uint32_t(answer->size()));
 		}
-		if (call[4]) call.store<uint32_t>(call[4], index + 1);
+		if (index_at) call.store<uint32_t>(index_at, index + 1);
 		call.ret(1);
+	};
+	const auto query_info = [handle_of, fail_handle, answer_header](ApiCall &call, bool wide) {
+		const auto request = handle_of(call[0], 13);
+		if (!request) { fail_handle(call, call[0]); return; }
+		answer_header(call, request, wide, call[2], 2);
 	};
 	registry.add("HttpQueryInfoW", 5, [query_info](ApiCall &call) { query_info(call, true); });
 	registry.add("HttpQueryInfoA", 5, [query_info](ApiCall &call) { query_info(call, false); });
@@ -703,6 +827,341 @@ void register_wininet_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("InternetGetLastResponseInfoW", 3, last_response);
 	registry.add("InternetGetLastResponseInfoA", 3, last_response);
+
+	// WinHTTP: the same client behind the session, connection and request handles of its own API, which is wide only and synchronous. A
+	// request is sent when its body is complete: at once when WinHttpSendRequest has it all, at WinHttpReceiveResponse when the rest
+	// comes through WinHttpWriteData. A call that succeeds clears the thread's last error, which programs read after every call and report
+	// once a later step fails.
+	const auto winhttp = [&registry](std::string_view name, uint32_t arguments, ApiHandler handler) {
+		registry.add(name, arguments, [handler = std::move(handler)](ApiCall &call) {
+			call.set_last_error(0);
+			handler(call);
+		});
+	};
+	winhttp("WinHttpOpen", 5, [add](ApiCall &call) {
+		auto session = std::make_shared<InternetHandle>();
+		session->agent = call[0] ? to_utf8(call.wide(call[0])) : std::string();
+		session->flags = call.u32(4);
+		add(call, session);
+	});
+	winhttp("WinHttpConnect", 4, [handle_of, fail_handle, add](ApiCall &call) {
+		const auto session = handle_of(call[0], 1);
+		if (!session) { fail_handle(call, call[0]); return; }
+		if (!call[1]) { call.fail(error_invalid_parameter); return; }
+		auto connection = std::make_shared<InternetHandle>();
+		connection->type = 3;
+		connection->parent = session;
+		connection->host = to_utf8(call.wide(call[1]));
+		connection->port = uint16_t(call.u32(2));
+		connection->connect_timeout = session->connect_timeout;
+		connection->receive_timeout = session->receive_timeout;
+		connection->redirect_policy = session->redirect_policy;
+		add(call, connection);
+	});
+	winhttp("WinHttpOpenRequest", 7, [handle_of, fail_handle, add](ApiCall &call) {
+		const auto connection = handle_of(call[0], 3);
+		if (!connection) { fail_handle(call, call[0]); return; }
+		auto request = std::make_shared<InternetHandle>();
+		request->type = 13;
+		request->parent = connection;
+		request->host = connection->host;
+		request->verb = call[1] ? to_utf8(call.wide(call[1])) : "GET";
+		request->path = call[2] ? to_utf8(call.wide(call[2])) : "/";
+		if (!request->path.starts_with('/')) request->path.insert(0, "/");
+		request->referrer = call[4] ? to_utf8(call.wide(call[4])) : std::string();
+		request->flags = call.u32(6) & flag_secure;
+		request->security = request->flags & flag_secure ? security_secure : 0;
+		request->port = connection->port ? connection->port : request->flags & flag_secure ? 443 : 80;
+		request->connect_timeout = connection->connect_timeout;
+		request->receive_timeout = connection->receive_timeout;
+		request->redirect_policy = connection->redirect_policy;
+		std::string accept;
+		for (uint64_t at = call[5]; at && accept.size() < 4096; at += call.pointer_width()) {
+			const auto entry = call.load_pointer(at);
+			if (!entry) break;
+			accept += (accept.empty() ? "" : ", ") + to_utf8(call.wide(entry));
+		}
+		if (!accept.empty()) request->request_headers += "Accept: " + accept + "\r\n";
+		add(call, request);
+	});
+	winhttp("WinHttpAddRequestHeaders", 4, [handle_of, fail_handle, add_headers](ApiCall &call) {
+		const auto request = handle_of(call[0], 13);
+		if (!request) { fail_handle(call, call[0]); return; }
+		if (!call[1]) { call.fail(error_invalid_parameter); return; }
+		add_headers(*request, counted(call, call[1], call.u32(2), true), call.u32(3));
+		call.ret(1);
+	});
+	// WINHTTP_OPTION_REDIRECT_POLICY: never, not from HTTPS to HTTP (the default), or always.
+	const auto send_now = [perform](InternetHandle &request) -> uint32_t {
+		const bool never = request.redirect_policy == 0;
+		request.flags = never ? request.flags | flag_no_auto_redirect : request.flags & ~flag_no_auto_redirect;
+		const bool was_secure = request.flags & flag_secure;
+		const auto error = perform(request, request.pending_headers, request.upload);
+		request.waiting = false;
+		request.upload.clear();
+		if (!error && request.redirect_policy == 1 && was_secure && !(request.flags & flag_secure)) return http_redirect_failed;
+		return error;
+	};
+	winhttp("WinHttpSendRequest", 7, [handle_of, fail_handle, send_now](ApiCall &call) {
+		const auto request = handle_of(call[0], 13);
+		if (!request) { fail_handle(call, call[0]); return; }
+		request->pending_headers = call[1] ? counted(call, call[1], call.u32(2), true) : std::string();
+		request->upload.clear();
+		if (call[3] && call.u32(4)) {
+			const auto bytes = call.read(call[3], call.u32(4));
+			request->upload.assign(bytes.begin(), bytes.end());
+		}
+		request->upload_total = std::max<uint64_t>(call.u32(5), request->upload.size());
+		request->exchange.reset();
+		request->waiting = true;
+		if (request->upload.size() >= request->upload_total)
+			if (const auto error = send_now(*request)) { call.fail(error); return; }
+		call.ret(1);
+	});
+	winhttp("WinHttpWriteData", 4, [handle_of, fail_handle](ApiCall &call) {
+		const auto request = handle_of(call[0], 13);
+		if (!request) { fail_handle(call, call[0]); return; }
+		if (!request->waiting) { call.fail(12019); return; }
+		const auto bytes = call.read(call[1], call.u32(2));
+		request->upload.append(bytes.begin(), bytes.end());
+		if (call[3]) call.store<uint32_t>(call[3], call.u32(2));
+		call.ret(1);
+	});
+	winhttp("WinHttpReceiveResponse", 2, [handle_of, fail_handle, send_now](ApiCall &call) {
+		const auto request = handle_of(call[0], 13);
+		if (!request) { fail_handle(call, call[0]); return; }
+		if (request->waiting)
+			if (const auto error = send_now(*request)) { call.fail(error); return; }
+		if (!request->exchange) { call.fail(12019); return; }
+		call.ret(1);
+	});
+	winhttp("WinHttpQueryHeaders", 6, [handle_of, fail_handle, answer_header](ApiCall &call) {
+		const auto request = handle_of(call[0], 13);
+		if (!request) { fail_handle(call, call[0]); return; }
+		answer_header(call, request, true, call[2], 3);
+	});
+	winhttp("WinHttpQueryDataAvailable", 2, [handle_of, fail_handle, offload](ApiCall &call) {
+		const auto request = handle_of(call[0], 13);
+		if (!request) { fail_handle(call, call[0]); return; }
+		if (!request->exchange) { call.fail(12019); return; }
+		auto *exchange = request->exchange.get();
+		if (exchange->body.empty() && !exchange->finished)
+			if (const auto error = offload([exchange] { return exchange->fill(1); }); error && exchange->body.empty()) { call.fail(error); return; }
+		if (call[1]) call.store<uint32_t>(call[1], uint32_t(std::min<size_t>(exchange->body.size(), UINT32_MAX)));
+		call.ret(1);
+	});
+	winhttp("WinHttpReadData", 4, [handle_of, fail_handle, offload](ApiCall &call) {
+		const auto request = handle_of(call[0], 13);
+		if (!request) { fail_handle(call, call[0]); return; }
+		if (call[3]) call.store<uint32_t>(call[3], 0);
+		if (!request->exchange) { call.fail(12019); return; }
+		const uint32_t wanted = call.u32(2);
+		auto *exchange = request->exchange.get();
+		if (exchange->body.size() < wanted && !exchange->finished)
+			if (const auto error = offload([exchange, wanted] { return exchange->fill(wanted); }); error && exchange->body.empty()) { call.fail(error); return; }
+		const size_t taken = std::min<size_t>(wanted, exchange->body.size());
+		if (taken) call.write(call[1], std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(exchange->body.data()), taken));
+		exchange->body.erase(0, taken);
+		if (call[3]) call.store<uint32_t>(call[3], uint32_t(taken));
+		call.ret(1);
+	});
+	winhttp("WinHttpCloseHandle", 1, [&objects](ApiCall &call) {
+		if (!objects.object_as<InternetHandle>(call[0])) { call.fail(error_invalid_handle); return; }
+		objects.close(call[0]);
+		call.ret(1);
+	});
+	winhttp("WinHttpSetTimeouts", 5, [handle_of](ApiCall &call) {
+		const auto handle = handle_of(call[0], 0);
+		if (!handle) { call.fail(error_invalid_handle); return; }
+		if (call.i32(1) < -1 || call.i32(2) < -1 || call.i32(3) < -1 || call.i32(4) < -1) { call.fail(error_invalid_parameter); return; }
+		// -1 waits without end; a day stands for it.
+		const auto span = [](int32_t value) { return std::chrono::milliseconds(value < 0 ? 86400000 : value); };
+		handle->connect_timeout = span(call.i32(2));
+		handle->receive_timeout = span(call.i32(4));
+		call.ret(1);
+	});
+	// Options by their WINHTTP_OPTION_* numbers; the ones this client has no use for are accepted.
+	winhttp("WinHttpSetOption", 4, [handle_of](ApiCall &call) {
+		const auto handle = call[0] ? handle_of(call[0], 0) : nullptr;
+		if (call[0] && !handle) { call.fail(error_invalid_handle); return; }
+		const uint32_t option = call.u32(1);
+		const uint32_t value = call[2] && call.u32(3) >= 4 ? call.load<uint32_t>(call[2]) : 0;
+		if (handle) {
+			if (option == 3) handle->connect_timeout = std::chrono::milliseconds(value);
+			else if (option == 7) handle->receive_timeout = std::chrono::milliseconds(value);
+			else if (option == 31) handle->security |= value;
+			else if (option == 88) handle->redirect_policy = value;
+			// WINHTTP_OPTION_DISABLE_FEATURE with WINHTTP_DISABLE_REDIRECTS.
+			else if (option == 63 && (value & 2)) handle->redirect_policy = 0;
+		}
+		call.ret(1);
+	});
+	winhttp("WinHttpQueryOption", 4, [handle_of](ApiCall &call) {
+		const auto handle = call[0] ? handle_of(call[0], 0) : nullptr;
+		const uint32_t option = call.u32(1);
+		if (!call[3]) { call.fail(error_invalid_parameter); return; }
+		if (call[0] && !handle) { call.fail(error_invalid_handle); return; }
+		const uint32_t capacity = call.load<uint32_t>(call[3]);
+		std::optional<uint32_t> number;
+		// WINHTTP_HANDLE_TYPE_SESSION, _CONNECT and _REQUEST.
+		if (handle && option == 9) number = handle->type == 1 ? 1 : handle->type == 3 ? 2 : 3;
+		else if (handle && option == 3) number = uint32_t(handle->connect_timeout.count());
+		else if (handle && option == 7) number = uint32_t(handle->receive_timeout.count());
+		else if (handle && option == 31) number = handle->security;
+		else if (handle && option == 88) number = handle->redirect_policy;
+		if (number) {
+			if (capacity < 4 || !call[2]) { call.store<uint32_t>(call[3], 4); call.fail(error_insufficient_buffer); return; }
+			call.store<uint32_t>(call[2], *number);
+			call.store<uint32_t>(call[3], 4);
+			call.ret(1);
+			return;
+		}
+		if (handle && option == 34 && handle->type == 13) {
+			const bool secure = handle->flags & flag_secure;
+			const auto text = from_utf8((secure ? "https://" : "http://") + handle->host +
+				(handle->port != (secure ? 443 : 80) ? ":" + std::to_string(handle->port) : std::string()) + handle->path);
+			const size_t bytes = text.size() * 2 + 2;
+			if (capacity < bytes || !call[2]) { call.store<uint32_t>(call[3], uint32_t(bytes)); call.fail(error_insufficient_buffer); return; }
+			call.put_wide(call[2], text, text.size() + 1);
+			call.store<uint32_t>(call[3], uint32_t(bytes - 2));
+			call.ret(1);
+			return;
+		}
+		call.fail(internet_invalid_option);
+	});
+	// No callback is ever made: every request completes before its call returns. The previous callback, none, is the answer.
+	winhttp("WinHttpSetStatusCallback", 4, [](ApiCall &call) { call.ret(0); });
+	winhttp("WinHttpSetCredentials", 6, [handle_of, fail_handle](ApiCall &call) {
+		const auto request = handle_of(call[0], 13);
+		if (!request) { fail_handle(call, call[0]); return; }
+		request->user = call[3] ? to_utf8(call.wide(call[3])) : std::string();
+		request->password = call[4] ? to_utf8(call.wide(call[4])) : std::string();
+		call.ret(1);
+	});
+	// WINHTTP_AUTH_SCHEME_* bits of the challenges the server sent, the first of them, and WINHTTP_AUTH_TARGET_SERVER or _PROXY.
+	winhttp("WinHttpQueryAuthSchemes", 4, [handle_of, fail_handle](ApiCall &call) {
+		const auto request = handle_of(call[0], 13);
+		if (!request) { fail_handle(call, call[0]); return; }
+		if (!call[1] || !call[2] || !call[3]) { call.fail(error_invalid_parameter); return; }
+		if (!request->exchange) { call.fail(12019); return; }
+		static const std::pair<const char *, uint32_t> schemes[] = {{"basic", 1}, {"ntlm", 2}, {"passport1.4", 4}, {"digest", 8}, {"negotiate", 16}};
+		const bool proxy = request->exchange->status == 407;
+		uint32_t supported = 0, first = 0;
+		for (const auto &[name, value] : request->exchange->headers) {
+			if (lower(name) != (proxy ? "proxy-authenticate" : "www-authenticate")) continue;
+			const auto scheme = lower(value.substr(0, value.find(' ')));
+			for (const auto &[known, bit] : schemes)
+				if (scheme == known) {
+					supported |= bit;
+					if (!first) first = bit;
+				}
+		}
+		if (!supported) { call.fail(error_invalid_parameter); return; }
+		call.store<uint32_t>(call[1], supported);
+		call.store<uint32_t>(call[2], first);
+		call.store<uint32_t>(call[3], proxy ? 1 : 0);
+		call.ret(1);
+	});
+	// URL_COMPONENTS: each part is copied when the program gave a buffer, pointed at inside the URL when it gave only a length, and left
+	// alone when both are zero. The offsets are those of the structure at the program's pointer width; WinINet's and WinHTTP's differ only
+	// in their scheme numbers and in WinINet knowing FTP too. ANSI text is held one byte to a unit, so positions are byte offsets.
+	const auto crack_url = [](ApiCall &call, bool wide, bool wininet) {
+		if (!call[0] || !call[3]) { call.fail(error_invalid_parameter); return; }
+		const uint32_t length = call.u32(1);
+		const size_t unit = wide ? 2 : 1;
+		std::u16string url;
+		if (length) {
+			const auto bytes = call.read(call[0], size_t(length) * unit);
+			for (size_t at = 0; at < length; ++at)
+				url.push_back(wide ? char16_t(bytes[at * 2] | bytes[at * 2 + 1] << 8) : char16_t(bytes[at]));
+		} else if (wide) {
+			url = call.wide(call[0], 1 << 20);
+		} else {
+			for (const char byte : call.narrow(call[0], 1 << 20))
+				url.push_back(char16_t(uint8_t(byte)));
+		}
+		const bool wide_pointers = call.pointer_width() == 8;
+		struct Part { size_t pointer, length; };
+		const Part scheme_part = wide_pointers ? Part{8, 16} : Part{4, 8}, host_part = wide_pointers ? Part{24, 32} : Part{16, 20},
+			user_part = wide_pointers ? Part{40, 48} : Part{28, 32}, password_part = wide_pointers ? Part{56, 64} : Part{36, 40},
+			path_part = wide_pointers ? Part{72, 80} : Part{44, 48}, extra_part = wide_pointers ? Part{88, 96} : Part{52, 56};
+		const size_t scheme_number = wide_pointers ? 20 : 12, port_at = wide_pointers ? 36 : 24;
+		const auto scheme_end = url.find(u"://");
+		if (scheme_end == url.npos) { call.fail(internet_unrecognized_scheme); return; }
+		const auto scheme = lower(to_utf8(url.substr(0, scheme_end)));
+		if (scheme != "http" && scheme != "https" && (!wininet || scheme != "ftp")) { call.fail(internet_unrecognized_scheme); return; }
+		const size_t authority = scheme_end + 3;
+		size_t authority_end = url.find_first_of(u"/?#", authority);
+		if (authority_end == url.npos) authority_end = url.size();
+		size_t host = authority, user_end = authority, password = authority, password_end = authority;
+		bool has_user = false;
+		if (const auto at = url.rfind(u'@', authority_end - 1); at != url.npos && at >= authority && authority_end > authority) {
+			has_user = true;
+			host = at + 1;
+			const auto colon = url.find(u':', authority);
+			user_end = colon != url.npos && colon < at ? colon : at;
+			password = user_end < at ? user_end + 1 : at;
+			password_end = at;
+		}
+		size_t host_end = authority_end;
+		uint16_t port = scheme == "https" ? 443 : scheme == "ftp" ? 21 : 80;
+		const auto bracket = url.find(u']', host);
+		const auto colon = url.rfind(u':', authority_end - 1);
+		if (colon != url.npos && colon >= host && (bracket == url.npos || bracket >= authority_end || colon > bracket)) {
+			const auto number = std::strtoul(to_utf8(url.substr(colon + 1, authority_end - colon - 1)).c_str(), nullptr, 10);
+			if (!number || number > 65535) { call.fail(internet_invalid_url); return; }
+			port = uint16_t(number);
+			host_end = colon;
+		}
+		if (host_end == host) { call.fail(internet_invalid_url); return; }
+		size_t path_end = url.find_first_of(u"?#", authority_end);
+		if (path_end == url.npos) path_end = url.size();
+		const uint64_t components = call[3];
+		const auto set = [&](Part part, size_t start, size_t end) {
+			const uint64_t buffer = call.load_pointer(components + part.pointer);
+			const uint32_t room = call.load<uint32_t>(components + part.length);
+			if (!buffer && !room) return true;
+			const size_t count = end - start;
+			if (!buffer) {
+				call.store_pointer(components + part.pointer, call[0] + start * unit);
+				call.store<uint32_t>(components + part.length, uint32_t(count));
+				return true;
+			}
+			if (room < count + 1) {
+				call.store<uint32_t>(components + part.length, uint32_t(count + 1));
+				return false;
+			}
+			if (wide) {
+				call.put_wide(buffer, std::u16string_view(url).substr(start, count), count + 1);
+			} else {
+				std::string text;
+				for (const auto character : std::u16string_view(url).substr(start, count))
+					text.push_back(char(character));
+				call.put_narrow(buffer, text, count + 1);
+			}
+			call.store<uint32_t>(components + part.length, uint32_t(count));
+			return true;
+		};
+		bool fits = set(scheme_part, 0, scheme_end);
+		fits &= set(host_part, host, host_end);
+		fits &= set(user_part, authority, has_user ? user_end : authority);
+		fits &= set(password_part, password, has_user ? password_end : password);
+		fits &= set(path_part, authority_end, path_end);
+		fits &= set(extra_part, path_end, url.size());
+		// INTERNET_SCHEME_FTP, _HTTP and _HTTPS are 1, 3 and 4 in WinINet; WinHTTP numbers HTTP and HTTPS 1 and 2.
+		call.store<uint32_t>(components + scheme_number, wininet ? (scheme == "ftp" ? 1 : scheme == "https" ? 4 : 3) : scheme == "https" ? 2 : 1);
+		call.store<uint16_t>(components + port_at, port);
+		if (!fits) { call.fail(error_insufficient_buffer); return; }
+		call.ret(1);
+	};
+	winhttp("WinHttpCrackUrl", 4, [crack_url](ApiCall &call) { crack_url(call, true, false); });
+	registry.add("InternetCrackUrlW", 4, [crack_url](ApiCall &call) { crack_url(call, true, true); });
+	registry.add("InternetCrackUrlA", 4, [crack_url](ApiCall &call) { crack_url(call, false, true); });
+	// The client keeps no cookies, so there are none for any URL.
+	registry.add("InternetGetCookieExW", 6, [](ApiCall &call) { call.fail(259); });
+	registry.add("InternetGetCookieExA", 6, [](ApiCall &call) { call.fail(259); });
+	registry.add("InternetGetCookieW", 4, [](ApiCall &call) { call.fail(259); });
+	registry.add("InternetGetCookieA", 4, [](ApiCall &call) { call.fail(259); });
 }
 
 }

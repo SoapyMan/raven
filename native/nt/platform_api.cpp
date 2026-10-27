@@ -331,7 +331,8 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(call[0] + offset);
 	});
 
-	// wininet: URL cracking is pure text processing.
+#ifndef RAVEN_OPENSSL
+	// wininet: URL cracking is pure text processing; with the HTTP client the WinINet layer cracks URLs in both character sets.
 	registry.add("InternetCrackUrlW", 4, [](ApiCall &call) {
 		const auto url = call.wide(call[0], 4096);
 		const auto scheme_end = url.find(u"://");
@@ -386,6 +387,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.store<uint32_t>(components + 40, port & 0xffff);
 		call.ret(1);
 	});
+#endif
 
 	// COM: no class registry exists, so object creation reports "class not registered".
 	auto com = std::make_shared<ComState>();
@@ -1048,6 +1050,8 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		context.objects.close(call[0]);
 		call.ret(1);
 	});
+#ifndef RAVEN_OPENSSL
+	// Without the HTTP client, sessions open and close and nothing more.
 	struct WinHttpSession : KernelObject {};
 	registry.add("WinHttpOpen", 5, [&context](ApiCall &call) {
 		const auto made = context.objects.add_object(std::make_shared<WinHttpSession>());
@@ -1066,6 +1070,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(1);
 	});
 	registry.add("WinHttpSetTimeouts", 5, [](ApiCall &call) { call.ret(1); });
+#endif
 	registry.add("WinHttpGetIEProxyConfigForCurrentUser", 1, [](ApiCall &call) {
 		if (!call[0]) {
 			call.fail(87);
