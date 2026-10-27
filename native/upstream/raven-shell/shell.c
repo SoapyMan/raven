@@ -569,6 +569,7 @@ static HRESULT make_dialog(BOOL save, REFIID iid, void **out)
 }
 
 HRESULT raven_make_shell_link(REFIID iid, void **out);
+HRESULT raven_make_known_folder_manager(REFIID iid, void **out);
 HRESULT raven_create_registered(REFCLSID clsid, LPUNKNOWN outer, DWORD context, REFIID iid, void **out);
 HRESULT raven_registered_class_object(REFCLSID clsid, DWORD context, REFIID iid, void **out);
 
@@ -644,6 +645,8 @@ static HRESULT make_builtin(REFCLSID clsid, REFIID iid, void **out, BOOL *served
 		return raven_make_shell_link(iid, out);
 	if (same_iid(clsid, &CLSID_TaskbarList))
 		return make_taskbar_list(iid, out);
+	if (same_iid(clsid, &CLSID_KnownFolderManager))
+		return raven_make_known_folder_manager(iid, out);
 	*served = FALSE;
 	return REGDB_E_CLASSNOTREG;
 }
@@ -688,7 +691,7 @@ static IClassFactoryVtbl builtin_factory_vtbl = {bf_query, bf_add_ref, bf_releas
 static BOOL builtin_class(REFCLSID clsid)
 {
 	return same_iid(clsid, &CLSID_FileOpenDialog) || same_iid(clsid, &CLSID_FileSaveDialog) || same_iid(clsid, &CLSID_ShellLink) ||
-		same_iid(clsid, &CLSID_TaskbarList);
+		same_iid(clsid, &CLSID_TaskbarList) || same_iid(clsid, &CLSID_KnownFolderManager);
 }
 
 
@@ -768,6 +771,12 @@ HRESULT WINAPI SHCreateItemFromParsingName(PCWSTR path, IBindCtx *context, REFII
 		IShellItem_Release(item);
 	}
 	return result;
+}
+
+/* The same item for the other parts of this component, which reach it without the import the public header declares. */
+HRESULT raven_item_from_path(const WCHAR *path, REFIID iid, void **out)
+{
+	return SHCreateItemFromParsingName(path, NULL, iid, out);
 }
 
 /* Classic dialogs ------------------------------------------------------------------------------------------- */
