@@ -440,6 +440,25 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.write(call[0], bytes);
 		call.ret(0);
 	});
+	// The device family and form of a desktop PC whose maker named no form; sizes are in bytes with the terminator.
+	registry.add("RtlConvertDeviceFamilyInfoToString", 4, [](ApiCall &call) {
+		constexpr std::u16string_view family = u"Windows.Desktop", form = u"Unknown";
+		const uint32_t family_size = uint32_t(2 * (family.size() + 1)), form_size = uint32_t(2 * (form.size() + 1));
+		const uint32_t family_capacity = call.load<uint32_t>(call[0]), form_capacity = call.load<uint32_t>(call[1]);
+		call.store<uint32_t>(call[0], family_size);
+		call.store<uint32_t>(call[1], form_size);
+		if (family_capacity < family_size || form_capacity < form_size || !call[2] || !call[3]) {
+			call.ret(0xc0000023U);
+			return;
+		}
+		call.put_wide(call[2], family, family_size / 2);
+		call.put_wide(call[3], form, form_size / 2);
+		call.ret(0);
+	});
+	// The licensing policy store holds no values: every query answers SL_E_VALUE_NOT_FOUND.
+	const auto policy_value = [](ApiCall &call) { call.ret(call[0] ? 0xc004f012U : 0x80070057U); };
+	registry.add("SLGetWindowsInformation", 4, policy_value);
+	registry.add("SLGetWindowsInformationDWORD", 2, policy_value);
 	// All logical processors form one group of at most 64: the masks of the process and the system are the same.
 	const auto processor_mask = [] {
 		const long count = std::max<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1);
@@ -640,6 +659,16 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 				call.store<uint32_t>(call[0], 0);
 			call.ret(15700);
 		});
+	// No app package is installed: a family has no packages, and the counts say so.
+	registry.add("GetPackagesByPackageFamily", 5, [](ApiCall &call) {
+		if (!call[0] || !call[1] || !call[3]) {
+			call.ret(87);
+			return;
+		}
+		call.store<uint32_t>(call[1], 0);
+		call.store<uint32_t>(call[3], 0);
+		call.ret(0);
+	});
 	registry.add("GetProductInfo", 5, [](ApiCall &call) {
 		if (!call[4]) {
 			call.fail(87);

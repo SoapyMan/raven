@@ -229,10 +229,10 @@ def main():
     if not wanted & {"shell", "crt", "dwrite", "d2d1", "uianimation"}:
         print(output / "raven-user32.dll")
         return
-    # The shell component is Raven code on the public headers: the file dialogs and the class registry.
+    # The shell component is Raven code on the public headers: the file dialogs and the class registries of COM and the Windows Runtime.
     shell_support = repo / "native/upstream/raven-shell"
     shell_objects = [objects / "shell.o", objects / "shell_link.o", objects / "shell_com.o", objects / "shell_crt.o", objects / "shell_stream.o", objects / "shell_dialog.o",
-                     objects / "shell_netaddress.o"]
+                     objects / "shell_netaddress.o", objects / "shell_winrt.o", objects / "shell_knownfolder.o"]
     shell_flags = ["-O2", "-w", "-ffreestanding", f"-ffile-prefix-map={repo}=raven"]
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "shell.c", "-o", shell_objects[0]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "link.c", "-o", shell_objects[1]])
@@ -241,13 +241,16 @@ def main():
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "stream.c", "-o", shell_objects[4]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "dialog.c", "-o", shell_objects[5]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "netaddress.c", "-o", shell_objects[6]])
+    run([triple + "-gcc", "-c", *shell_flags, shell_support / "winrt.c", "-o", shell_objects[7]])
+    run([triple + "-gcc", "-c", *shell_flags, shell_support / "knownfolder.c", "-o", shell_objects[8]])
     shell_defined = decorated(shell_objects)
     shell_names = ("CoCreateInstance", "CoGetClassObject", "CoGetMalloc", "SHCreateItemFromParsingName", "SHGetPropertyStoreForWindow", "PropVariantClear", "SHAppBarMessage", "GetOpenFileNameW", "GetSaveFileNameW", "CommDlgExtendedError", "GetFileTitleW", "IUnknown_QueryService", "CLSIDFromProgID",
                    "SHCreateStreamOnFileA", "SHCreateStreamOnFileW", "SHCreateStreamOnFileEx", "PropVariantCopy", "CoGetContextToken", "CoGetObjectContext", "ExtractIconExW", "ExtractIconW", "UiaGetReservedNotSupportedValue", "UiaGetReservedMixedAttributeValue", "SHGetMalloc",
-                   "OpenRegStream", "SHOpenRegStreamW", "SHOpenRegStreamA", "SHOpenRegStream2W", "SHOpenRegStream2A", "InitNetworkAddressControl")
+                   "OpenRegStream", "SHOpenRegStreamW", "SHOpenRegStreamA", "SHOpenRegStream2W", "SHOpenRegStream2A", "InitNetworkAddressControl",
+                   "RoGetActivationFactory", "RoActivateInstance")
     (output / "raven-shell.def").write_text("NAME raven-shell.dll\nEXPORTS\n" + "".join(definition_line(name, shell_defined.get(name)) for name in shell_names))
     run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{bases['shell']:#x},--no-insert-timestamp", *link_extra,
-         "-o", output / "raven-shell.dll", *shell_objects, output / "raven-shell.def", "-luser32", "-lgdi32", "-ladvapi32", "-lkernel32", "-lole32", "-luuid", "-lgcc"])
+         "-o", output / "raven-shell.dll", *shell_objects, output / "raven-shell.def", "-luser32", "-lgdi32", "-ladvapi32", "-lkernel32", "-lole32", "-luuid", "-lruntimeobject", "-lgcc"])
     # control.exe: the control panel, a program on the public headers that asks for the common controls 6 in its manifest.
     control_support = repo / "native/upstream/raven-control"
     control_objects = [objects / "control.o", objects / "control_res.o"]

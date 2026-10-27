@@ -814,8 +814,9 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		else
 			call.ret(1);
 	});
-	// Windows Runtime strings: a string handle points at a header (flags, length, pointer to the characters). A copy owns its characters in the
-	// same block; a reference points at the caller's.
+	// Windows Runtime strings: a string handle points at a header (flags, length, two unused words, pointer to the characters), the layout
+	// programs built with C++/WinRT write themselves for references. A copy owns its characters in the same block; a reference points at
+	// the caller's.
 	const auto make_hstring = [&context](ApiCall &call, uint64_t source, uint32_t length, uint64_t out) -> uint32_t {
 		if (!out)
 			return 0x80070057U;
@@ -823,14 +824,14 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 			call.store_pointer(out, 0);
 			return 0;
 		}
-		const size_t width = call.pointer_width(), head = 8 + width;
+		const size_t width = call.pointer_width(), head = 16 + width;
 		const auto block = context.allocator.allocate(head + (size_t(length) + 1) * 2, true);
 		if (!block)
 			return 0x8007000eU;
 		std::vector<uint8_t> image(head + (size_t(length) + 1) * 2);
 		const uint64_t characters = block + head;
 		std::memcpy(image.data() + 4, &length, 4);
-		std::memcpy(image.data() + 8, &characters, width);
+		std::memcpy(image.data() + 16, &characters, width);
 		const auto text = call.read(source, size_t(length) * 2);
 		std::memcpy(image.data() + head, text.data(), text.size());
 		call.write(block, image);
@@ -846,7 +847,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		const size_t width = call.pointer_width();
-		call.ret(make_hstring(call, call.load_pointer(call[0] + 8), call.load<uint32_t>(call[0] + 4), call[1]));
+		call.ret(make_hstring(call, call.load_pointer(call[0] + 16), call.load<uint32_t>(call[0] + 4), call[1]));
 		(void)width;
 	});
 	registry.add("WindowsCreateStringReference", 4, [](ApiCall &call) {
@@ -860,12 +861,12 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		const size_t width = call.pointer_width();
-		std::vector<uint8_t> header(8 + width);
+		std::vector<uint8_t> header(16 + width);
 		header[0] = 1;
 		const uint32_t length = call.u32(1);
 		std::memcpy(header.data() + 4, &length, 4);
 		const uint64_t source = call[0];
-		std::memcpy(header.data() + 8, &source, width);
+		std::memcpy(header.data() + 16, &source, width);
 		call.write(call[2], header);
 		call.store_pointer(call[3], call[2]);
 		call.ret(0);
@@ -886,7 +887,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		}
 		if (call[1])
 			call.store<uint32_t>(call[1], call.load<uint32_t>(call[0] + 4));
-		call.ret(call.load_pointer(call[0] + 8));
+		call.ret(call.load_pointer(call[0] + 16));
 	});
 	registry.add("WindowsGetStringLen", 1, [](ApiCall &call) { call.ret(call[0] ? call.load<uint32_t>(call[0] + 4) : 0); });
 	registry.add("WindowsIsStringEmpty", 1, [](ApiCall &call) { call.ret(!call[0] || !call.load<uint32_t>(call[0] + 4)); });
@@ -896,7 +897,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 			if (!handle)
 				return std::u16string();
 			const uint32_t length = call.load<uint32_t>(handle + 4);
-			const auto bytes = call.read(call.load_pointer(handle + 8), size_t(length) * 2);
+			const auto bytes = call.read(call.load_pointer(handle + 16), size_t(length) * 2);
 			std::u16string value(length, u'\0');
 			std::memcpy(value.data(), bytes.data(), bytes.size());
 			return value;
