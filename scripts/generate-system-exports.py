@@ -18,14 +18,15 @@ import sys
 LIBRARIES = """advapi32 bcrypt comctl32 comdlg32 crypt32 dbghelp dwmapi gdi32 imm32 kernel32 ole32 oleaut32 psapi
 sensapi setupapi shell32 shlwapi user32 uxtheme version wininet winmm wintrust ws2_32 wsock32
 bcryptprimitives cfgmgr32 dhcpcsvc dnsapi hid imagehlp iphlpapi ntdll ktmw32 msimg32 mswsock ncrypt netapi32 opengl32 glu32 powrprof pdh runtimeobject winspool ravenhost secur32 shcore userenv wevtapi winhttp wtsapi32
-atlthunk oleacc odbccp32 usp10 sfc dsound combase wer uiautomationcore lz32 loadperf mpr shfolder wldap32 oledlg""".split()
+atlthunk oleacc odbccp32 usp10 sfc dsound combase wer uiautomationcore lz32 loadperf mpr shfolder wldap32 oledlg normaliz slc rstrtmgr d3dcompiler_47""".split()
 # Real exports whose names begin with an underscore, which the generic filter drops.
 # The interlocked functions are compiler intrinsics in the import libraries, yet kernel32 exports them and programs import them by name.
+# The address waits live in kernelbase on Windows and in no kernel32 import library; Raven publishes them from kernel32 as its 32-bit side does.
 INTERLOCKED = {"InterlockedIncrement": 1, "InterlockedDecrement": 1, "InterlockedExchange": 2, "InterlockedExchangeAdd": 2,
                "InterlockedCompareExchange": 3, "InterlockedCompareExchange64": 5}
 EXTRA = {"runtimeobject": ["RoActivateInstance", "RoGetActivationFactory", "RoInitialize", "RoUninitialize", "RoOriginateError", "RoOriginateErrorW",
-                           "RoGetAgileReference", "RoRegisterActivationFactories", "RoRevokeActivationFactories", "RoGetApartmentIdentifier"], "ws2_32": ["__WSAFDIsSet", "AcceptEx", "ConnectEx", "DisconnectEx", "GetAcceptExSockaddrs", "WSARecvMsg"], "wsock32": ["__WSAFDIsSet"], "comctl32": ["_TrackMouseEvent"], "kernel32": ["QueryUnbiasedInterruptTimePrecise", "QueryInterruptTimePrecise", "_hread", "_hwrite", "_lclose", "_lcreat", "_llseek", "_lopen", "_lread", "_lwrite", "FlsGetValue2", "__C_specific_handler", "_local_unwind", *INTERLOCKED]}
-EXTRA_WORDS = {"kernel32": {**INTERLOCKED, "FlsGetValue2": 1, "QueryUnbiasedInterruptTimePrecise": 1, "QueryInterruptTimePrecise": 1}, "ws2_32": {"__WSAFDIsSet": 2, "AcceptEx": 8, "ConnectEx": 7, "DisconnectEx": 4, "GetAcceptExSockaddrs": 8, "WSARecvMsg": 5}, "wsock32": {"__WSAFDIsSet": 2}}
+                           "RoGetAgileReference", "RoRegisterActivationFactories", "RoRevokeActivationFactories", "RoGetApartmentIdentifier"], "ws2_32": ["__WSAFDIsSet", "AcceptEx", "ConnectEx", "DisconnectEx", "GetAcceptExSockaddrs", "WSARecvMsg"], "wsock32": ["__WSAFDIsSet"], "comctl32": ["_TrackMouseEvent"], "kernel32": ["QueryUnbiasedInterruptTimePrecise", "QueryInterruptTimePrecise", "_hread", "_hwrite", "_lclose", "_lcreat", "_llseek", "_lopen", "_lread", "_lwrite", "FlsGetValue2", "__C_specific_handler", "_local_unwind", "WaitOnAddress", "WakeByAddressSingle", "WakeByAddressAll", *INTERLOCKED]}
+EXTRA_WORDS = {"kernel32": {**INTERLOCKED, "FlsGetValue2": 1, "WaitOnAddress": 4, "WakeByAddressSingle": 1, "WakeByAddressAll": 1, "QueryUnbiasedInterruptTimePrecise": 1, "QueryInterruptTimePrecise": 1}, "ws2_32": {"__WSAFDIsSet": 2, "AcceptEx": 8, "ConnectEx": 7, "DisconnectEx": 4, "GetAcceptExSockaddrs": 8, "WSARecvMsg": 5}, "wsock32": {"__WSAFDIsSet": 2}}
 # sfc.dll has no 32-bit import library in mingw-w64: its argument words are listed here, with the catalog functions it publishes by number
 # only.
 EXTRA["sfc"] = ["SfpDeleteCatalog", "SfpInstallCatalog"]
@@ -66,7 +67,10 @@ COMBASE_WORDS = {"CLSIDFromString": 2, "CoCreateGuid": 1, "CoCreateInstance": 5,
                  "WindowsDeleteString": 1, "WindowsDuplicateString": 2, "WindowsGetStringLen": 1, "WindowsGetStringRawBuffer": 2,
                  "WindowsIsStringEmpty": 1}
 NAMES_ONLY["combase"] = sorted(COMBASE_WORDS)
-NAMES_ONLY_WORDS = {**COMBASE_WORDS, "AtlThunk_AllocateData": 0, "AtlThunk_DataToCode": 1, "AtlThunk_FreeData": 1, "AtlThunk_InitData": 3, "RavenFontClose": 1, "RavenFontGlyphs": 4, "RavenFontInfo": 2, "RavenFontMetrics": 3, "RavenFontName": 4, "RavenFontOpen": 3,
+# slc.dll, the software licensing client, has no import library in mingw-w64: the documented queries of Windows policy values.
+SLC_WORDS = {"SLGetWindowsInformation": 4, "SLGetWindowsInformationDWORD": 2}
+NAMES_ONLY["slc"] = sorted(SLC_WORDS)
+NAMES_ONLY_WORDS = {**COMBASE_WORDS, **SLC_WORDS, "AtlThunk_AllocateData": 0, "AtlThunk_DataToCode": 1, "AtlThunk_FreeData": 1, "AtlThunk_InitData": 3, "RavenFontClose": 1, "RavenFontGlyphs": 4, "RavenFontInfo": 2, "RavenFontMetrics": 3, "RavenFontName": 4, "RavenFontOpen": 3,
                     "RavenFontOutline": 4, "RavenFontRender": 10, "RavenFontScan": 2, "RavenFontTable": 5, "RavenTrace": 1,
                     "RavenCanvasCreate": 2, "RavenCanvasDestroy": 1, "RavenCanvasDraw": 4, "RavenCanvasPixels": 8, "RavenCanvasSize": 2, "RavenPathCombine": 8, "RavenPathWiden": 7}
 

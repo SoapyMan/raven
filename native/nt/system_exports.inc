@@ -747,25 +747,26 @@ static constexpr std::string_view kernel32_exports[]{
 	"VirtualFreeEx","VirtualLock","VirtualProtect","VirtualProtectEx","VirtualQuery","VirtualQueryEx",
 	"VirtualUnlock","WTSGetActiveConsoleSessionId","WaitCommEvent","WaitForDebugEvent","WaitForDebugEventEx","WaitForMultipleObjects",
 	"WaitForMultipleObjectsEx","WaitForSingleObject","WaitForSingleObjectEx","WaitForThreadpoolIoCallbacks","WaitForThreadpoolTimerCallbacks","WaitForThreadpoolWaitCallbacks",
-	"WaitForThreadpoolWorkCallbacks","WaitNamedPipeA","WaitNamedPipeW","WakeAllConditionVariable","WakeConditionVariable","WerGetFlags",
-	"WerGetFlagsWorker","WerRegisterAdditionalProcess","WerRegisterAppLocalDump","WerRegisterCustomMetadata","WerRegisterExcludedMemoryBlock","WerRegisterFile",
-	"WerRegisterFileWorker","WerRegisterMemoryBlock","WerRegisterMemoryBlockWorker","WerRegisterRuntimeExceptionModule","WerRegisterRuntimeExceptionModuleWorker","WerSetFlags",
-	"WerSetFlagsWorker","WerUnregisterAdditionalProcess","WerUnregisterAppLocalDump","WerUnregisterCustomMetadata","WerUnregisterExcludedMemoryBlock","WerUnregisterFile",
-	"WerUnregisterFileWorker","WerUnregisterMemoryBlock","WerUnregisterMemoryBlockWorker","WerUnregisterRuntimeExceptionModule","WerUnregisterRuntimeExceptionModuleWorker","WerpCleanupMessageMapping",
-	"WerpGetDebugger","WerpInitiateRemoteRecovery","WerpLaunchAeDebug","WerpNotifyLoadStringResource","WerpNotifyLoadStringResourceEx","WerpNotifyLoadStringResourceWorker",
-	"WerpNotifyUseStringResource","WerpNotifyUseStringResourceWorker","WerpStringLookup","WideCharToMultiByte","WinExec","Wow64DisableWow64FsRedirection",
-	"Wow64EnableWow64FsRedirection","Wow64GetThreadContext","Wow64GetThreadSelectorEntry","Wow64RevertWow64FsRedirection","Wow64SetThreadContext","Wow64SuspendThread",
-	"WriteConsoleA","WriteConsoleInputA","WriteConsoleInputVDMA","WriteConsoleInputVDMW","WriteConsoleInputW","WriteConsoleOutputA",
-	"WriteConsoleOutputAttribute","WriteConsoleOutputCharacterA","WriteConsoleOutputCharacterW","WriteConsoleOutputW","WriteConsoleW","WriteFile",
-	"WriteFileEx","WriteFileGather","WritePrivateProfileSectionA","WritePrivateProfileSectionW","WritePrivateProfileStringA","WritePrivateProfileStringW",
-	"WritePrivateProfileStructA","WritePrivateProfileStructW","WriteProcessMemory","WriteProfileSectionA","WriteProfileSectionW","WriteProfileStringA",
-	"WriteProfileStringW","WriteTapemark","ZombifyActCtx","ZombifyActCtxWorker","__C_specific_handler","_hread",
-	"_hwrite","_lclose","_lcreat","_llseek","_local_unwind","_lopen",
-	"_lread","_lwrite","lstrcat","lstrcatA","lstrcatW","lstrcmp",
-	"lstrcmpA","lstrcmpW","lstrcmpi","lstrcmpiA","lstrcmpiW","lstrcpy",
-	"lstrcpyA","lstrcpyW","lstrcpyn","lstrcpynA","lstrcpynW","lstrlen",
-	"lstrlenA","lstrlenW","uaw_lstrcmpW","uaw_lstrcmpiW","uaw_lstrlenW","uaw_wcschr",
-	"uaw_wcscpy","uaw_wcsicmp","uaw_wcslen","uaw_wcsrchr",
+	"WaitForThreadpoolWorkCallbacks","WaitNamedPipeA","WaitNamedPipeW","WaitOnAddress","WakeAllConditionVariable","WakeByAddressAll",
+	"WakeByAddressSingle","WakeConditionVariable","WerGetFlags","WerGetFlagsWorker","WerRegisterAdditionalProcess","WerRegisterAppLocalDump",
+	"WerRegisterCustomMetadata","WerRegisterExcludedMemoryBlock","WerRegisterFile","WerRegisterFileWorker","WerRegisterMemoryBlock","WerRegisterMemoryBlockWorker",
+	"WerRegisterRuntimeExceptionModule","WerRegisterRuntimeExceptionModuleWorker","WerSetFlags","WerSetFlagsWorker","WerUnregisterAdditionalProcess","WerUnregisterAppLocalDump",
+	"WerUnregisterCustomMetadata","WerUnregisterExcludedMemoryBlock","WerUnregisterFile","WerUnregisterFileWorker","WerUnregisterMemoryBlock","WerUnregisterMemoryBlockWorker",
+	"WerUnregisterRuntimeExceptionModule","WerUnregisterRuntimeExceptionModuleWorker","WerpCleanupMessageMapping","WerpGetDebugger","WerpInitiateRemoteRecovery","WerpLaunchAeDebug",
+	"WerpNotifyLoadStringResource","WerpNotifyLoadStringResourceEx","WerpNotifyLoadStringResourceWorker","WerpNotifyUseStringResource","WerpNotifyUseStringResourceWorker","WerpStringLookup",
+	"WideCharToMultiByte","WinExec","Wow64DisableWow64FsRedirection","Wow64EnableWow64FsRedirection","Wow64GetThreadContext","Wow64GetThreadSelectorEntry",
+	"Wow64RevertWow64FsRedirection","Wow64SetThreadContext","Wow64SuspendThread","WriteConsoleA","WriteConsoleInputA","WriteConsoleInputVDMA",
+	"WriteConsoleInputVDMW","WriteConsoleInputW","WriteConsoleOutputA","WriteConsoleOutputAttribute","WriteConsoleOutputCharacterA","WriteConsoleOutputCharacterW",
+	"WriteConsoleOutputW","WriteConsoleW","WriteFile","WriteFileEx","WriteFileGather","WritePrivateProfileSectionA",
+	"WritePrivateProfileSectionW","WritePrivateProfileStringA","WritePrivateProfileStringW","WritePrivateProfileStructA","WritePrivateProfileStructW","WriteProcessMemory",
+	"WriteProfileSectionA","WriteProfileSectionW","WriteProfileStringA","WriteProfileStringW","WriteTapemark","ZombifyActCtx",
+	"ZombifyActCtxWorker","__C_specific_handler","_hread","_hwrite","_lclose","_lcreat",
+	"_llseek","_local_unwind","_lopen","_lread","_lwrite","lstrcat",
+	"lstrcatA","lstrcatW","lstrcmp","lstrcmpA","lstrcmpW","lstrcmpi",
+	"lstrcmpiA","lstrcmpiW","lstrcpy","lstrcpyA","lstrcpyW","lstrcpyn",
+	"lstrcpynA","lstrcpynW","lstrlen","lstrlenA","lstrlenW","uaw_lstrcmpW",
+	"uaw_lstrcmpiW","uaw_lstrlenW","uaw_wcschr","uaw_wcscpy","uaw_wcsicmp","uaw_wcslen",
+	"uaw_wcsrchr",
 };
 static constexpr std::string_view ole32_exports[]{
 	"BindMoniker","CLIPFORMAT_UserFree","CLIPFORMAT_UserFree64","CLIPFORMAT_UserFreeExt","CLIPFORMAT_UserMarshal","CLIPFORMAT_UserMarshal64",
@@ -2732,6 +2733,23 @@ static constexpr std::string_view oledlg_exports[]{
 	"OleUIEditLinksW","OleUIInsertObjectA","OleUIInsertObjectW","OleUIObjectPropertiesA","OleUIObjectPropertiesW","OleUIPasteSpecialA",
 	"OleUIPasteSpecialW","OleUIPromptUserA","OleUIPromptUserW","OleUIUpdateLinksA","OleUIUpdateLinksW",
 };
+static constexpr std::string_view normaliz_exports[]{
+	"IdnToAscii","IdnToNameprepUnicode","IdnToUnicode","IsNormalizedString","NormalizeString",
+};
+static constexpr std::string_view slc_exports[]{
+	"SLGetWindowsInformation","SLGetWindowsInformationDWORD",
+};
+static constexpr std::string_view rstrtmgr_exports[]{
+	"RmAddFilter","RmCancelCurrentTask","RmEndSession","RmGetFilterList","RmGetList","RmJoinSession",
+	"RmRegisterResources","RmRemoveFilter","RmReserveHeap","RmRestart","RmShutdown","RmStartSession",
+};
+static constexpr std::string_view d3dcompiler_47_exports[]{
+	"D3DAssemble","D3DCompile","D3DCompile2","D3DCompileFromFile","D3DCompressShaders","D3DCreateBlob",
+	"D3DCreateFunctionLinkingGraph","D3DCreateLinker","D3DDecompressShaders","D3DDisassemble","D3DDisassemble10Effect","D3DDisassemble11Trace",
+	"D3DDisassembleRegion","D3DGetBlobPart","D3DGetDebugInfo","D3DGetInputAndOutputSignatureBlob","D3DGetInputSignatureBlob","D3DGetOutputSignatureBlob",
+	"D3DGetTraceInstructionOffsets","D3DLoadModule","D3DPreprocess","D3DReadFileToBlob","D3DReflect","D3DReflectLibrary",
+	"D3DReturnFailure1","D3DSetBlobPart","D3DStripShader","D3DWriteBlobToFile","DebugSetMute",
+};
 static constexpr std::pair<std::string_view, std::span<const std::string_view>> libraries[]{
 	{"advapi32.dll", advapi32_exports},
 	{"bcrypt.dll", bcrypt_exports},
@@ -2799,4 +2817,8 @@ static constexpr std::pair<std::string_view, std::span<const std::string_view>> 
 	{"shfolder.dll", shfolder_exports},
 	{"wldap32.dll", wldap32_exports},
 	{"oledlg.dll", oledlg_exports},
+	{"normaliz.dll", normaliz_exports},
+	{"slc.dll", slc_exports},
+	{"rstrtmgr.dll", rstrtmgr_exports},
+	{"d3dcompiler_47.dll", d3dcompiler_47_exports},
 };

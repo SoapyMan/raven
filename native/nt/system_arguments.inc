@@ -719,24 +719,24 @@ static constexpr std::pair<std::string_view, uint8_t> kernel32_words[]{
 	{"VirtualFreeVlm",5},{"VirtualLock",2},{"VirtualProtect",4},{"VirtualProtectEx",5},{"VirtualProtectVlm",6},{"VirtualQuery",3},
 	{"VirtualQueryEx",4},{"VirtualQueryVlm",4},{"VirtualUnlock",2},{"WTSGetActiveConsoleSessionId",0},{"WaitCommEvent",3},{"WaitForDebugEvent",2},
 	{"WaitForDebugEventEx",2},{"WaitForMultipleObjects",4},{"WaitForMultipleObjectsEx",5},{"WaitForSingleObject",2},{"WaitForSingleObjectEx",3},{"WaitForThreadpoolIoCallbacks",2},
-	{"WaitForThreadpoolTimerCallbacks",2},{"WaitForThreadpoolWaitCallbacks",2},{"WaitForThreadpoolWorkCallbacks",2},{"WaitNamedPipeA",2},{"WaitNamedPipeW",2},{"WakeAllConditionVariable",1},
-	{"WakeConditionVariable",1},{"WerGetFlags",2},{"WerGetFlagsWorker",2},{"WerRegisterAdditionalProcess",2},{"WerRegisterAppLocalDump",1},{"WerRegisterCustomMetadata",2},
-	{"WerRegisterExcludedMemoryBlock",2},{"WerRegisterFile",3},{"WerRegisterFileWorker",3},{"WerRegisterMemoryBlock",2},{"WerRegisterMemoryBlockWorker",2},{"WerRegisterRuntimeExceptionModule",2},
-	{"WerRegisterRuntimeExceptionModuleWorker",2},{"WerSetFlags",1},{"WerSetFlagsWorker",1},{"WerUnregisterAdditionalProcess",1},{"WerUnregisterAppLocalDump",0},{"WerUnregisterCustomMetadata",1},
-	{"WerUnregisterExcludedMemoryBlock",1},{"WerUnregisterFile",1},{"WerUnregisterFileWorker",1},{"WerUnregisterMemoryBlock",1},{"WerUnregisterMemoryBlockWorker",1},{"WerUnregisterRuntimeExceptionModule",2},
-	{"WerUnregisterRuntimeExceptionModuleWorker",2},{"WerpCleanupMessageMapping",0},{"WerpGetDebugger",2},{"WerpInitiateRemoteRecovery",1},{"WerpNotifyLoadStringResource",4},{"WerpNotifyLoadStringResourceEx",5},
-	{"WerpNotifyUseStringResource",1},{"WerpStringLookup",2},{"WideCharToMultiByte",8},{"WinExec",2},{"Wow64DisableWow64FsRedirection",1},{"Wow64EnableWow64FsRedirection",1},
-	{"Wow64GetThreadContext",2},{"Wow64GetThreadSelectorEntry",3},{"Wow64RevertWow64FsRedirection",1},{"Wow64SetThreadContext",2},{"Wow64SuspendThread",1},{"WriteConsoleA",5},
-	{"WriteConsoleInputA",4},{"WriteConsoleInputVDMA",4},{"WriteConsoleInputVDMW",4},{"WriteConsoleInputW",4},{"WriteConsoleOutputA",5},{"WriteConsoleOutputAttribute",5},
-	{"WriteConsoleOutputCharacterA",5},{"WriteConsoleOutputCharacterW",5},{"WriteConsoleOutputW",5},{"WriteConsoleW",5},{"WriteFile",5},{"WriteFileEx",5},
-	{"WriteFileGather",5},{"WriteFileVlm",5},{"WritePrivateProfileSectionA",3},{"WritePrivateProfileSectionW",3},{"WritePrivateProfileStringA",4},{"WritePrivateProfileStringW",4},
-	{"WritePrivateProfileStructA",5},{"WritePrivateProfileStructW",5},{"WriteProcessMemory",5},{"WriteProcessMemoryVlm",5},{"WriteProfileSectionA",2},{"WriteProfileSectionW",2},
-	{"WriteProfileStringA",3},{"WriteProfileStringW",3},{"WriteTapemark",4},{"ZombifyActCtx",1},{"ZombifyActCtxWorker",1},{"_hread",3},
-	{"_hwrite",3},{"_lclose",1},{"_lcreat",2},{"_llseek",3},{"_lopen",2},{"_lread",3},
-	{"_lwrite",3},{"lstrcat",2},{"lstrcatA",2},{"lstrcatW",2},{"lstrcmp",2},{"lstrcmpA",2},
-	{"lstrcmpW",2},{"lstrcmpi",2},{"lstrcmpiA",2},{"lstrcmpiW",2},{"lstrcpy",2},{"lstrcpyA",2},
-	{"lstrcpyW",2},{"lstrcpyn",3},{"lstrcpynA",3},{"lstrcpynW",3},{"lstrlen",1},{"lstrlenA",1},
-	{"lstrlenW",1},
+	{"WaitForThreadpoolTimerCallbacks",2},{"WaitForThreadpoolWaitCallbacks",2},{"WaitForThreadpoolWorkCallbacks",2},{"WaitNamedPipeA",2},{"WaitNamedPipeW",2},{"WaitOnAddress",4},
+	{"WakeAllConditionVariable",1},{"WakeByAddressAll",1},{"WakeByAddressSingle",1},{"WakeConditionVariable",1},{"WerGetFlags",2},{"WerGetFlagsWorker",2},
+	{"WerRegisterAdditionalProcess",2},{"WerRegisterAppLocalDump",1},{"WerRegisterCustomMetadata",2},{"WerRegisterExcludedMemoryBlock",2},{"WerRegisterFile",3},{"WerRegisterFileWorker",3},
+	{"WerRegisterMemoryBlock",2},{"WerRegisterMemoryBlockWorker",2},{"WerRegisterRuntimeExceptionModule",2},{"WerRegisterRuntimeExceptionModuleWorker",2},{"WerSetFlags",1},{"WerSetFlagsWorker",1},
+	{"WerUnregisterAdditionalProcess",1},{"WerUnregisterAppLocalDump",0},{"WerUnregisterCustomMetadata",1},{"WerUnregisterExcludedMemoryBlock",1},{"WerUnregisterFile",1},{"WerUnregisterFileWorker",1},
+	{"WerUnregisterMemoryBlock",1},{"WerUnregisterMemoryBlockWorker",1},{"WerUnregisterRuntimeExceptionModule",2},{"WerUnregisterRuntimeExceptionModuleWorker",2},{"WerpCleanupMessageMapping",0},{"WerpGetDebugger",2},
+	{"WerpInitiateRemoteRecovery",1},{"WerpNotifyLoadStringResource",4},{"WerpNotifyLoadStringResourceEx",5},{"WerpNotifyUseStringResource",1},{"WerpStringLookup",2},{"WideCharToMultiByte",8},
+	{"WinExec",2},{"Wow64DisableWow64FsRedirection",1},{"Wow64EnableWow64FsRedirection",1},{"Wow64GetThreadContext",2},{"Wow64GetThreadSelectorEntry",3},{"Wow64RevertWow64FsRedirection",1},
+	{"Wow64SetThreadContext",2},{"Wow64SuspendThread",1},{"WriteConsoleA",5},{"WriteConsoleInputA",4},{"WriteConsoleInputVDMA",4},{"WriteConsoleInputVDMW",4},
+	{"WriteConsoleInputW",4},{"WriteConsoleOutputA",5},{"WriteConsoleOutputAttribute",5},{"WriteConsoleOutputCharacterA",5},{"WriteConsoleOutputCharacterW",5},{"WriteConsoleOutputW",5},
+	{"WriteConsoleW",5},{"WriteFile",5},{"WriteFileEx",5},{"WriteFileGather",5},{"WriteFileVlm",5},{"WritePrivateProfileSectionA",3},
+	{"WritePrivateProfileSectionW",3},{"WritePrivateProfileStringA",4},{"WritePrivateProfileStringW",4},{"WritePrivateProfileStructA",5},{"WritePrivateProfileStructW",5},{"WriteProcessMemory",5},
+	{"WriteProcessMemoryVlm",5},{"WriteProfileSectionA",2},{"WriteProfileSectionW",2},{"WriteProfileStringA",3},{"WriteProfileStringW",3},{"WriteTapemark",4},
+	{"ZombifyActCtx",1},{"ZombifyActCtxWorker",1},{"_hread",3},{"_hwrite",3},{"_lclose",1},{"_lcreat",2},
+	{"_llseek",3},{"_lopen",2},{"_lread",3},{"_lwrite",3},{"lstrcat",2},{"lstrcatA",2},
+	{"lstrcatW",2},{"lstrcmp",2},{"lstrcmpA",2},{"lstrcmpW",2},{"lstrcmpi",2},{"lstrcmpiA",2},
+	{"lstrcmpiW",2},{"lstrcpy",2},{"lstrcpyA",2},{"lstrcpyW",2},{"lstrcpyn",3},{"lstrcpynA",3},
+	{"lstrcpynW",3},{"lstrlen",1},{"lstrlenA",1},{"lstrlenW",1},
 };
 static constexpr std::pair<std::string_view, uint8_t> ole32_words[]{
 	{"BindMoniker",4},{"CLIPFORMAT_UserFree",2},{"CLIPFORMAT_UserMarshal",3},{"CLIPFORMAT_UserSize",3},{"CLIPFORMAT_UserUnmarshal",3},{"CLSIDFromOle1Class",3},
@@ -2583,6 +2583,23 @@ static constexpr std::pair<std::string_view, uint8_t> oledlg_words[]{
 	{"OleUIEditLinksW",1},{"OleUIInsertObjectA",1},{"OleUIInsertObjectW",1},{"OleUIObjectPropertiesA",1},{"OleUIObjectPropertiesW",1},{"OleUIPasteSpecialA",1},
 	{"OleUIPasteSpecialW",1},{"OleUIUpdateLinksA",4},{"OleUIUpdateLinksW",4},
 };
+static constexpr std::pair<std::string_view, uint8_t> normaliz_words[]{
+	{"IdnToAscii",5},{"IdnToNameprepUnicode",5},{"IdnToUnicode",5},{"IsNormalizedString",3},{"NormalizeString",5},
+};
+static constexpr std::pair<std::string_view, uint8_t> slc_words[]{
+	{"SLGetWindowsInformation",4},{"SLGetWindowsInformationDWORD",2},
+};
+static constexpr std::pair<std::string_view, uint8_t> rstrtmgr_words[]{
+	{"RmAddFilter",5},{"RmCancelCurrentTask",1},{"RmEndSession",1},{"RmGetFilterList",4},{"RmGetList",5},{"RmJoinSession",2},
+	{"RmRegisterResources",7},{"RmRemoveFilter",4},{"RmReserveHeap",1},{"RmRestart",3},{"RmShutdown",3},{"RmStartSession",3},
+};
+static constexpr std::pair<std::string_view, uint8_t> d3dcompiler_47_words[]{
+	{"D3DAssemble",8},{"D3DCompile",11},{"D3DCompile2",14},{"D3DCompileFromFile",9},{"D3DCompressShaders",4},{"D3DCreateBlob",2},
+	{"D3DCreateFunctionLinkingGraph",2},{"D3DCreateLinker",1},{"D3DDecompressShaders",8},{"D3DDisassemble",5},{"D3DDisassemble10Effect",3},{"D3DDisassemble11Trace",7},
+	{"D3DDisassembleRegion",8},{"D3DGetBlobPart",5},{"D3DGetDebugInfo",3},{"D3DGetInputAndOutputSignatureBlob",3},{"D3DGetInputSignatureBlob",3},{"D3DGetOutputSignatureBlob",3},
+	{"D3DGetTraceInstructionOffsets",7},{"D3DLoadModule",3},{"D3DPreprocess",7},{"D3DReadFileToBlob",2},{"D3DReflect",4},{"D3DReflectLibrary",4},
+	{"D3DReturnFailure1",3},{"D3DSetBlobPart",7},{"D3DStripShader",4},{"D3DWriteBlobToFile",3},
+};
 static constexpr std::pair<std::string_view, std::span<const std::pair<std::string_view, uint8_t>>> argument_tables[]{
 	{"advapi32.dll", advapi32_words},
 	{"bcrypt.dll", bcrypt_words},
@@ -2649,4 +2666,8 @@ static constexpr std::pair<std::string_view, std::span<const std::pair<std::stri
 	{"mpr.dll", mpr_words},
 	{"shfolder.dll", shfolder_words},
 	{"oledlg.dll", oledlg_words},
+	{"normaliz.dll", normaliz_words},
+	{"slc.dll", slc_words},
+	{"rstrtmgr.dll", rstrtmgr_words},
+	{"d3dcompiler_47.dll", d3dcompiler_47_words},
 };
