@@ -554,7 +554,8 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 		// TokenElevationType: full for an elevated process, limited (the filtered token of an administrator) otherwise; TokenElevation.
 		case 18: data = {process_elevated() ? uint8_t(2) : uint8_t(3), 0, 0, 0}; break;
 		case 20: data = {process_elevated() ? uint8_t(1) : uint8_t(0), 0, 0, 0}; break;
-		case 29: data = {0, 0, 0, 0}; break;
+		// TokenUIAccess and TokenIsAppContainer: no process here is an accessibility tool or runs in an app container.
+		case 26: case 29: data = {0, 0, 0, 0}; break;
 		case 25: with_sid(make_sid(16, {value.integrity}), 0x60, true); break;
 		case 10: data.assign(56, 0); break;
 		default:
