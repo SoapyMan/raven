@@ -126,14 +126,22 @@ NativeRegistry::NativeRegistry(std::filesystem::path file) : file(std::move(file
 
 // The classes Windows registers in both registry views whose libraries the runtime brings: the .NET runtime's metadata dispensers, runtime
 // hosts, meta host and strong names in mscoree, which programs and the Framework's own libraries create through COM, and the Task
-// Scheduler, which installers use to start a program once they finish. A hive that lacks them, a new one or one made before they were
-// registered, gets them.
+// Scheduler, which installers use to start a program once they finish, the accessibility annotation services of oleacc, which
+// programs create for their windows' controls, the MSXML 6.0 classes, which the XML component serves beside its own, the network list,
+// which programs ask whether they are online, and the package manager of the Windows Runtime. A hive that lacks them, a new one or one
+// made before they were registered, gets them.
 void NativeRegistry::register_runtime_classes()
 {
 	static constexpr std::pair<const char16_t *, const char16_t *> classes[] = {{u"{E5CB7A31-7512-11D2-89CE-0080C792E5D8}", u"mscoree.dll"},
 		{u"{1EC2DE53-75CC-11D2-9775-00A0C9B4D50C}", u"mscoree.dll"}, {u"{CB2F6723-AB3A-11D2-9C40-00C04FA30A3E}", u"mscoree.dll"},
 		{u"{90F1A06E-7712-4762-86B5-7A5EBA6BDB02}", u"mscoree.dll"}, {u"{9280188D-0E8E-4867-B30C-7FA83884E8DE}", u"mscoree.dll"},
-		{u"{B79B0ACD-F5CD-409B-B5A5-A16244610B92}", u"mscoree.dll"}, {u"{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}", u"taskschd.dll"}};
+		{u"{B79B0ACD-F5CD-409B-B5A5-A16244610B92}", u"mscoree.dll"}, {u"{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}", u"taskschd.dll"},
+		{u"{B5F8350B-0548-48B1-A6EE-88BD00B4A5E7}", u"raven-accprop.dll"}, {u"{88D96A05-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"},
+		{u"{88D96A06-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"}, {u"{88D96A07-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"},
+		{u"{88D96A08-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"}, {u"{88D96A0A-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"},
+		{u"{88D96A0B-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"}, {u"{88D96A0C-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"},
+		{u"{88D96A0E-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"}, {u"{88D96A0F-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"},
+		{u"{88D96A11-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"}, {u"{DCB00C01-570F-4A9B-8D69-199FDBA5723B}", u"raven-netlist.dll"}};
 	register_animation_classes();
 	const auto store = [&](uint64_t key, const char16_t *name, std::u16string_view value) {
 		std::vector<uint8_t> data;
@@ -157,15 +165,44 @@ void NativeRegistry::register_runtime_classes()
 			store(key, u"ThreadingModel", u"Both");
 			close(key);
 		}
-	// Scripts create the scheduler by its name.
-	if (!keys.contains(fold(u"HKEY_CLASSES_ROOT\\Schedule.Service\\CLSID"))) {
+	// Scripts create the scheduler, and programs the MSXML 6.0 classes, by name.
+	static constexpr std::pair<const char16_t *, const char16_t *> names[] = {{u"Schedule.Service", u"{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}"},
+		{u"Msxml2.DOMDocument.6.0", u"{88D96A05-F192-11D4-A65F-0040963251E5}"}, {u"Msxml2.FreeThreadedDOMDocument.6.0", u"{88D96A06-F192-11D4-A65F-0040963251E5}"},
+		{u"Msxml2.XMLSchemaCache.6.0", u"{88D96A07-F192-11D4-A65F-0040963251E5}"}, {u"Msxml2.XSLTemplate.6.0", u"{88D96A08-F192-11D4-A65F-0040963251E5}"},
+		{u"Msxml2.XMLHTTP.6.0", u"{88D96A0A-F192-11D4-A65F-0040963251E5}"}, {u"Msxml2.ServerXMLHTTP.6.0", u"{88D96A0B-F192-11D4-A65F-0040963251E5}"},
+		{u"Msxml2.SAXXMLReader.6.0", u"{88D96A0C-F192-11D4-A65F-0040963251E5}"}, {u"Msxml2.SAXAttributes.6.0", u"{88D96A0E-F192-11D4-A65F-0040963251E5}"},
+		{u"Msxml2.MXXMLWriter.6.0", u"{88D96A0F-F192-11D4-A65F-0040963251E5}"}, {u"Msxml2.MXNamespaceManager.6.0", u"{88D96A11-F192-11D4-A65F-0040963251E5}"}};
+	for (const auto &[name, clsid] : names) {
+		const std::u16string path = std::u16string(name) + u"\\CLSID";
+		if (keys.contains(fold(u"HKEY_CLASSES_ROOT\\" + path)))
+			continue;
 		uint64_t key = 0;
 		uint32_t disposition = 0;
-		if (!create(0x80000000ULL, u"Schedule.Service\\CLSID", key, disposition)) {
-			store(key, u"", u"{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}");
+		if (!create(0x80000000ULL, path, key, disposition)) {
+			store(key, u"", clsid);
 			close(key);
 		}
 	}
+	// The Windows Runtime classes the runtime brings, in-process (activation type 0) and callable from any apartment (threading 0):
+	// installers ask the package manager whether a packaged version of what they install is present.
+	static constexpr std::pair<const char16_t *, const char16_t *> runtime_classes[] = {
+		{u"Windows.Management.Deployment.PackageManager", u"raven-deployment.dll"}};
+	for (const bool wow : {false, true})
+		for (const auto &[name, library] : runtime_classes) {
+			const std::u16string path = std::u16string(wow ? u"SOFTWARE\\Wow6432Node" : u"SOFTWARE") +
+				u"\\Microsoft\\WindowsRuntime\\ActivatableClassId\\" + name;
+			if (keys.contains(fold(u"HKEY_LOCAL_MACHINE\\" + path)))
+				continue;
+			uint64_t key = 0;
+			uint32_t disposition = 0;
+			if (create(0x80000002ULL, path, key, disposition))
+				continue;
+			store(key, u"DllPath", std::u16string(wow ? u"C:\\Windows\\SysWOW64\\" : u"C:\\Windows\\System32\\") + library);
+			static constexpr uint8_t zero[4]{};
+			for (const auto *word : {u"ActivationType", u"Threading", u"TrustLevel"})
+				set(key, word, 4, zero);
+			close(key);
+		}
 }
 
 // The machine's environment, which installers extend (a program's folder added to Path) and the system reads when it starts a session.
