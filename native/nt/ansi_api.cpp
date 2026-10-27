@@ -48,6 +48,7 @@ const Adapter adapters[] = {
 	{"SetCurrentDirectoryA", {0}},
 	{"GetFullPathNameA", {0}, 2, 1, 3},
 	{"GetTempPathA", {}, 1, 0},
+	{"GetTempPath2A", {}, 1, 0},
 	{"GetLongPathNameA", {0}, 1, 2},
 	{"GetShortPathNameA", {0}, 1, 2},
 	{"ExpandEnvironmentStringsA", {0}, 1, 2},

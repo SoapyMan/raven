@@ -9,6 +9,7 @@
 
 #include <array>
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <new>
@@ -251,7 +252,7 @@ void NativeWindows::present(uint64_t handle, bool force)
 	}
 	// A popup without a caption that another window owns (a menu, a drop-down list), or an owned tool window (a palette), opens where the
 	// program placed it: as a popup of the owner's host window, since a host window of its own would be placed by the compositor.
-	const auto owner=window->owner ? objects.window_root(window->owner) : 0;
+	const auto owner=host_owner(*window);
 	const auto *owning=owner && owner!=handle ? objects.window(owner) : nullptr;
 	if (presentation.owned_popup && owning && shown_on_owner(*window)) {
 		try {
@@ -957,9 +958,14 @@ static bool trace_buttons_enabled()
 	return enabled;
 }
 
+uint64_t NativeWindows::host_owner(const DesktopWindow &window) const
+{
+	return window.owner ? objects.window_root(window.owner) : window.shown_on ? objects.window_root(window.shown_on) : 0;
+}
+
 bool NativeWindows::shown_on_owner(const DesktopWindow &window) const
 {
-	const auto owner=window.owner ? objects.window_root(window.owner) : 0;
+	const auto owner=host_owner(window);
 	if (!owner || window.parent || !objects.window_visible(owner))
 		return false;
 	return ((window.style & 0x80000000U) && (window.style & 0x00c00000U)!=0x00c00000U) || (window.ex_style & 0x80U);
@@ -1000,6 +1006,16 @@ void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uin
 	if (hit!=1 && placing_press) release_held_input();
 	if ((hit==6 || hit==7) && scroll_pointer(target,hit,message,int32_t(x),int32_t(y))) return;
 	if (hit!=1) { nonclient_pointer(target,hit,message,int32_t(event.x),int32_t(event.y)); return; }
+	// A second press of the same button on the same window within the double-click time (500 ms) and rectangle (SM_CXDOUBLECLK, 4 by 4)
+	// is a double click when the window's class asks for them (CS_DBLCLKS); the press after a double click starts over.
+	if (message==0x201 || message==0x204 || message==0x207) {
+		const auto now=message_time();
+		const auto *type=objects.window_class(window->class_id);
+		const bool again=last_press.window==target && last_press.message==message && now-last_press.time<=500 &&
+			std::abs(int64_t(x)-last_press.x)<=2 && std::abs(int64_t(y)-last_press.y)<=2;
+		if (again && type && (type->style & 8)) { message+=2; last_press={}; }
+		else last_press={target,message,now,int32_t(x),int32_t(y)};
+	}
 	if ((message==0x201 || message==0x204 || message==0x207) && window->parent && !(window->ex_style & 4)) {
 		for (auto parent=window->parent;parent;) {
 			const auto *ancestor=objects.window(parent);if (!ancestor) break;

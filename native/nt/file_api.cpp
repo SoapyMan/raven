@@ -1260,12 +1260,15 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		call.put_wide(call[1], text, capacity);
 		call.ret(capacity > text.size() ? text.size() : text.size() + 1);
 	});
-	registry.add("GetTempPathW", 2, [&, resolve, missing, file_of, copy_file](ApiCall &call) {
+	// GetTempPath2W differs only for SYSTEM processes, which get a folder of their own; a program never runs as one here.
+	const auto temporary_path = [&](ApiCall &call) {
 		auto text = paths.temporary();
 		const size_t capacity = call.u32(0);
 		call.put_wide(call[1], text, capacity);
 		call.ret(capacity > text.size() ? text.size() : text.size() + 1);
-	});
+	};
+	registry.add("GetTempPathW", 2, temporary_path);
+	registry.add("GetTempPath2W", 2, temporary_path);
 	// The classic form reports clusters of eight 512-byte sectors, each count clamped to what a 32-bit field holds.
 	registry.add("GetDiskFreeSpaceW", 5, [&, resolve, missing, file_of, copy_file](ApiCall &call) {
 		const auto resolved = call[0] ? resolve(call, call.wide(call[0])) : paths.resolve(paths.current());

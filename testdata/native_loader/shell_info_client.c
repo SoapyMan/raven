@@ -55,6 +55,15 @@ int raven_entry(void)
 
 	WCHAR temporary[260], root[260], path[260];
 	CHECK(19, GetTempPathW(260,temporary));
+	// A program that is not SYSTEM gets the same folder from GetTempPath2, which newer programs look up at run time.
+	typedef DWORD (WINAPI *TempPath2W)(DWORD,LPWSTR);
+	typedef DWORD (WINAPI *TempPath2A)(DWORD,LPSTR);
+	HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+	TempPath2W temp_path2w = (TempPath2W)GetProcAddress(kernel,"GetTempPath2W");
+	TempPath2A temp_path2a = (TempPath2A)GetProcAddress(kernel,"GetTempPath2A");
+	char narrow[260];
+	CHECK(31, temp_path2w && temp_path2a && temp_path2w(260,path) == GetTempPathW(0,0) - 1 && same(path,temporary));
+	CHECK(32, temp_path2a(260,narrow) == GetTempPathA(0,0) - 1 && narrow[0] == (char)temporary[0]);
 	join(root,temporary,L"raven-change-notification");
 	CreateDirectoryW(root,0);
 	SetLastError(0);

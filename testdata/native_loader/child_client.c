@@ -3,7 +3,7 @@
 
 __declspec(dllexport) unsigned long long child_rows[128][4];
 __declspec(dllexport) DWORD child_pixels[80*60];
-__declspec(dllexport) unsigned long long child_input[4][6];
+__declspec(dllexport) unsigned long long child_input[6][6];
 static unsigned input_notifications;
 static unsigned row,errors;
 static DWORD hidden_pixels[80*60];
@@ -27,7 +27,7 @@ static LRESULT CALLBACK proc(HWND window,UINT message,WPARAM wparam,LPARAM lpara
 		if (GetWindowLongPtrW(window,GWLP_USERDATA)!=11 || wparam!=WM_LBUTTONDOWN || lparam!=(20|(8<<16))) ++errors;
 		++input_notifications;return DefWindowProcW(window,message,wparam,lparam);
 	}
-	if (message==WM_LBUTTONDOWN || message==WM_LBUTTONUP) return 0;
+	if (message==WM_LBUTTONDOWN || message==WM_LBUTTONUP || message==WM_LBUTTONDBLCLK) return 0;
 	if (message==WM_NCCREATE || message==WM_NCCALCSIZE || message==WM_CREATE || message==WM_SIZE || message==WM_MOVE ||
 		message==WM_PARENTNOTIFY || message==WM_DESTROY || message==WM_NCDESTROY) {
 		unsigned long long fields[4]={(unsigned long long)GetWindowLongPtrW(window,GWLP_USERDATA),message,wparam,
@@ -53,6 +53,9 @@ int raven_entry(void)
 {
 	HINSTANCE instance=GetModuleHandleW(NULL);
 	WNDCLASSW wc={0};wc.lpfnWndProc=proc;wc.hInstance=instance;wc.lpszClassName=klass;
+#ifdef CHILD_INPUT
+	wc.style=CS_DBLCLKS;
+#endif
 	if (!RegisterClassW(&wc)) return 1;
 	HWND parent=CreateWindowExW(0,klass,L"child surface",WS_POPUP,100,200,80,60,NULL,NULL,instance,(void *)11);
 	HWND child=CreateWindowExW(0,klass,L"child",WS_CHILD|WS_VISIBLE,5,6,20,15,parent,(HMENU)101,instance,(void *)12);
@@ -126,18 +129,24 @@ int raven_entry(void)
 	if (!PeekMessageW(&message,parent,WM_USER+1,WM_USER+1,PM_REMOVE) || message.hwnd!=grandchild || message.wParam!=17 || message.lParam!=19 || DispatchMessageW(&message)!=37) return 13;
 
 #ifdef CHILD_INPUT
-	for(unsigned i=0;i<4;++i) {
-		if (GetMessageW(&message,parent,WM_LBUTTONDOWN,WM_LBUTTONUP)<=0) return 25;
+	// A child moved to the desktop, as a drop-down list is, keeps no owner and shows where the program puts it on the screen.
+	HWND drop=CreateWindowExW(WS_EX_NOPARENTNOTIFY|WS_EX_TOOLWINDOW,klass,L"drop",WS_CHILD,0,0,20,10,parent,NULL,instance,(void *)16);
+	if (!drop || SetParent(drop,NULL)!=parent || GetWindow(drop,GW_OWNER)) return 30;
+	if (!SetWindowPos(drop,HWND_TOPMOST,130,230,20,10,SWP_SHOWWINDOW|SWP_NOACTIVATE) || !UpdateWindow(drop)) return 31;
+	// The press on the child after one on the grandchild stays a press; the next press on the child, at the same point and at once, is a
+	// double click for a class with CS_DBLCLKS and sends no parent notification.
+	for(unsigned i=0;i<6;++i) {
+		if (GetMessageW(&message,parent,WM_LBUTTONDOWN,WM_LBUTTONDBLCLK)<=0) return 25;
 		const unsigned long long expected_tag=i<2 ? 13 : 12,expected_position=i<2 ? (4|(1<<16)) : (15|(2<<16));
 		child_input[i][0]=(unsigned long long)GetWindowLongPtrW(message.hwnd,GWLP_USERDATA);
 		child_input[i][1]=message.message;child_input[i][2]=message.wParam;child_input[i][3]=message.lParam;
 		child_input[i][4]=message.pt.x;child_input[i][5]=message.pt.y;
-		if (child_input[i][0]!=expected_tag || message.message!=(i & 1 ? WM_LBUTTONUP : WM_LBUTTONDOWN) ||
+		if (child_input[i][0]!=expected_tag || message.message!=(i & 1 ? WM_LBUTTONUP : i==4 ? WM_LBUTTONDBLCLK : WM_LBUTTONDOWN) ||
 			message.wParam!=(i & 1 ? 0 : MK_LBUTTON) || (unsigned long long)message.lParam!=expected_position ||
 			message.pt.x!=(i<2 ? 106 : 120) || message.pt.y!=(i<2 ? 211 : 208)) return 26;
 		DispatchMessageW(&message);
 	}
-	if (input_notifications!=1) return 27;
+	if (input_notifications!=1 || !DestroyWindow(drop)) return 27;
 #endif
 	SetFocus(parent);if(SetFocus(grandchild)!=parent || GetFocus()!=grandchild || GetActiveWindow()!=parent || SetFocus(parent)!=grandchild) return 14;
 	if (!DestroyWindow(parent) || IsWindow(child) || IsWindow(grandchild) || errors || !UnregisterClassW(klass,instance)) return 15;

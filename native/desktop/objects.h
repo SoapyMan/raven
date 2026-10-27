@@ -253,6 +253,9 @@ struct DesktopWindow {
 	bool client_ready = true;
 	// Owner of a top-level window (a different relation from the parent of a child) and the sibling order, bottom to top.
 	uint64_t owner = 0;
+	// A child moved to the desktop (SetParent with no parent, as a drop-down list is) keeps no owner, but is shown on the host window
+	// of the root it came from: a host window of its own would be placed by the compositor rather than where the program put it.
+	uint64_t shown_on = 0;
 	uint64_t order = 0;
 	// Outer rectangle to return to when a maximized or minimized window is restored.
 	DesktopRect restore{};

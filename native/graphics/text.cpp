@@ -238,16 +238,26 @@ static std::vector<SkScalar> resolved_widths(const SkFont &font,const std::vecto
 }
 
 
-// The Marlett symbol face is drawn procedurally: frame parts, check marks, arrows and caption glyphs on a square cell.
-static bool is_marlett(std::span<const uint8_t,92> definition)
+// The Marlett symbol face is drawn procedurally: frame parts, check marks, arrows and caption glyphs on a square cell. Webdings is drawn
+// the same way for the glyphs the two faces share: the four triangles ('3' to '6') and the close cross ('r').
+static bool face_named(std::span<const uint8_t,92> definition,std::string_view name)
 {
-	static const char name[]="marlett";
-	for (size_t i=0;i<8;++i) {
+	for (size_t i=0;i<=name.size();++i) {
 		auto c=field(definition,28+i*2,2);
 		if (c>='A' && c<='Z') c+=32;
-		if (c!=uint32_t(uint8_t(name[i]))) return false;
+		if (c!=(i<name.size() ? uint32_t(uint8_t(name[i])) : 0)) return false;
 	}
 	return true;
+}
+
+static bool is_webdings(std::span<const uint8_t,92> definition)
+{
+	return face_named(definition,"webdings");
+}
+
+static bool is_marlett(std::span<const uint8_t,92> definition)
+{
+	return face_named(definition,"marlett") || is_webdings(definition);
 }
 
 static int32_t marlett_size(std::span<const uint8_t,92> definition)
@@ -384,8 +394,12 @@ std::vector<uint8_t> TextRenderer::render(std::span<const uint8_t,92> definition
 	if (is_marlett(definition)) {
 		std::vector<uint8_t> alpha(size_t(width)*height);
 		const auto size=marlett_size(definition);
-		for (size_t i=0;i<text.size();++i)
-			marlett_glyph(alpha,width,(offsets.empty() ? int32_t(i)*size : offsets[i])+origin_x,origin_y,size,char16_t(text[i]),width,height);
+		const bool webdings=is_webdings(definition);
+		for (size_t i=0;i<text.size();++i) {
+			const auto glyph=char16_t(text[i]);
+			if (webdings && glyph!='r' && (glyph<'3' || glyph>'6')) continue;
+			marlett_glyph(alpha,width,(offsets.empty() ? int32_t(i)*size : offsets[i])+origin_x,origin_y,size,glyph,width,height);
+		}
 		return alpha;
 	}
 	auto font=state->logical(definition);

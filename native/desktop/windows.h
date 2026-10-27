@@ -256,8 +256,12 @@ private:
 	// A tool window shown as a popup of its owner is moved by the program's side, as the compositor moves only toplevels: the window
 	// whose caption is being dragged, where the pointer started and where the window was then.
 	struct FrameDrag { uint64_t window=0; int32_t start_x=0,start_y=0; DesktopRect origin{}; } frame_drag;
+	// The last press in a client area, which the next press of the same button may turn into a double click.
+	struct LastPress { uint64_t window=0; uint32_t message=0,time=0; int32_t x=0,y=0; } last_press;
 	// True when the window appears as a popup of its owner's host window rather than as a host window of its own.
 	bool shown_on_owner(const DesktopWindow &window) const;
+	// The root whose host window shows a window placed by the program: its owner's, or the one a child moved to the desktop came from.
+	uint64_t host_owner(const DesktopWindow &window) const;
 	void place_pointer(const DesktopEvent &event,uint32_t message,uint32_t buttons,int64_t x,int64_t y);
 	void release_held_input();
 	std::deque<DesktopEvent> held_input;

@@ -55,13 +55,21 @@ int main(int argc,char **argv)
 			check(handle && (!root || root==handle) && title=="child surface" && width==80 && height==60 && pixels.size()==80*60*4,"child created a second host surface");
 			root=handle;++frames;last.assign(pixels.begin(),pixels.end());
 		};
-		presentation.remove=[&](uint64_t handle) { if (reject && !root) root=handle;check(root && handle==root,"child removed its parent's presentation");++removed; };
+		uint64_t dropped=0;int32_t dropped_x=-1,dropped_y=-1;
+		presentation.owned_popup=[&](uint64_t handle,uint64_t owner,int32_t x,int32_t y,uint32_t,uint32_t,std::span<const uint8_t>) {
+			check(root && owner==root,"a child moved to the desktop showed on another host window");
+			dropped=handle;dropped_x=x;dropped_y=y;
+		};
+		presentation.remove=[&](uint64_t handle) {
+			if (dropped && handle==dropped) return;
+			if (reject && !root) root=handle;check(root && handle==root,"child removed its parent's presentation");++removed;
+		};
 		bool injected=false;
 		if (input) presentation.poll=[&](std::chrono::milliseconds) {
 			std::vector<raven::DesktopEvent> events;
 			if (root && frames>=1 && !injected) {
 				injected=true;
-				for(unsigned i=0;i<4;++i) events.push_back({root,0x110,i & 1 ? 0ULL : 1ULL,0,raven::DesktopEventKind::pointer_button,i<2 ? 6 : 20,i<2 ? 11 : 8});
+				for(unsigned i=0;i<6;++i) events.push_back({root,0x110,i & 1 ? 0ULL : 1ULL,0,raven::DesktopEventKind::pointer_button,i<2 ? 6 : 20,i<2 ? 11 : 8});
 			}
 			return events;
 		};
@@ -83,6 +91,7 @@ int main(int argc,char **argv)
 			std::cerr<<"child SDK stop="<<int(result.stop)<<" value="<<result.value<<'\n';return 1;
 		}
 		check(frames && removed==1 && (!input || injected),"child presentation lifecycle differs");
+		check(!input || (dropped && dropped_x==30 && dropped_y==30),"a child moved to the desktop did not show where the program placed it");
 		const auto pixel_export=std::find_if(entry.exports.begin(),entry.exports.end(),[](const auto &symbol) {
 			return std::find(symbol.names.begin(),symbol.names.end(),"child_pixels")!=symbol.names.end();
 		});check(pixel_export!=entry.exports.end(),"child pixels export missing");
@@ -98,7 +107,7 @@ int main(int argc,char **argv)
 				std::ofstream output(std::string(prefix)+suffix,std::ios::binary);
 				output.write(reinterpret_cast<const char *>(data.data()),std::streamsize(data.size()));check(bool(output),"cannot save child evidence");
 			};
-			save("child_input",4*6*8,".input");save("child_pixels",80*60*4,".pixels");save("child_rows",128*32,".rows");
+			save("child_input",6*6*8,".input");save("child_pixels",80*60*4,".pixels");save("child_rows",128*32,".rows");
 			std::ofstream output(std::string(prefix)+".presentation",std::ios::binary);
 			output.write(reinterpret_cast<const char *>(last.data()),std::streamsize(last.size()));check(bool(output),"cannot save child presentation");
 		}

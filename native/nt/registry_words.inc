@@ -509,6 +509,8 @@
 {"GetSystemWindowsDirectoryA", 2},
 {"GetSystemWindowsDirectoryW", 2},
 {"GetTempFileNameW", 4},
+{"GetTempPath2A", 2},
+{"GetTempPath2W", 2},
 {"GetTempPathW", 2},
 {"GetTextAlign", 1},
 {"GetTextCharsetInfo", 3},

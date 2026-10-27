@@ -478,6 +478,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 			drop_surfaces(drop_surfaces, call[0]);
 		window = objects.window(call[0]);
 		window->parent = call[1];
+		window->shown_on = !call[1] && previous ? objects.window_root(previous) : 0;
 		if (call[1]) window->style = (window->style & ~0x80000000U) | 0x40000000U;
 		else window->style = (window->style & ~0x40000000U) | 0x80000000U;
 		shift_window(call[0], new_x - old_x, new_y - old_y);
