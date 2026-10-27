@@ -36,6 +36,8 @@ constexpr uint32_t attribute_stream_sizes = 4, attribute_application_protocol = 
 constexpr uint32_t record_header = 5, record_trailer = 1024, record_payload = 16384;
 constexpr uint64_t handle_tag = 0x52564e53;
 
+// A credential of the Windows logon packages holds no TLS context: local remote procedure calls only acquire one, and never build a
+// security context on it.
 struct Credential {
 	std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> tls{nullptr, SSL_CTX_free};
 	bool verify = true, check_name = true;
@@ -172,9 +174,21 @@ void register_schannel_api(ApiRegistry &registry, KernelContext &context)
 	});
 	registry.add("AcquireCredentialsHandleW", 9, [provider](ApiCall &call) {
 		const auto package = call[1] ? call.wide(call[1]) : std::u16string();
-		if (!equal_fold(package, u"Microsoft Unified Security Protocol Provider") && !equal_fold(package, u"Schannel")
+		const bool logon = equal_fold(package, u"Negotiate") || equal_fold(package, u"NTLM") || equal_fold(package, u"Kerberos");
+		if (!logon && !equal_fold(package, u"Microsoft Unified Security Protocol Provider") && !equal_fold(package, u"Schannel")
 			&& !equal_fold(package, u"Default TLS SSP")) {
 			call.ret(sec_secpkg_not_found);
+			return;
+		}
+		if (logon) {
+			std::lock_guard guard(provider->lock);
+			const uint64_t id = provider->next++;
+			provider->credentials[id] = std::make_shared<Credential>();
+			call.store_pointer(call[7], id);
+			call.store_pointer(call[7] + call.pointer_width(), handle_tag);
+			if (call[8])
+				call.store<int64_t>(call[8], INT64_MAX);
+			call.ret(sec_ok);
 			return;
 		}
 		// SCHANNEL_CRED (version 4) and SCH_CREDENTIALS (version 5) keep their flags at different places.
@@ -209,21 +223,32 @@ void register_schannel_api(ApiRegistry &registry, KernelContext &context)
 		std::lock_guard guard(provider->lock);
 		call.ret(provider->contexts.erase(handle_of(call, call[0])) ? sec_ok : sec_invalid_handle);
 	});
-	// The packages: the TLS provider under its two names, which is all AcquireCredentialsHandle serves. Each SecPkgInfo (capabilities,
-	// version, RPC identifier, largest token, name, comment) sits in one block with its strings, freed by FreeContextBuffer.
+	// The packages: the TLS provider under its two names, and the Windows logon packages, whose RPC identifiers let local remote procedure
+	// calls register and bind with them. Each SecPkgInfo (capabilities, version, RPC identifier, largest token, name, comment) sits in one
+	// block with its strings, freed by FreeContextBuffer.
 	const auto package_list = [&context](ApiCall &call, bool narrow, std::optional<std::u16string> only) -> uint32_t {
-		static constexpr std::u16string_view names[] = {u"Microsoft Unified Security Protocol Provider", u"Schannel"};
-		static constexpr std::u16string_view comment = u"Schannel Security Package";
-		std::vector<std::u16string_view> chosen;
-		for (const auto name : names)
-			if (!only || equal_fold(*only, name))
-				chosen.push_back(name);
+		struct Package {
+			std::u16string_view name, comment;
+			uint32_t capabilities;
+			uint16_t rpc;
+			uint32_t largest_token;
+		};
+		static constexpr Package packages[] = {
+			{u"Microsoft Unified Security Protocol Provider", u"Schannel Security Package", 0x107b3, 14, 0x6000},
+			{u"Schannel", u"Schannel Security Package", 0x107b3, 14, 0x6000},
+			{u"Negotiate", u"Microsoft Package Negotiator", 0x83bb3, 9, 48256},
+			{u"NTLM", u"NTLM Security Package", 0x82b37, 10, 2888},
+			{u"Kerberos", u"Microsoft Kerberos V1.0", 0x20bbbf, 16, 48000}};
+		std::vector<const Package *> chosen;
+		for (const auto &package : packages)
+			if (!only || equal_fold(*only, package.name))
+				chosen.push_back(&package);
 		if (chosen.empty())
 			return sec_secpkg_not_found;
 		const size_t width = call.pointer_width(), entry = width == 8 ? 32 : 20, unit = narrow ? 1 : 2;
 		size_t size = entry * chosen.size();
-		for (const auto name : chosen)
-			size += (name.size() + 1 + comment.size() + 1) * unit;
+		for (const auto package : chosen)
+			size += (package->name.size() + 1 + package->comment.size() + 1) * unit;
 		const uint64_t block = context.allocator.allocate(size, true);
 		if (!block)
 			return sec_insufficient_memory;
@@ -239,12 +264,12 @@ void register_schannel_api(ApiRegistry &registry, KernelContext &context)
 		};
 		for (size_t index = 0; index < chosen.size(); ++index) {
 			const uint64_t at = block + entry * index;
-			call.store<uint32_t>(at, 0x107b3);
+			call.store<uint32_t>(at, chosen[index]->capabilities);
 			call.store<uint16_t>(at + 4, 1);
-			call.store<uint16_t>(at + 6, 14);
-			call.store<uint32_t>(at + 8, 0x6000);
-			call.store_pointer(at + (width == 8 ? 16 : 12), put(chosen[index]));
-			call.store_pointer(at + (width == 8 ? 24 : 16), put(comment));
+			call.store<uint16_t>(at + 6, chosen[index]->rpc);
+			call.store<uint32_t>(at + 8, chosen[index]->largest_token);
+			call.store_pointer(at + (width == 8 ? 16 : 12), put(chosen[index]->name));
+			call.store_pointer(at + (width == 8 ? 24 : 16), put(chosen[index]->comment));
 		}
 		if (only) {
 			call.store_pointer(call[1], block);
@@ -308,6 +333,10 @@ void register_schannel_api(ApiRegistry &registry, KernelContext &context)
 					return;
 				}
 				const auto &credential = *found->second;
+				if (!credential.tls) {
+					call.ret(sec_unsupported_function);
+					return;
+				}
 				session = std::make_shared<Context>();
 				session->tls.reset(SSL_new(credential.tls.get()));
 				session->input = BIO_new(BIO_s_mem());

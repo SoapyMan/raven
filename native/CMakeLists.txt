@@ -2658,6 +2658,14 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     set_tests_properties(native_integrity_elevated_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                     add_test(NAME native_integrity_limited_x${width} COMMAND raven --run-process --execution=native ${integrity_client})
                     set_tests_properties(native_integrity_limited_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 10 ")
+                    set(rpc_auth_client ${CMAKE_CURRENT_BINARY_DIR}/rpc-auth-client${width}.exe)
+                    add_custom_command(OUTPUT ${rpc_auth_client}
+                        COMMAND ${accprop_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${accprop_entry},--no-insert-timestamp
+                            -o ${rpc_auth_client} ${LOADER_SOURCES}/rpc_auth_client.c -lrpcrt4 -lsecur32 -lkernel32
+                        DEPENDS ${LOADER_SOURCES}/rpc_auth_client.c VERBATIM)
+                    add_custom_target(rpc_auth_fixture${width} ALL DEPENDS ${rpc_auth_client})
+                    add_test(NAME native_rpc_auth_x${width} COMMAND raven --run-process --execution=native ${rpc_auth_client})
+                    set_tests_properties(native_rpc_auth_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                 endforeach()
                 # raven-deployment.dll, the PackageManager class of the Windows Runtime for each width: Raven code on the public headers.
                 set(deployment_source ${PROJECT_SOURCE_DIR}/native/upstream/raven-deployment)
