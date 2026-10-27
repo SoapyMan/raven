@@ -6,7 +6,8 @@
  *
  * The device itself comes from the d3d10core.dll Raven is given (the DXVK build in RAVEN_D3D_DIRECTORY), whose D3D10CoreCreateDevice
  * makes a device for a DXGI adapter. This library picks the adapter as Windows does for a null one, the first of a new factory, and
- * hands back the 10.1 interface of the device. Only hardware devices exist: there is no reference rasterizer or WARP behind them. */
+ * hands back the 10.1 interface of the device. Only hardware devices exist: there is no reference rasterizer behind them, and a request
+ * for WARP, the software rasterizer programs fall back to when told to avoid the GPU, is served by the hardware device. */
 #define CINTERFACE
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
@@ -37,7 +38,7 @@ __declspec(dllexport) HRESULT WINAPI D3D10CreateDevice1(IDXGIAdapter *adapter, D
 	HRESULT status;
 	if (result)
 		*result = NULL;
-	if (type != D3D10_DRIVER_TYPE_HARDWARE)
+	if (type != D3D10_DRIVER_TYPE_HARDWARE && type != D3D10_DRIVER_TYPE_WARP)
 		return DXGI_ERROR_UNSUPPORTED;
 	if (!create || !make_factory)
 		return DXGI_ERROR_UNSUPPORTED;
