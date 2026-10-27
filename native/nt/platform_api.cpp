@@ -1,3 +1,4 @@
+#include <atomic>
 #include <cstdio>
 #include "elevation.h"
 #include "hash.h"
@@ -428,6 +429,11 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("CoInitialize", 1, [initialize](ApiCall &call) { initialize(call, false, false); });
 	registry.add("CoInitializeEx", 2, [initialize](ApiCall &call) { initialize(call, !(call.u32(1) & 2), call.u32(1) & 4); });
 	registry.add("OleInitialize", 1, [initialize](ApiCall &call) { initialize(call, false, false); });
+	// CoInitializeSecurity sets the process's COM security once: the first call succeeds and any later one is too late, as on Windows.
+	registry.add("CoInitializeSecurity", 9, [](ApiCall &call) {
+		static std::atomic<bool> done{false};
+		call.ret(done.exchange(true) ? 0x80010119U : s_ok);
+	});
 	const auto uninitialize = [com, &context, ole_flags](ApiCall &call) {
 		const uint64_t thread = context.environment.teb();
 		auto found = com->threads.find(thread);

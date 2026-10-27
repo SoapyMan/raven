@@ -567,16 +567,18 @@ int main(int argc, char **argv)
 					// The user32 component supplies the built-in control classes and dialog manager to programs that use user32.
 					load_component("raven-user32.dll", {"user32.dll"});
 					// The shell component serves every graphical program, as libraries it loads later, such as a setup program's engine, import the
-					// shell, the setup API and the dialogs that the program itself may not.
-					load_component("raven-shell.dll", {"comdlg32.dll", "ole32.dll", "shell32.dll", "shlwapi.dll", "user32.dll"});
+					// shell, the setup API and the dialogs that the program itself may not. A program that imports automation creates classes
+					// through COM too, even when it loads ole32 only later.
+					load_component("raven-shell.dll", {"comdlg32.dll", "ole32.dll", "oleaut32.dll", "shell32.dll", "shlwapi.dll", "user32.dll"});
 					// The setup API component: setup information files, file queues and cabinets, for the programs that import it and for
 					// installers, whose engines and the advpack they load import it later.
 					if (const auto setup = component_directory / "raven-setupapi.dll"; !modules.all().contains("raven-setupapi.dll") &&
 						std::filesystem::exists(setup) && (imports_any({"setupapi.dll", "advpack.dll"}) ||
 						raven::installer_like(entry->image, std::filesystem::path(argv[first_file]).filename().string())))
 						modules.add("raven-setupapi.dll", read_file(setup.c_str()));
-					// Structured storage, the compound files installer packages are made of.
-					load_component("raven-storage.dll", {"ole32.dll"});
+					// Structured storage, the compound files installer packages are made of, and the memory streams of COM, which programs that
+					// import automation use too.
+					load_component("raven-storage.dll", {"ole32.dll", "oleaut32.dll"});
 					// Automation (variants, safe arrays, BSTRs, type libraries) is the component's for every program: libraries loaded later, such
 					// as the XML component, use it as much as the program does.
 					if (const auto automation = component_directory / "oleaut32.dll"; !modules.all().contains("oleaut32.dll") && std::filesystem::exists(automation))

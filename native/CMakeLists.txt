@@ -2613,6 +2613,42 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_test(NAME native_webservices_x${width} COMMAND raven --run-process --execution=native ${webservices_client})
                     set_tests_properties(native_webservices_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                 endforeach()
+                # raven-accprop.dll, the AccPropServices class of oleacc for each width: Raven code on the public headers.
+                set(accprop_source ${PROJECT_SOURCE_DIR}/native/upstream/raven-accprop)
+                set(accprop_flags -O2 -Wall -Wno-unused-parameter -ffreestanding -fno-builtin -shared -nostdlib -ffile-prefix-map=${PROJECT_SOURCE_DIR}=raven)
+                add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/raven-accprop.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-accprop.dll
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/x86
+                    COMMAND ${RAVEN_MINGW64} ${accprop_flags} -Wl,--entry,DllMain,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/raven-accprop.dll
+                        ${accprop_source}/accprop.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c -loleaut32 -lole32 -luuid -lkernel32 -lgcc
+                    COMMAND ${RAVEN_MINGW32} ${accprop_flags} -Wl,--entry,_DllMain@12,--kill-at,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-accprop.dll
+                        ${accprop_source}/accprop.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c -loleaut32 -lole32 -luuid -lkernel32 -lgcc
+                    DEPENDS ${accprop_source}/accprop.c VERBATIM)
+                add_custom_target(accprop_component ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/raven-accprop.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-accprop.dll)
+                foreach(width 64 32)
+                    set(accprop_client ${CMAKE_CURRENT_BINARY_DIR}/accprop-client${width}.exe)
+                    if(width EQUAL 64)
+                        set(accprop_compiler ${RAVEN_MINGW64})
+                        set(accprop_entry raven_entry)
+                    else()
+                        set(accprop_compiler ${RAVEN_MINGW32})
+                        set(accprop_entry _raven_entry)
+                    endif()
+                    add_custom_command(OUTPUT ${accprop_client}
+                        COMMAND ${accprop_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${accprop_entry},--no-insert-timestamp
+                            -o ${accprop_client} ${LOADER_SOURCES}/accprop_client.c -loleaut32 -luuid -lkernel32
+                        DEPENDS ${LOADER_SOURCES}/accprop_client.c VERBATIM)
+                    add_custom_target(accprop_fixture${width} ALL DEPENDS ${accprop_client} accprop_component)
+                    add_test(NAME native_accprop_x${width} COMMAND raven --run-process --execution=native ${accprop_client})
+                    set_tests_properties(native_accprop_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(stream_client ${CMAKE_CURRENT_BINARY_DIR}/stream-client${width}.exe)
+                    add_custom_command(OUTPUT ${stream_client}
+                        COMMAND ${accprop_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${accprop_entry},--no-insert-timestamp
+                            -o ${stream_client} ${LOADER_SOURCES}/stream_client.c -loleaut32 -luuid -lkernel32
+                        DEPENDS ${LOADER_SOURCES}/stream_client.c VERBATIM)
+                    add_custom_target(stream_fixture${width} ALL DEPENDS ${stream_client})
+                    add_test(NAME native_global_stream_x${width} COMMAND raven --run-process --execution=native ${stream_client})
+                    set_tests_properties(native_global_stream_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                endforeach()
                 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/x86-ucrt-client.exe
                     COMMAND ${RAVEN_MINGW32} -O2 -nostdlib -fno-stack-protector -fno-builtin
                         -Wl,--entry,_raven_entry,--no-insert-timestamp
