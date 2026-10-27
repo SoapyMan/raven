@@ -2649,6 +2649,33 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_test(NAME native_global_stream_x${width} COMMAND raven --run-process --execution=native ${stream_client})
                     set_tests_properties(native_global_stream_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                 endforeach()
+                # raven-deployment.dll, the PackageManager class of the Windows Runtime for each width: Raven code on the public headers.
+                set(deployment_source ${PROJECT_SOURCE_DIR}/native/upstream/raven-deployment)
+                add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/raven-deployment.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-deployment.dll
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/x86
+                    COMMAND ${RAVEN_MINGW64} ${accprop_flags} -Wl,--entry,DllMain,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/raven-deployment.dll
+                        ${deployment_source}/deployment.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c -lruntimeobject -lkernel32 -lgcc
+                    COMMAND ${RAVEN_MINGW32} ${accprop_flags} -Wl,--entry,_DllMain@12,--kill-at,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-deployment.dll
+                        ${deployment_source}/deployment.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c -lruntimeobject -lkernel32 -lgcc
+                    DEPENDS ${deployment_source}/deployment.c VERBATIM)
+                add_custom_target(deployment_component ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/raven-deployment.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-deployment.dll)
+                foreach(width 64 32)
+                    set(deployment_client ${CMAKE_CURRENT_BINARY_DIR}/deployment-client${width}.exe)
+                    if(width EQUAL 64)
+                        set(deployment_compiler ${RAVEN_MINGW64})
+                        set(deployment_entry raven_entry)
+                    else()
+                        set(deployment_compiler ${RAVEN_MINGW32})
+                        set(deployment_entry _raven_entry)
+                    endif()
+                    add_custom_command(OUTPUT ${deployment_client}
+                        COMMAND ${deployment_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${deployment_entry},--no-insert-timestamp
+                            -o ${deployment_client} ${LOADER_SOURCES}/deployment_client.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c -loleaut32 -lkernel32 -lgcc
+                        DEPENDS ${LOADER_SOURCES}/deployment_client.c VERBATIM)
+                    add_custom_target(deployment_fixture${width} ALL DEPENDS ${deployment_client} deployment_component)
+                    add_test(NAME native_deployment_x${width} COMMAND raven --run-process --execution=native ${deployment_client})
+                    set_tests_properties(native_deployment_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                endforeach()
                 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/x86-ucrt-client.exe
                     COMMAND ${RAVEN_MINGW32} -O2 -nostdlib -fno-stack-protector -fno-builtin
                         -Wl,--entry,_raven_entry,--no-insert-timestamp
