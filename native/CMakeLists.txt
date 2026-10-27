@@ -651,6 +651,15 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         set_tests_properties(native_menu_ownership PROPERTIES TIMEOUT 15)
         set_tests_properties(native_menu_cli native_menu_boundary PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
     endif()
+    if(RAVEN_MINGW64 AND OPENSSL_FOUND)
+        add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/bcrypt-client.exe
+            COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector -Wl,--entry,raven_entry,--no-insert-timestamp
+                -o ${CMAKE_CURRENT_BINARY_DIR}/bcrypt-client.exe ${PROJECT_SOURCE_DIR}/testdata/native_loader/bcrypt_client.c -lbcrypt -lkernel32
+            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/bcrypt_client.c VERBATIM)
+        add_custom_target(bcrypt_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/bcrypt-client.exe)
+        add_test(NAME native_bcrypt COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/bcrypt-client.exe)
+        set_tests_properties(native_bcrypt PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+    endif()
     if(RAVEN_MINGW64)
         set(CLASS_MODULE ${CMAKE_CURRENT_BINARY_DIR}/class-module.dll)
         add_custom_command(OUTPUT ${CLASS_MODULE}
@@ -2430,6 +2439,17 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                 add_custom_target(x86_socket_message_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/x86-socket-message-client.exe)
                 add_test(NAME native_socket_messages_x32 COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/x86-socket-message-client.exe)
                 set_tests_properties(native_socket_messages_x32 PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                # AES-GMAC and the secp256k1 curve through CNG, as SSH clients use them.
+                if(OPENSSL_FOUND)
+                    add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/x86-bcrypt-client.exe
+                        COMMAND ${RAVEN_MINGW32} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,_raven_entry,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/x86-bcrypt-client.exe
+                            ${LOADER_SOURCES}/bcrypt_client.c -lbcrypt -lkernel32
+                        DEPENDS ${LOADER_SOURCES}/bcrypt_client.c VERBATIM)
+                    add_custom_target(x86_bcrypt_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/x86-bcrypt-client.exe)
+                    add_test(NAME native_bcrypt_x32 COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/x86-bcrypt-client.exe)
+                    set_tests_properties(native_bcrypt_x32 PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                endif()
                 add_test(NAME native_x86_threads COMMAND raven --run-process --execution=native
                     ${CMAKE_CURRENT_BINARY_DIR}/x86-thread-client.exe)
                 set_tests_properties(native_x86_threads PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")

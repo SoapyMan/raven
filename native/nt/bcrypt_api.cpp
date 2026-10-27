@@ -48,6 +48,7 @@ struct Algorithm {
 	std::u16string name;
 	Kind kind = Kind::hash;
 	bool hmac = false;
+	bool gmac = false; // AES-GMAC: a MAC keyed by the hash secret, its nonce set as the hash's IV property
 	std::string digest; // the OpenSSL name of a hash
 	std::u16string chaining = u"ChainingModeCBC";
 	std::string curve; // the OpenSSL group of an elliptic-curve algorithm, once known
@@ -57,7 +58,7 @@ struct Algorithm {
 
 struct Hash {
 	std::shared_ptr<Algorithm> algorithm;
-	std::vector<uint8_t> secret;
+	std::vector<uint8_t> secret, nonce;
 	EVP_MD_CTX *digest = nullptr;
 	EVP_MAC_CTX *mac = nullptr;
 	~Hash()
@@ -146,6 +147,8 @@ std::string curve_group(std::u16string_view name)
 		return "secp384r1";
 	if (name == u"nistP521" || name == u"secP521r1")
 		return "secp521r1";
+	if (name == u"secP256k1")
+		return "secp256k1";
 	if (name == u"curve25519")
 		return "X25519";
 	return {};
@@ -159,6 +162,8 @@ std::u16string curve_name(const std::string &group)
 		return u"nistP384";
 	if (group == "secp521r1")
 		return u"nistP521";
+	if (group == "secp256k1")
+		return u"secP256k1";
 	if (group == "X25519")
 		return u"curve25519";
 	return {};
@@ -166,7 +171,7 @@ std::u16string curve_name(const std::string &group)
 
 size_t field_bytes(const std::string &group)
 {
-	if (group == "prime256v1" || group == "X25519")
+	if (group == "prime256v1" || group == "secp256k1" || group == "X25519")
 		return 32;
 	if (group == "secp384r1")
 		return 48;
@@ -186,6 +191,9 @@ std::shared_ptr<Algorithm> make_algorithm(std::u16string_view name, uint32_t fla
 	if (const auto found = hashes.find(name); found != hashes.end()) {
 		algorithm->kind = Kind::hash;
 		algorithm->digest = found->second;
+	} else if (name == u"AES-GMAC") {
+		algorithm->kind = Kind::hash;
+		algorithm->gmac = true;
 	} else if (name == u"AES" || name == u"3DES" || name == u"DES") {
 		algorithm->kind = Kind::cipher;
 	} else if (name == u"ECDH_P256" || name == u"ECDH_P384" || name == u"ECDH_P521" || name == u"ECDH") {
@@ -236,12 +244,16 @@ std::shared_ptr<Algorithm> algorithm_of(uint64_t handle)
 
 size_t digest_size(const Algorithm &algorithm)
 {
+	if (algorithm.gmac)
+		return 16;
 	const EVP_MD *md = EVP_get_digestbyname(algorithm.digest.c_str());
 	return md ? size_t(EVP_MD_get_size(md)) : 0;
 }
 
 size_t digest_block(const Algorithm &algorithm)
 {
+	if (algorithm.gmac)
+		return 16;
 	const EVP_MD *md = EVP_get_digestbyname(algorithm.digest.c_str());
 	return md ? size_t(EVP_MD_get_block_size(md)) : 0;
 }
@@ -253,6 +265,27 @@ size_t cipher_block(const Algorithm &algorithm)
 
 bool start_hash(Hash &hash)
 {
+	if (hash.algorithm->gmac) {
+		const size_t size = hash.secret.size();
+		if (size != 16 && size != 24 && size != 32)
+			return false;
+		EVP_MAC *mac = EVP_MAC_fetch(nullptr, "GMAC", nullptr);
+		if (!mac)
+			return false;
+		EVP_MAC_CTX_free(hash.mac);
+		hash.mac = EVP_MAC_CTX_new(mac);
+		EVP_MAC_free(mac);
+		char cipher[16];
+		std::snprintf(cipher, sizeof(cipher), "AES-%zu-GCM", size * 8);
+		// Until the program sets a nonce the MAC starts from twelve zero bytes, so that creating the hash succeeds as on Windows.
+		static const uint8_t zero_nonce[12] = {};
+		auto &nonce = hash.nonce;
+		OSSL_PARAM parameters[] = {OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_CIPHER, cipher, 0),
+			OSSL_PARAM_construct_octet_string(OSSL_MAC_PARAM_IV, nonce.empty() ? const_cast<uint8_t *>(zero_nonce) : nonce.data(),
+				nonce.empty() ? sizeof(zero_nonce) : nonce.size()),
+			OSSL_PARAM_construct_end()};
+		return hash.mac && EVP_MAC_init(hash.mac, hash.secret.data(), size, parameters) == 1;
+	}
 	if (hash.algorithm->hmac) {
 		EVP_MAC *mac = EVP_MAC_fetch(nullptr, "HMAC", nullptr);
 		if (!mac)
@@ -413,7 +446,7 @@ std::optional<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>> ec_point(EV
 
 uint32_t ec_magic(Kind kind, const std::string &group, bool private_key, bool generic)
 {
-	if (generic || group == "X25519")
+	if (generic || group == "X25519" || group == "secp256k1")
 		return kind == Kind::ecdh ? (private_key ? magic_ecdh_private_generic : magic_ecdh_public_generic)
 		                          : (private_key ? magic_ecdsa_private_generic : magic_ecdsa_public_generic);
 	const uint32_t index = group == "prime256v1" ? 1 : group == "secp384r1" ? 3 : 5;
@@ -708,6 +741,16 @@ void register_bcrypt_api(ApiRegistry &registry, KernelContext &context)
 		trace("bcrypt: set property %s %s\n", to_utf8(property).c_str(), to_utf8(text).c_str());
 		auto algorithm = table().get<Algorithm>(call[0]);
 		auto key = algorithm ? nullptr : table().get<Key>(call[0]);
+		if (auto hash = algorithm || key ? nullptr : table().get<Hash>(call[0])) {
+			// The nonce of an AES-GMAC hash, which starts it over.
+			if (property != u"IV" || !hash->algorithm->gmac || bytes.empty()) {
+				call.ret(status_not_supported);
+				return;
+			}
+			hash->nonce = bytes;
+			call.ret(start_hash(*hash) ? status_success : status_invalid_parameter);
+			return;
+		}
 		if (!algorithm && !key) {
 			call.ret(pseudo_algorithm(call[0]) ? status_invalid_parameter : status_invalid_handle);
 			return;
@@ -807,6 +850,7 @@ void register_bcrypt_api(ApiRegistry &registry, KernelContext &context)
 		auto copy = std::make_shared<Hash>();
 		copy->algorithm = hash->algorithm;
 		copy->secret = hash->secret;
+		copy->nonce = hash->nonce;
 		if (hash->mac)
 			copy->mac = EVP_MAC_CTX_dup(hash->mac);
 		else {
