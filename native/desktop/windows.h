@@ -281,7 +281,7 @@ private:
 	void paint_modern_frame(uint64_t handle,const DesktopWindow &window,const FrameLayout &layout,paint::Canvas &canvas,bool is_active,int32_t width,
 		int32_t height);
 	// The surface color of the Windows 11 caption, which also fills the frame a program extends into its client area.
-	uint32_t caption_color(bool is_active) const;
+	uint32_t caption_color(const DesktopWindow &window,bool is_active) const;
 	void paint_caption_buttons(uint64_t handle,const DesktopWindow &window,const FrameLayout &layout,paint::Canvas &canvas,bool is_active);
 	uint64_t nonclient_hit(const DesktopWindow &window,int32_t x,int32_t y) const;
 	// Menu bar item currently shown as pressed, and the window that owns it.

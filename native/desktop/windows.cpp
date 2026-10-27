@@ -236,7 +236,7 @@ void NativeWindows::present(uint64_t handle, bool force)
 		const auto &margins=*window->glass;
 		const bool whole=margins[0]<0 || margins[1]<0 || margins[2]<0 || margins[3]<0;
 		paint::Canvas canvas{glazed.data(),width,height};
-		const uint32_t title=caption_color(active==handle);
+		const uint32_t title=caption_color(*window,active==handle);
 		for (int32_t y=top;y<bottom;++y)
 			for (int32_t x=left;x<right;++x) {
 				if (!whole && x>=left+margins[0] && x<right-margins[1] && y>=top+margins[2] && y<bottom-margins[3])

@@ -236,6 +236,8 @@ struct DesktopWindow {
 	bool painted = false;
 	// The frame extended into the client area by DwmExtendFrameIntoClientArea: left, right, top and bottom widths, a negative one for all of it.
 	std::optional<std::array<int32_t,4>> glass{};
+	// The dark caption and border DWMWA_USE_IMMERSIVE_DARK_MODE asks for.
+	bool dark_frame = false;
 	uint64_t instance = 0,userdata = 0;
 	// The guest thread that created the window: its messages go to that thread's queue and its procedure runs on it.
 	uint32_t thread = 0;

@@ -326,8 +326,10 @@ constexpr uint32_t shade(uint32_t r, uint32_t g, uint32_t b) { return r | g << 8
 
 }
 
-uint32_t NativeWindows::caption_color(bool is_active) const
+uint32_t NativeWindows::caption_color(const DesktopWindow &window, bool is_active) const
 {
+	if (window.dark_frame)
+		return is_active ? shade(0x20, 0x20, 0x20) : shade(0x2b, 0x2b, 0x2b);
 	return is_active ? shade(0xef, 0xf4, 0xf9) : shade(0xf3, 0xf3, 0xf3);
 }
 
@@ -336,7 +338,8 @@ void NativeWindows::paint_caption_buttons(uint64_t handle, const DesktopWindow &
 {
 	CanvasSurface surface{canvas};
 	shapes::Shapes<CanvasSurface> shapes{surface};
-	const uint32_t ink = is_active ? shade(0x1a, 0x1a, 0x1a) : shade(0x8a, 0x8a, 0x8a);
+	const bool dark = window.dark_frame;
+	const uint32_t ink = dark ? (is_active ? shade(0xff, 0xff, 0xff) : shade(0x9a, 0x9a, 0x9a)) : is_active ? shade(0x1a, 0x1a, 0x1a) : shade(0x8a, 0x8a, 0x8a);
 	const bool maximized = (window.style & 0x01000000U) != 0;
 	const auto button = [&](DesktopRect rect, uint64_t hit) {
 		if (rect.right <= rect.left)
@@ -345,12 +348,12 @@ void NativeWindows::paint_caption_buttons(uint64_t handle, const DesktopWindow &
 		const bool enabled = hit == 20 || (window.style & (hit == 9 ? 0x10000U : 0x20000U));
 		const bool hot = enabled && hovered_frame_window == handle && hovered_frame_hit == hit;
 		const bool pressed = hot && pressed_frame_window == handle && pressed_frame_hit == hit;
-		uint32_t glyph = enabled ? ink : shade(0xc4, 0xc4, 0xc4);
+		uint32_t glyph = enabled ? ink : dark ? shade(0x5c, 0x5c, 0x5c) : shade(0xc4, 0xc4, 0xc4);
 		if (hot && hit == 20) {
 			canvas.fill(rect, pressed ? shade(0xc8, 0x3c, 0x30) : shade(0xc4, 0x2b, 0x1c));
 			glyph = shade(0xff, 0xff, 0xff);
 		} else if (hot) {
-			canvas.fill(rect, pressed ? shade(0xdc, 0xe0, 0xe5) : shade(0xe3, 0xe7, 0xec));
+			canvas.fill(rect, dark ? (pressed ? shade(0x3a, 0x3a, 0x3a) : shade(0x2d, 0x2d, 0x2d)) : pressed ? shade(0xdc, 0xe0, 0xe5) : shade(0xe3, 0xe7, 0xec));
 		}
 		const double cx = (rect.left + rect.right) / 2.0, cy = (rect.top + rect.bottom) / 2.0;
 		if (hit == 20) {
@@ -378,8 +381,9 @@ void NativeWindows::paint_modern_frame(uint64_t handle, const DesktopWindow &win
 {
 	CanvasSurface surface{canvas};
 	shapes::Shapes<CanvasSurface> shapes{surface};
-	const uint32_t title = caption_color(is_active);
-	const uint32_t ink = is_active ? shade(0x1a, 0x1a, 0x1a) : shade(0x8a, 0x8a, 0x8a);
+	const bool dark = window.dark_frame;
+	const uint32_t title = caption_color(window, is_active);
+	const uint32_t ink = dark ? (is_active ? shade(0xff, 0xff, 0xff) : shade(0x9a, 0x9a, 0x9a)) : is_active ? shade(0x1a, 0x1a, 0x1a) : shade(0x8a, 0x8a, 0x8a);
 	const int32_t client_top = layout.border + layout.caption_height + layout.menu_height;
 	// The ring, the caption and the menu bar share one surface color.
 	canvas.fill({0, 0, width, client_top}, title);
@@ -387,7 +391,8 @@ void NativeWindows::paint_modern_frame(uint64_t handle, const DesktopWindow &win
 	canvas.fill({width - layout.border, client_top, width, height}, title);
 	canvas.fill({0, height - layout.border, width, height}, title);
 	if (layout.border)
-		shapes.rounded(0, 0, width, height, 0, std::nullopt, is_active ? shade(0xb9, 0xbf, 0xc7) : shade(0xd2, 0xd2, 0xd2));
+		shapes.rounded(0, 0, width, height, 0, std::nullopt, dark ? (is_active ? shade(0x4a, 0x4a, 0x4a) : shade(0x3c, 0x3c, 0x3c))
+			: is_active ? shade(0xb9, 0xbf, 0xc7) : shade(0xd2, 0xd2, 0xd2));
 	if (layout.caption_height) {
 		auto &renderer = objects.text();
 		const int32_t text_left = layout.caption.left + (window.style & 0x80000U ? 22 : 8);
@@ -411,9 +416,11 @@ void NativeWindows::paint_modern_frame(uint64_t handle, const DesktopWindow &win
 				break;
 			const auto [label, mnemonic] = menu_label(menu->items[index].text);
 			if (open_menu_item && open_menu_window == handle && *open_menu_item == index)
-				shapes.rounded(rect.left + 1, rect.top + 2, rect.right - 1, rect.bottom - 2, 4, shade(0xe0, 0xe4, 0xea), std::nullopt);
+				shapes.rounded(rect.left + 1, rect.top + 2, rect.right - 1, rect.bottom - 2, 4, dark ? shade(0x3a, 0x3a, 0x3a) : shade(0xe0, 0xe4, 0xea),
+					std::nullopt);
 			draw_text(renderer, canvas, label, rect.left + 8, rect.top + (rect.bottom - rect.top - metrics.height) / 2,
-				(menu->items[index].state & 3) ? shade(0xa0, 0xa0, 0xa0) : shade(0x1a, 0x1a, 0x1a), mnemonic);
+				(menu->items[index].state & 3) ? (dark ? shade(0x6e, 0x6e, 0x6e) : shade(0xa0, 0xa0, 0xa0)) : dark ? shade(0xff, 0xff, 0xff)
+				: shade(0x1a, 0x1a, 0x1a), mnemonic);
 		}
 	}
 }
@@ -428,8 +435,10 @@ std::vector<DesktopRect> NativeWindows::menu_bar_items(const DesktopWindow &)
 	return {};
 }
 
-uint32_t NativeWindows::caption_color(bool is_active) const
+uint32_t NativeWindows::caption_color(const DesktopWindow &window, bool is_active) const
 {
+	if (window.dark_frame)
+		return is_active ? 0x202020U : 0x2b2b2bU;
 	return is_active ? 0xf9f4efU : 0xf3f3f3U;
 }
 

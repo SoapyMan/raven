@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <dwmapi.h>
 
 static int painted, paint_error;
 
@@ -58,7 +59,7 @@ int raven_entry(void)
 	if (*cursor == '"') { ++cursor; while (*cursor && *cursor != '"') ++cursor; if (*cursor) ++cursor; }
 	else while (*cursor && *cursor != ' ') ++cursor;
 	int width = number(&cursor), height = number(&cursor);
-	const int next_width = number(&cursor), next_height = number(&cursor);
+	const int next_width = number(&cursor), next_height = number(&cursor), dark = number(&cursor);
 	if (!width || !height) return 10;
 	HDC screen = GetDC(NULL);
 	if (!screen) return 11;
@@ -71,6 +72,11 @@ int raven_entry(void)
 	HWND window = CreateWindowExA(0, "ScreenMetrics", "Screen metrics", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
 		0, 0, 160, 120, NULL, NULL, NULL, NULL);
 	if (!window) return 12;
+	/* DWMWA_USE_IMMERSIVE_DARK_MODE: the script looks for a dark caption. */
+	if (dark) {
+		const BOOL on = TRUE;
+		if (DwmSetWindowAttribute(window, 20, &on, sizeof(on)) != S_OK || DwmSetWindowAttribute(NULL, 20, &on, sizeof(on)) != E_HANDLE) return 17;
+	}
 	ShowWindow(window, SW_MAXIMIZE);
 	if (next_width && next_height) {
 		OutputDebugStringA("Screen change ready");

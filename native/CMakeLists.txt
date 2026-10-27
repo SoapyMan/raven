@@ -2919,7 +2919,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector
                         -Wl,--entry,raven_entry,--no-insert-timestamp
                         -o ${CMAKE_CURRENT_BINARY_DIR}/screen-metrics.exe ${LOADER_SOURCES}/screen_metrics_client.c
-                        -lgdi32 -luser32 -lkernel32
+                        -ldwmapi -lgdi32 -luser32 -lkernel32
                     DEPENDS ${LOADER_SOURCES}/screen_metrics_client.c VERBATIM)
                 add_custom_target(screen_metrics_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/screen-metrics.exe)
                 if(RAVEN_MINGW32)
@@ -2927,7 +2927,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                         COMMAND ${RAVEN_MINGW32} -O2 -nostdlib -fno-builtin -fno-stack-protector
                             -Wl,--entry,_raven_entry,--no-insert-timestamp
                             -o ${CMAKE_CURRENT_BINARY_DIR}/screen-metrics32.exe ${LOADER_SOURCES}/screen_metrics_client.c
-                            -lgdi32 -luser32 -lkernel32
+                            -ldwmapi -lgdi32 -luser32 -lkernel32
                         DEPENDS ${LOADER_SOURCES}/screen_metrics_client.c VERBATIM)
                     add_custom_target(screen_metrics32_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/screen-metrics32.exe)
                 endif()
@@ -2943,7 +2943,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                 endif()
             endif()
             if(RAVEN_WAYLAND_SCREEN_TESTS)
-                foreach(mode normal scaled rotated resize)
+                foreach(mode normal scaled rotated resize dark)
                     add_test(NAME native_screen_metrics_${mode} COMMAND ${RAVEN_PIL_PYTHON} ${PROJECT_SOURCE_DIR}/scripts/native-screen-metrics.py
                         $<TARGET_FILE:raven> ${CMAKE_CURRENT_BINARY_DIR}/screen-metrics.exe ${mode}
                         ${CMAKE_CURRENT_BINARY_DIR}/screen-metrics-${mode})

@@ -201,8 +201,8 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("BufferedPaintStopAllAnimations", 1, [](ApiCall &call) { call.ret(s_ok); });
 	registry.add("BufferedPaintRenderAnimation", 2, [](ApiCall &call) { call.ret(0); });
 
-	// dwmapi: attribute requests are accepted and ignored; the frame extended into the client area is the desktop's (window_manager.cpp).
-	registry.add("DwmSetWindowAttribute", 4, [](ApiCall &call) { call.ret(s_ok); });
+	// dwmapi: attribute reads are refused; setting attributes and the frame extended into the client area are the desktop's
+	// (window_manager.cpp).
 	registry.add("DwmGetWindowAttribute", 4, [](ApiCall &call) { call.ret(e_invalidarg); });
 	// Composition is always on since Windows 8.
 	registry.add("DwmIsCompositionEnabled", 1, [](ApiCall &call) {

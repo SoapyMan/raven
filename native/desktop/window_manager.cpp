@@ -935,6 +935,23 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		if (call[3]) call.store<uint32_t>(call[3], found->second[2]);
 		call.ret(1);
 	});
+	// Of the attributes the compositor keeps for a window, the dark frame changes what is drawn; the others are accepted and ignored.
+	registry.add("DwmSetWindowAttribute", 4, [this](ApiCall &call) {
+		auto *window = objects.window(call[0]);
+		if (!window) {
+			call.ret(0x80070006U);
+			return;
+		}
+		// DWMWA_USE_IMMERSIVE_DARK_MODE is 20, and 19 on Windows 10 before build 18985.
+		if ((call.u32(1) == 20 || call.u32(1) == 19) && call[2] && call.u32(3) == 4) {
+			const bool dark = call.load<uint32_t>(call[2]) != 0;
+			if (window->dark_frame != dark) {
+				window->dark_frame = dark;
+				drawing(call[0]);
+			}
+		}
+		call.ret(0);
+	});
 	// The compositor shows the frame through the client area within these margins, wherever the program left it black (see present).
 	registry.add("DwmExtendFrameIntoClientArea", 2, [this](ApiCall &call) {
 		auto *window = objects.window(call[0]);
