@@ -1175,7 +1175,7 @@ static uint32_t served_stub_rva(std::span<const uint8_t> image, std::string_view
 		image[rva] == 0x4c && image[rva + 1] == 0x8b && image[rva + 2] == 0xd1 && image[rva + 3] == 0xb8)
 		return rva;
 	// A plain provider has no guest-side prelude in front of its trap.
-	if (rva < image.size() && (image[rva] == 0xcc || (module == "user32.dll" && image[rva] == 0x90)))
+	if (rva < image.size() && (image[rva] == 0xcc || (image[rva] == 0x90 && size_t(rva) + 15 < image.size() && image[rva + 14] == 0xcc)))
 		return rva;
 	if (const auto *prelude = block_prelude(module, name)) {
 		int32_t relative = 0;
@@ -1216,7 +1216,11 @@ uint64_t api_trap_address(const PEModule &provider, std::string_view module, std
 	const auto image = provider.loaded.data();
 	if (address < image.size() && image[address] == 0xcc)
 		return provider.loaded.base() + address;
-	return provider.loaded.base() + served_stub_rva(image, module, name, address) + fast_stub_trap_offset(module, name);
+	const uint32_t stub = served_stub_rva(image, module, name, address);
+	// A plain x64 slot keeps its breakpoint past the space hooking libraries overwrite.
+	if (!served_api(module, name) && size_t(stub) + 15 < image.size() && image[stub] == 0x90 && image[stub + 14] == 0xcc)
+		return provider.loaded.base() + stub + 14;
+	return provider.loaded.base() + stub + fast_stub_trap_offset(module, name);
 }
 
 // Offset of the slow-path breakpoint inside a fast or served stub.
@@ -1392,8 +1396,8 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 		const uint32_t service = x86 ? 0 : nt_service_number(name, exports[index]);
 		bytes[code] = 0xcc;
 		bytes[code + 1] = 0xc3;
-		// UI hooks copy an x64 entry preamble into a trampoline; keep the breakpoint beyond their 14-byte jump space.
-		if (!x86 && name == "user32.dll") {
+		// Hooking libraries copy an x64 entry preamble into a trampoline; keep the breakpoint beyond their 14-byte jump space.
+		if (!x86 && (fast_paths || name == "user32.dll")) {
 			std::fill_n(bytes.begin() + ptrdiff_t(code), 14, 0x90);
 			bytes[code + 14] = 0xcc;
 			bytes[code + 15] = 0xc3;
