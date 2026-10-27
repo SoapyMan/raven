@@ -152,28 +152,28 @@ static void terminal(const char *raven, const char *client)
 	const pid_t child = ::forkpty(&master, nullptr, nullptr, &window);
 	check(child >= 0, "no pseudo-terminal");
 	if (!child) {
-		::execl(raven, raven, "--run-process", "--execution=native", "--timeout-ms=60000", "--stdio=inherit", client, nullptr);
+		::execl(raven, raven, "--run-process", "--execution=native", "--timeout-ms=60000", "--stdio=inherit", client, "--", "--exact", nullptr);
 		::_exit(127);
 	}
 	Terminal screen(master);
 	try {
 		screen.expect("\x1b[0;91mcaf\xc3\xa9 \xf0\x9f\x99\x82\r\n\x1b[0m");
-		screen.expect("READY-LINE\r\n");
+		screen.expect("READY-LINE: type hello and press Enter\r\n");
 		screen.type("hello\r");
-		screen.expect("READY-KEYS\r\n");
+		screen.expect("READY-KEYS: press Up, x, Ctrl+Right, Esc\r\n");
 		screen.type("\x1b[Ax\x1b[1;5C");
 		::usleep(100000);
 		screen.type("\x1b");
-		screen.expect("READY-CHAR\r\n");
+		screen.expect("READY-CHAR: type q\r\n");
 		screen.type("q");
 		screen.expect("via-conout\r\n");
-		screen.expect("READY-FILE\r\n");
+		screen.expect("READY-FILE: type abc and press Enter\r\n");
 		screen.type("abc\r");
 		screen.expect("\x1b]0;Raven test\a");
-		screen.expect("READY-CTRL\r\n");
+		screen.expect("READY-CTRL: press Ctrl+C\r\n");
 		screen.type("\x03");
 		screen.expect("HANDLED\r\n");
-		screen.expect("READY-EXIT\r\n");
+		screen.expect("READY-EXIT: press Ctrl+C to end the program\r\n");
 		screen.type("\x03");
 		screen.expect("DECLINED\r\n");
 	} catch (...) {
