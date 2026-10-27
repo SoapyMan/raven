@@ -17,7 +17,8 @@ constexpr std::array exported{
 	Export{"kernel32.dll", "InitializeSRWLock", 1}, Export{"kernel32.dll", "TryAcquireSRWLockExclusive", 1},
 	Export{"kernel32.dll", "TryAcquireSRWLockShared", 1}, Export{"kernel32.dll", "InitializeConditionVariable", 1},
 	Export{"kernel32.dll", "SleepConditionVariableSRW", 4}, Export{"kernel32.dll", "WakeConditionVariable", 1},
-	Export{"kernel32.dll", "WakeAllConditionVariable", 1}, Export{"kernel32.dll", "TlsAlloc", 0}, Export{"kernel32.dll", "TlsFree", 1},
+	Export{"kernel32.dll", "WakeAllConditionVariable", 1}, Export{"kernel32.dll", "WaitOnAddress", 4}, Export{"kernel32.dll", "WakeByAddressSingle", 1},
+	Export{"kernel32.dll", "WakeByAddressAll", 1}, Export{"kernel32.dll", "TlsAlloc", 0}, Export{"kernel32.dll", "TlsFree", 1},
 	Export{"kernel32.dll", "TlsGetValue", 1}, Export{"kernel32.dll", "TlsSetValue", 2}, Export{"kernel32.dll", "CreateSemaphoreA", 4},
 	Export{"kernel32.dll", "CreateSemaphoreW", 4}, Export{"kernel32.dll", "ReleaseSemaphore", 3},
 	Export{"kernel32.dll", "WaitForMultipleObjects", 4},
@@ -225,6 +226,25 @@ bool NativeX86System::dispatch(std::string_view name)
 			if (!all)
 				break;
 		}
+		process.return_api(0);
+	} else if (name == "WaitOnAddress") {
+		// The waiter wakes once the memory no longer holds the value it compared with, so the wake calls need do nothing.
+		const auto size = uint32_t(args[2]);
+		if (size != 1 && size != 2 && size != 4 && size != 8) {
+			fail(87);
+			return true;
+		}
+		const uint64_t address = uint32_t(args[0]);
+		const auto expected = process.read_memory(uint32_t(args[1]), size);
+		std::optional<std::chrono::steady_clock::time_point> wake;
+		if (uint32_t(args[3]) != UINT32_MAX)
+			wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(uint32_t(args[3]));
+		if (!threads.block([this, address, size, expected] { return process.read_memory(address, size) != expected; }, wake)) {
+			fail(1460);
+			return true;
+		}
+		process.return_api(1);
+	} else if (name == "WakeByAddressSingle" || name == "WakeByAddressAll") {
 		process.return_api(0);
 	} else if (name == "TlsAlloc") {
 		const auto free = std::find(tls_used.begin(), tls_used.end(), false);

@@ -360,5 +360,16 @@ int raven_entry(void)
 	CloseHandle(copy);
 	CloseHandle(token);
 	(void)error;
+	/* The address waits through the synchronization API set, as programs built against it import them: a value already changed returns at
+	 * once, an unchanged one times out. */
+	HMODULE synch = LoadLibraryA("api-ms-win-core-synch-l1-2-0.dll");
+	BOOL (WINAPI *wait_on)(volatile void *, void *, SIZE_T, DWORD) = synch ? (void *)GetProcAddress(synch, "WaitOnAddress") : NULL;
+	void (WINAPI *wake_all)(void *) = synch ? (void *)GetProcAddress(synch, "WakeByAddressAll") : NULL;
+	if (!wait_on || !wake_all || !GetProcAddress(synch, "WakeByAddressSingle")) return 165;
+	LONG watched = 1, compare = 0;
+	if (!wait_on(&watched, &compare, sizeof watched, 1000)) return 166;
+	compare = 1;
+	if (wait_on(&watched, &compare, sizeof watched, 10) || GetLastError() != ERROR_TIMEOUT) return 167;
+	wake_all(&watched);
 	return 0;
 }
