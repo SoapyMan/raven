@@ -62,6 +62,147 @@ static int compare(const void *a, const void *b) { return *(const int *)a - *(co
 static int __cdecl compare_context(void *context, const void *a, const void *b) { return compare(a, b); }
 static int close_to(float value, float expected) { float d = value - expected; return d < 0.001f && d > -0.001f; }
 
+/* The bounded secure print: what fits in count characters, -1 when cut short by count or _TRUNCATE, nothing when the buffer is too small.
+   Programs built with the Windows SDK pass the legacy wide specifier option (4), where %s in a wide format is a wide string. */
+static int print_with(unsigned long long options, wchar_t *buffer, size_t size, size_t count, const wchar_t *text, __builtin_va_list arguments)
+{
+	return __stdio_common_vsnwprintf_s(options, buffer, size, count, text, 0, arguments);
+}
+
+static int print_bounded(wchar_t *buffer, size_t size, size_t count, const wchar_t *text, ...)
+{
+	__builtin_va_list arguments;
+	__builtin_va_start(arguments, text);
+	const int result = print_with(4, buffer, size, count, text, arguments);
+	__builtin_va_end(arguments);
+	return result;
+}
+
+static int print_iso(wchar_t *buffer, size_t size, const wchar_t *text, ...)
+{
+	__builtin_va_list arguments;
+	__builtin_va_start(arguments, text);
+	const int result = print_with(0, buffer, size, (size_t)-1, text, arguments);
+	__builtin_va_end(arguments);
+	return result;
+}
+
+static int bounded_print(void)
+{
+	wchar_t buffer[8];
+	if (print_bounded(buffer, 8, 7, L"%d-%s", 12, L"ab") != 5 || buffer[0] != '1' || buffer[5]) return 1;
+	if (print_bounded(buffer, 8, (size_t)-1, L"%s", L"abcdefghij") != -1 || buffer[6] != 'g' || buffer[7]) return 2;
+	if (print_bounded(buffer, 8, 3, L"%s", L"abcdef") != -1 || buffer[2] != 'c' || buffer[3]) return 3;
+	if (print_bounded(buffer, 8, 20, L"%s", L"abcdefghij") != -1 || buffer[0]) return 4;
+	if (print_bounded(buffer, 8, 7, L"%s\\%S", L"C:", "M") != 4 || buffer[1] != ':' || buffer[3] != 'M') return 5;
+	if (print_iso(buffer, 8, L"%s-%S", "ab", L"cd") != 5 || buffer[1] != 'b' || buffer[4] != 'd') return 6;
+	return 0;
+}
+
+/* Conversions, path parts and aligned blocks a larger program resolves by name: integers to text, case changes, a path split and rebuilt,
+ * a bounded multibyte conversion, a block aligned at an offset, a grown block cleared and the time since 1970. */
+static int named_helpers(void)
+{
+	HMODULE crt = GetModuleHandleA("ucrtbase.dll");
+	int (__cdecl *to_text)(unsigned long long, char *, size_t, int) = (void *)GetProcAddress(crt, "_ui64toa_s");
+	int (__cdecl *upper)(wchar_t *, size_t) = (void *)GetProcAddress(crt, "_wcsupr_s");
+	int (__cdecl *split)(const wchar_t *, wchar_t *, size_t, wchar_t *, size_t, wchar_t *, size_t, wchar_t *, size_t) =
+		(void *)GetProcAddress(crt, "_wsplitpath_s");
+	int (__cdecl *make)(wchar_t *, size_t, const wchar_t *, const wchar_t *, const wchar_t *, const wchar_t *) = (void *)GetProcAddress(crt, "_wmakepath_s");
+	int (__cdecl *to_wide)(size_t *, wchar_t *, size_t, const char *, size_t) = (void *)GetProcAddress(crt, "mbstowcs_s");
+	void *(__cdecl *offset_block)(size_t, size_t, size_t) = (void *)GetProcAddress(crt, "_aligned_offset_malloc");
+	void (__cdecl *free_aligned)(void *) = (void *)GetProcAddress(crt, "_aligned_free");
+	void *(__cdecl *grow)(void *, size_t, size_t) = (void *)GetProcAddress(crt, "_recalloc");
+	int (__cdecl *now)(struct time_of_day *, int) = (void *)GetProcAddress(crt, "_timespec64_get");
+	if (!to_text || !upper || !split || !make || !to_wide || !offset_block || !free_aligned || !grow || !now) return 1;
+	char digits[24];
+	if (to_text(18446744073709551615ULL, digits, sizeof digits, 10) || digits[0] != '1' || digits[19] != '5' || digits[20]) return 2;
+	if (to_text(255, digits, 3, 16) || digits[0] != 'f' || digits[2] || to_text(4096, digits, 3, 10) != 34 || digits[0]) return 3;
+	wchar_t text[8] = L"abc";
+	if (upper(text, 8) || text[0] != L'A' || text[2] != L'C' || upper(text, 3) != 22 || text[0]) return 4;
+	wchar_t drive[4], directory[32], name[16], extension[8], whole[64];
+	if (split(L"C:\\Program Files\\Office.C2R\\setup.exe", drive, 4, directory, 32, name, 16, extension, 8) || drive[1] != L':' ||
+		lstrcmpW(directory, L"\\Program Files\\Office.C2R\\") || lstrcmpW(name, L"setup") || lstrcmpW(extension, L".exe")) return 5;
+	if (split(L"C:\\a\\long-name.txt", drive, 4, directory, 32, name, 4, extension, 8) != 34 || drive[0] || name[0]) return 6;
+	if (make(whole, 64, L"D", L"\\Temp", L"log", L"txt") || lstrcmpW(whole, L"D:\\Temp\\log.txt")) return 7;
+	if (make(whole, 8, L"D", L"\\Temp", L"log", L"txt") != 34 || whole[0]) return 8;
+	size_t converted = 0;
+	if (to_wide(&converted, NULL, 0, "office", 0) || converted != 7) return 9;
+	if (to_wide(&converted, whole, 4, "office", (size_t)-1) != 80 || converted != 4 || lstrcmpW(whole, L"off")) return 10;
+	if (to_wide(&converted, whole, 4, "office", 6) != 34 || whole[0]) return 11;
+	char *block = offset_block(100, 64, 8);
+	if (!block || ((unsigned long long)(block + 8) & 63)) return 12;
+	free_aligned(block);
+	unsigned char *bytes = grow(NULL, 4, 1);
+	if (!bytes) return 13;
+	bytes[0] = 7;
+	bytes = grow(bytes, 64, 1);
+	if (!bytes || bytes[0] != 7 || bytes[63]) return 14;
+	free(bytes);
+	struct time_of_day time = {0, -1};
+	if (now(&time, 1) != 1 || time.seconds < 1700000000LL || time.nanoseconds < 0 || time.nanoseconds > 999999999 || now(&time, 2)) return 15;
+	return 0;
+}
+
+/* The entry points the Microsoft 365 libraries import besides; looked up by name, since import libraries lag behind the runtime. */
+static int office_helpers(void)
+{
+	HMODULE crt = GetModuleHandleA("ucrtbase.dll");
+#define FIND(name, type) __typeof__(type) name = (type)(void *)GetProcAddress(crt, #name); if (!name) return 1;
+	FIND(hypot, double (__cdecl *)(double, double))
+	FIND(fmax, double (__cdecl *)(double, double))
+	FIND(nextafter, double (__cdecl *)(double, double))
+	FIND(nextafterf, float (__cdecl *)(float, float))
+	FIND(cbrt, double (__cdecl *)(double))
+	FIND(_ecvt_s, int (__cdecl *)(char *, size_t, double, int, int *, int *))
+	FIND(_gcvt_s, int (__cdecl *)(char *, size_t, double, int))
+	FIND(_ultoa_s, int (__cdecl *)(unsigned long, char *, size_t, int))
+	FIND(_itoa_s, int (__cdecl *)(int, char *, size_t, int))
+	FIND(_mbsrchr, unsigned char *(__cdecl *)(const unsigned char *, unsigned))
+	FIND(_mbsstr, unsigned char *(__cdecl *)(const unsigned char *, const unsigned char *))
+	FIND(strncat_s, int (__cdecl *)(char *, size_t, const char *, size_t))
+	FIND(_splitpath_s, int (__cdecl *)(const char *, char *, size_t, char *, size_t, char *, size_t, char *, size_t))
+	FIND(fesetround, int (__cdecl *)(int))
+	FIND(fegetround, int (__cdecl *)(void))
+	FIND(qsort_s, void (__cdecl *)(void *, size_t, size_t, int (__cdecl *)(void *, const void *, const void *), void *))
+	FIND(_o_malloc, void *(__cdecl *)(size_t))
+	FIND(strtold, double (__cdecl *)(const char *, char **))
+	FIND(_wgetenv_s, int (__cdecl *)(size_t *, wchar_t *, size_t, const wchar_t *))
+#undef FIND
+	if (hypot(3, 4) != 5 || fmax(1, 2) != 2 || fmax(0.0 / 0.0, 2) != 2) return 2;
+	if (nextafter(1.0, 2.0) != 1.0 + 2.220446049250313e-16 || nextafter(0.0, -1.0) >= 0 || nextafterf(1.0f, 0.0f) >= 1.0f) return 3;
+	if (cbrt(27.0) != 3.0 || cbrt(-8.0) != -2.0) return 4;
+	char text[32];
+	int point, sign;
+	if (_ecvt_s(text, sizeof text, -3.14159, 4, &point, &sign) || strcmp(text, "3142") || point != 1 || !sign) return 5;
+	if (_ecvt_s(text, sizeof text, 0.000999, 2, &point, &sign) || strcmp(text, "10") || point != -2 || sign) return 6;
+	if (_gcvt_s(text, sizeof text, 1234.0, 10) || strcmp(text, "1234.") || _gcvt_s(text, sizeof text, 0.5, 6) || strcmp(text, "0.5")) return 7;
+	if (_gcvt_s(text, sizeof text, 1.5e20, 6) || strcmp(text, "1.5e+20") || _gcvt_s(text, 4, 123456.0, 6) != 34 || text[0]) return 8;
+	if (_ultoa_s(4294967295UL, text, sizeof text, 16) || strcmp(text, "ffffffff") || _itoa_s(-42, text, sizeof text, 10) || strcmp(text, "-42")) return 9;
+	if (_itoa_s(12345, text, 3, 10) != 34 || text[0]) return 10;
+	const unsigned char *path = (const unsigned char *)"C:\\Office\\root\\WWLIB.DLL";
+	if (_mbsrchr(path, '\\') != path + 14 || _mbsstr(path, (const unsigned char *)"root") != path + 10) return 11;
+	lstrcpyA(text, "ab");
+	if (strncat_s(text, 8, "cdef", 2) || strcmp(text, "abcd") || strncat_s(text, 6, "efgh", (size_t)-1) != 80 || strcmp(text, "abcde")) return 12;
+	char drive[4], directory[32], name[16], extension[8];
+	if (_splitpath_s("D:\\Temp\\log.txt", drive, 4, directory, 32, name, 16, extension, 8) || strcmp(drive, "D:") ||
+		strcmp(directory, "\\Temp\\") || strcmp(name, "log") || strcmp(extension, ".txt")) return 13;
+	if (fesetround(0x300) || fegetround() != 0x300 || fesetround(0) || fegetround() != 0) return 14;
+	int numbers[5] = {4, 1, 5, 2, 3};
+	qsort_s(numbers, 5, sizeof numbers[0], compare_context, NULL);
+	for (int at = 0; at < 5; ++at)
+		if (numbers[at] != at + 1) return 15;
+	if (strtold("2.5", NULL) != 2.5) return 17;
+	size_t length = 0;
+	wchar_t value[8];
+	SetEnvironmentVariableW(L"RAVEN_CRT_WIDE", L"wide");
+	if (_wgetenv_s(&length, value, 8, L"RAVEN_CRT_WIDE") || length != 5 || value[0] != L'w' || _wgetenv_s(&length, value, 3, L"RAVEN_CRT_WIDE") != 34) return 18;
+	void *block = _o_malloc(16);
+	if (!block) return 16;
+	free(block);
+	return 0;
+}
+
 int raven_entry(void)
 {
 	char line[64], big[64];
@@ -107,5 +248,13 @@ int raven_entry(void)
 		return 16;
 	}
 	if (reached != 1) return 17;
+	if (bounded_print() != 0) return 18;
+	/* The CRT heap is the process heap, and a block from malloc belongs to it. */
+	intptr_t (__cdecl *heap_handle)(void) = (void *)GetProcAddress(GetModuleHandleA("ucrtbase.dll"), "_get_heap_handle");
+	block = malloc(24);
+	if (!heap_handle || heap_handle() != (intptr_t)GetProcessHeap() || HeapSize((HANDLE)heap_handle(), 0, block) != 24) return 60;
+	free(block);
+	if (named_helpers() != 0) return 20 + named_helpers();
+	if ((count = office_helpers())) return 100 + (int)count;
 	return temp_names();
 }

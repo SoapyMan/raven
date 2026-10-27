@@ -142,13 +142,14 @@ CRT int sprintf(char *buffer, const char *text, ...)
 	return result;
 }
 
+/* The msvcrt wide functions read %s as a wide string: the legacy wide specifier option (4) of the common formatter. */
 CRT int _vsnwprintf(wchar_t *buffer, size_t count, const wchar_t *text, va_list arguments)
 {
 	va_list again;
 	int length;
 	wchar_t *whole;
 	va_copy(again, arguments);
-	length = __stdio_common_vswprintf(0, buffer, count, text, NULL, arguments);
+	length = __stdio_common_vswprintf(4, buffer, count, text, NULL, arguments);
 	if (length >= 0 && (size_t)length < count) {
 		va_end(again);
 		return length;
@@ -156,7 +157,7 @@ CRT int _vsnwprintf(wchar_t *buffer, size_t count, const wchar_t *text, va_list 
 	if (length >= 0 && count) {
 		whole = malloc(((size_t)length + 1) * sizeof(wchar_t));
 		if (whole) {
-			__stdio_common_vswprintf(0, whole, (size_t)length + 1, text, NULL, again);
+			__stdio_common_vswprintf(4, whole, (size_t)length + 1, text, NULL, again);
 			memcpy(buffer, whole, count * sizeof(wchar_t));
 			free(whole);
 		}
@@ -181,12 +182,12 @@ CRT int swprintf(wchar_t *buffer, const wchar_t *text, ...)
 	va_list arguments;
 	int result;
 	va_start(arguments, text);
-	result = __stdio_common_vswprintf(0, buffer, (size_t)-1 / sizeof(wchar_t), text, NULL, arguments);
+	result = __stdio_common_vswprintf(4, buffer, (size_t)-1 / sizeof(wchar_t), text, NULL, arguments);
 	va_end(arguments);
 	return result;
 }
 
-CRT int vfwprintf(void *stream, const wchar_t *text, va_list arguments) { return __stdio_common_vfwprintf(0, stream, text, NULL, arguments); }
+CRT int vfwprintf(void *stream, const wchar_t *text, va_list arguments) { return __stdio_common_vfwprintf(4, stream, text, NULL, arguments); }
 
 CRT int fwprintf(void *stream, const wchar_t *text, ...)
 {
@@ -203,7 +204,7 @@ CRT int wprintf(const wchar_t *text, ...)
 	va_list arguments;
 	int result;
 	va_start(arguments, text);
-	result = __stdio_common_vfwprintf(0, __acrt_iob_func(1), text, NULL, arguments);
+	result = __stdio_common_vfwprintf(4, __acrt_iob_func(1), text, NULL, arguments);
 	va_end(arguments);
 	return result;
 }
