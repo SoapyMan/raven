@@ -492,7 +492,7 @@ int main(int argc, char **argv)
 						if (std::filesystem::exists(component))
 							modules.add("raven-rtl.dll", read_file(component.c_str()));
 					}
-					// The libraries the program and the DLLs shipped beside it import, by lowercase file name.
+					// The libraries the program and the DLLs shipped beside it import, at once or lazily, by lowercase file name.
 					const auto imported_libraries = [&] {
 						std::set<std::string> names;
 						std::vector<std::string> pending;
@@ -509,8 +509,11 @@ int main(int argc, char **argv)
 								if (names.insert(lower(symbol.module)).second)
 									pending.push_back(lower(symbol.module));
 						};
-						for (const auto &item : modules.all())
+						for (const auto &item : modules.all()) {
 							visit(item.second->imports);
+							for (const auto &descriptor : item.second->image.delay_imports())
+								visit(descriptor.imports);
+						}
 						while (!pending.empty()) {
 							const auto name = pending.back();
 							pending.pop_back();

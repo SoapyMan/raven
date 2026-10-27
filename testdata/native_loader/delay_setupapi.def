@@ -1,0 +1,3 @@
+LIBRARY setupapi.dll
+EXPORTS
+	SetupIterateCabinetW

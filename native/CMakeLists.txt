@@ -3537,6 +3537,20 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     ${DELAY_FIXTURES}/client.obj ${DELAY_FIXTURES}/helper.obj ${DELAY_FIXTURES}/delayed.lib ${RAVEN_KERNEL32_IMPORT}
                 DEPENDS ${DELAY_FIXTURES}/client.obj ${DELAY_FIXTURES}/helper.obj ${DELAY_FIXTURES}/delayed.lib VERBATIM)
             add_custom_target(delay_pe_fixtures ALL DEPENDS ${DELAY_FIXTURES}/client.exe ${DELAY_FIXTURES}/delayed.dll)
+            # A program that delay-loads the setup API gets the component behind it as one that imports it does; its name must not look like an
+            # installer's, which gets the component anyway.
+            # lld-link delay-loads only through an import library of its own format, written here for the one function the client calls.
+            add_custom_command(OUTPUT ${DELAY_FIXTURES}/cabinet-client.exe
+                COMMAND ${RAVEN_MINGW64} -O1 -fno-builtin -fno-stack-protector -c ${LOADER_SOURCES}/delay_setupapi_client.c
+                    -o ${DELAY_FIXTURES}/cabinet-client.obj
+                COMMAND ${RAVEN_LLD_LINK} /lib /machine:x64 /def:${LOADER_SOURCES}/delay_setupapi.def /out:${DELAY_FIXTURES}/setupapi.lib
+                COMMAND ${RAVEN_LLD_LINK} /entry:raven_entry /subsystem:console /nodefaultlib /base:0x192000000
+                    /delayload:setupapi.dll /out:${DELAY_FIXTURES}/cabinet-client.exe
+                    ${DELAY_FIXTURES}/cabinet-client.obj ${DELAY_FIXTURES}/helper.obj ${DELAY_FIXTURES}/setupapi.lib ${RAVEN_KERNEL32_IMPORT}
+                DEPENDS ${LOADER_SOURCES}/delay_setupapi_client.c ${LOADER_SOURCES}/delay_setupapi.def ${DELAY_FIXTURES}/helper.obj VERBATIM)
+            add_custom_target(delay_setupapi_fixture ALL DEPENDS ${DELAY_FIXTURES}/cabinet-client.exe)
+            add_test(NAME native_delay_setupapi COMMAND raven --run-process --execution=native ${DELAY_FIXTURES}/cabinet-client.exe)
+            set_tests_properties(native_delay_setupapi PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
             add_executable(delay_loader_test nt/delay_loader_test.cpp)
             target_link_libraries(delay_loader_test PRIVATE raven_cpu)
             add_dependencies(delay_loader_test delay_pe_fixtures raven-bootstrap)
