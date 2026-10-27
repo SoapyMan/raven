@@ -1690,15 +1690,18 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				{"ole32.dll", "raven-storage.dll", "raven-storage."}, {"combase.dll", "raven-shell.dll", "raven-shell."},
 				{"uiautomationcore.dll", "raven-shell.dll", "raven-shell."}, {"runtimeobject.dll", "raven-shell.dll", "raven-shell."},
 				// The heap, critical sections and the free paths of SRW locks and condition variables run in the guest RTL.
-				{"kernel32.dll", "raven-rtl.dll", "raven-rtl."}, {"kernelbase.dll", "raven-rtl.dll", "raven-rtl."}};
+				{"kernel32.dll", "raven-rtl.dll", "raven-rtl."}, {"kernelbase.dll", "raven-rtl.dll", "raven-rtl."},
+				// The generic AVL tables of ntdll; its heap stays with the host, which calls the guest RTL itself.
+				{"ntdll.dll", "raven-rtl.dll", "raven-rtl."}};
 			for (const auto &overlay_rule : overlays) {
 				if (name != overlay_rule.library)
 					continue;
+				const bool tables_only = name == "ntdll.dll";
 				const auto overlay = modules.all().find(overlay_rule.component);
 				if (overlay == modules.all().end() || overlay->second->runtime_api)
 					continue;
 				for (auto &symbol : provider->exports)
-					if (!symbol.names.empty() && std::any_of(overlay->second->exports.begin(), overlay->second->exports.end(), [&](const auto &candidate) {
+					if (!symbol.names.empty() && (!tables_only || symbol.names.at(0).find("GenericTable") != std::string::npos) && std::any_of(overlay->second->exports.begin(), overlay->second->exports.end(), [&](const auto &candidate) {
 							return candidate.forwarder.empty() && std::find(candidate.names.begin(), candidate.names.end(), symbol.names.at(0)) != candidate.names.end();
 						}))
 						symbol.forwarder = overlay_rule.prefix + symbol.names.at(0);
