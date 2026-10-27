@@ -16,6 +16,23 @@ namespace {
 
 constexpr uint32_t locale_return_number = 0x20000000;
 
+// Locale names and their identifiers, as the public locale identifier reference lists them: the languages programs ship translations
+// for, and the neutral names of the most common. Formats and texts stay US English whatever locale a program names.
+constexpr std::pair<std::u16string_view, uint32_t> known_locales[]{{u"ar", 0x01}, {u"de", 0x07}, {u"en", 0x09}, {u"es", 0x0a}, {u"fr", 0x0c},
+	{u"it", 0x10}, {u"ja", 0x11}, {u"ko", 0x12}, {u"nl", 0x13}, {u"pl", 0x15}, {u"pt", 0x16}, {u"ru", 0x19}, {u"sv", 0x1d}, {u"tr", 0x1f},
+	{u"zh-Hans", 0x04}, {u"zh-Hant", 0x7c04}, {u"ar-SA", 0x401}, {u"bg-BG", 0x402}, {u"ca-ES", 0x403}, {u"zh-TW", 0x404}, {u"cs-CZ", 0x405},
+	{u"da-DK", 0x406}, {u"de-DE", 0x407}, {u"el-GR", 0x408}, {u"en-US", 0x409}, {u"fi-FI", 0x40b}, {u"fr-FR", 0x40c}, {u"he-IL", 0x40d},
+	{u"hu-HU", 0x40e}, {u"is-IS", 0x40f}, {u"it-IT", 0x410}, {u"ja-JP", 0x411}, {u"ko-KR", 0x412}, {u"nl-NL", 0x413}, {u"nb-NO", 0x414},
+	{u"pl-PL", 0x415}, {u"pt-BR", 0x416}, {u"ro-RO", 0x418}, {u"ru-RU", 0x419}, {u"hr-HR", 0x41a}, {u"sk-SK", 0x41b}, {u"sq-AL", 0x41c},
+	{u"sv-SE", 0x41d}, {u"th-TH", 0x41e}, {u"tr-TR", 0x41f}, {u"ur-PK", 0x420}, {u"id-ID", 0x421}, {u"uk-UA", 0x422}, {u"be-BY", 0x423},
+	{u"sl-SI", 0x424}, {u"et-EE", 0x425}, {u"lv-LV", 0x426}, {u"lt-LT", 0x427}, {u"fa-IR", 0x429}, {u"vi-VN", 0x42a}, {u"hy-AM", 0x42b},
+	{u"eu-ES", 0x42d}, {u"mk-MK", 0x42f}, {u"af-ZA", 0x436}, {u"ka-GE", 0x437}, {u"hi-IN", 0x439}, {u"ms-MY", 0x43e}, {u"kk-KZ", 0x43f},
+	{u"sw-KE", 0x441}, {u"bn-IN", 0x445}, {u"pa-IN", 0x446}, {u"gu-IN", 0x447}, {u"ta-IN", 0x449}, {u"te-IN", 0x44a}, {u"kn-IN", 0x44b},
+	{u"ml-IN", 0x44c}, {u"mr-IN", 0x44e}, {u"gl-ES", 0x456}, {u"zh-CN", 0x804}, {u"de-CH", 0x807}, {u"en-GB", 0x809}, {u"es-MX", 0x80a},
+	{u"fr-BE", 0x80c}, {u"it-CH", 0x810}, {u"nl-BE", 0x813}, {u"nn-NO", 0x814}, {u"pt-PT", 0x816}, {u"zh-HK", 0xc04}, {u"de-AT", 0xc07},
+	{u"en-AU", 0xc09}, {u"es-ES", 0xc0a}, {u"fr-CA", 0xc0c}, {u"en-CA", 0x1009}, {u"fr-CH", 0x100c}, {u"en-IE", 0x1809}, {u"sr-Latn-RS", 0x241a},
+	{u"sr-Cyrl-RS", 0x281a}, {u"en-IN", 0x4009}, {u"es-US", 0x540a}};
+
 const std::map<uint32_t, std::u16string> &locale_strings()
 {
 	static const std::map<uint32_t, std::u16string> table = [] {
@@ -439,6 +456,195 @@ std::optional<std::u16string> module_message(KernelContext &context, uint64_t ba
 	return std::nullopt;
 }
 
+// Punycode, RFC 3492: the bias adaptation after each code point is written.
+uint32_t punycode_adapt(uint32_t delta, uint32_t points, bool first)
+{
+	delta = first ? delta / 700 : delta / 2;
+	delta += delta / points;
+	uint32_t k = 0;
+	for (; delta > 35 * 26 / 2; k += 36)
+		delta /= 35;
+	return k + 36 * delta / (delta + 38);
+}
+
+std::optional<std::string> punycode_encode(const std::u32string &input)
+{
+	const auto digit = [](uint32_t value) { return char(value < 26 ? 'a' + value : '0' + value - 26); };
+	std::string output;
+	for (const auto point : input)
+		if (point < 0x80)
+			output.push_back(char(point));
+	const uint32_t basic = uint32_t(output.size());
+	uint32_t handled = basic, n = 0x80, delta = 0, bias = 72;
+	if (basic)
+		output.push_back('-');
+	while (handled < input.size()) {
+		uint32_t next = UINT32_MAX;
+		for (const auto point : input)
+			if (point >= n && point < next)
+				next = point;
+		if (uint64_t(next - n) * (handled + 1) > UINT32_MAX - delta)
+			return std::nullopt;
+		delta += (next - n) * (handled + 1);
+		n = next;
+		for (const auto point : input) {
+			if (point < n && !++delta)
+				return std::nullopt;
+			if (point != n)
+				continue;
+			uint32_t q = delta;
+			for (uint32_t k = 36;; k += 36) {
+				const uint32_t t = k <= bias ? 1 : k >= bias + 26 ? 26 : k - bias;
+				if (q < t)
+					break;
+				output.push_back(digit(t + (q - t) % (36 - t)));
+				q = (q - t) / (36 - t);
+			}
+			output.push_back(digit(q));
+			bias = punycode_adapt(delta, handled + 1, handled == basic);
+			delta = 0;
+			++handled;
+		}
+		++delta;
+		++n;
+	}
+	return output;
+}
+
+std::optional<std::u32string> punycode_decode(std::string_view input)
+{
+	std::u32string output;
+	const auto last = input.rfind('-');
+	if (last != std::string_view::npos) {
+		for (const char character : input.substr(0, last))
+			output.push_back(char32_t(uint8_t(character)));
+		input.remove_prefix(last + 1);
+	}
+	uint32_t n = 0x80, i = 0, bias = 72;
+	for (size_t at = 0; at < input.size();) {
+		const uint32_t old = i;
+		for (uint32_t weight = 1, k = 36;; k += 36) {
+			if (at >= input.size())
+				return std::nullopt;
+			const char c = input[at++];
+			const uint32_t value = c >= '0' && c <= '9' ? c - '0' + 26 : c >= 'a' && c <= 'z' ? c - 'a' : c >= 'A' && c <= 'Z' ? c - 'A' : 36;
+			if (value >= 36 || uint64_t(value) * weight > UINT32_MAX - i)
+				return std::nullopt;
+			i += value * weight;
+			const uint32_t t = k <= bias ? 1 : k >= bias + 26 ? 26 : k - bias;
+			if (value < t)
+				break;
+			if (uint64_t(weight) * (36 - t) > UINT32_MAX)
+				return std::nullopt;
+			weight *= 36 - t;
+		}
+		const uint32_t count = uint32_t(output.size()) + 1;
+		bias = punycode_adapt(i - old, count, old == 0);
+		if (i / count > 0x10ffff - n)
+			return std::nullopt;
+		n += i / count;
+		i %= count;
+		output.insert(output.begin() + i, char32_t(n));
+		++i;
+	}
+	return output;
+}
+
+// The labels of a domain name; IDNA also separates them with the ideographic and full-width full stops.
+std::vector<std::u16string> domain_labels(const std::u16string &name)
+{
+	std::vector<std::u16string> labels(1);
+	for (const auto character : name) {
+		if (character == u'.' || character == 0x3002 || character == 0xff0e || character == 0xff61)
+			labels.emplace_back();
+		else
+			labels.back().push_back(character);
+	}
+	return labels;
+}
+
+// IdnToAscii: labels with characters beyond ASCII become "xn--" and their Punycode, after case folding; empty when the name is invalid.
+std::optional<std::u16string> idn_to_ascii(const std::u16string &name)
+{
+	const auto labels = domain_labels(name);
+	std::u16string result;
+	for (size_t index = 0; index < labels.size(); ++index) {
+		const auto &label = labels[index];
+		// Only the last label may be empty, the root of a fully qualified name.
+		if (label.empty() && (index + 1 < labels.size() || labels.size() == 1))
+			return std::nullopt;
+		std::u32string points;
+		bool ascii = true;
+		for (size_t at = 0; at < label.size(); ++at) {
+			char32_t point = label[at];
+			if (point >= 0xd800 && point < 0xdc00 && at + 1 < label.size() && label[at + 1] >= 0xdc00 && label[at + 1] < 0xe000)
+				point = 0x10000 + ((point - 0xd800) << 10) + (label[++at] - 0xdc00);
+			else if (point >= 0xd800 && point < 0xe000)
+				return std::nullopt;
+			ascii &= point < 0x80;
+			points.push_back(point);
+		}
+		std::string encoded;
+		if (ascii) {
+			for (const auto point : points)
+				encoded.push_back(char(point));
+		} else {
+			for (auto &point : points)
+				if (point < 0x10000)
+					point = fold_case(char16_t(point));
+			const auto punycode = punycode_encode(points);
+			if (!punycode)
+				return std::nullopt;
+			encoded = "xn--" + *punycode;
+		}
+		if (encoded.size() > 63)
+			return std::nullopt;
+		if (index)
+			result.push_back(u'.');
+		result.append(encoded.begin(), encoded.end());
+	}
+	if (result.size() > 255)
+		return std::nullopt;
+	return result;
+}
+
+// IdnToUnicode: an ASCII name whose "xn--" labels are decoded; empty when the name is not ASCII or a label does not decode.
+std::optional<std::u16string> idn_to_unicode(const std::u16string &name)
+{
+	const auto labels = domain_labels(name);
+	std::u16string result;
+	for (size_t index = 0; index < labels.size(); ++index) {
+		const auto &label = labels[index];
+		if ((label.empty() && (index + 1 < labels.size() || labels.size() == 1)) || label.size() > 63)
+			return std::nullopt;
+		std::string ascii;
+		for (const auto character : label) {
+			if (character >= 0x80)
+				return std::nullopt;
+			ascii.push_back(char(character));
+		}
+		if (index)
+			result.push_back(u'.');
+		const bool encoded = ascii.size() > 4 && (ascii[0] | 0x20) == 'x' && (ascii[1] | 0x20) == 'n' && ascii[2] == '-' && ascii[3] == '-';
+		if (!encoded) {
+			result += label;
+			continue;
+		}
+		const auto points = punycode_decode(std::string_view(ascii).substr(4));
+		if (!points)
+			return std::nullopt;
+		for (const auto point : *points) {
+			if (point >= 0x10000) {
+				result.push_back(char16_t(0xd800 + ((point - 0x10000) >> 10)));
+				result.push_back(char16_t(0xdc00 + ((point - 0x10000) & 0x3ff)));
+			} else {
+				result.push_back(char16_t(point));
+			}
+		}
+	}
+	return result;
+}
+
 }
 
 std::vector<uint8_t> locale_table()
@@ -679,6 +885,35 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 		call.write(call[3], bytes);
 		call.ret(text.size());
 	});
+	// The input is counted or terminated, and a terminated one is answered with its terminator.
+	const auto convert_name = [](ApiCall &call, const std::function<std::optional<std::u16string>(const std::u16string &)> &convert) {
+		const int32_t length = call.i32(2), capacity = call.i32(4);
+		if (!call[1] || !length || length < -1 || capacity < 0 || (capacity && !call[3])) {
+			call.fail(87);
+			return;
+		}
+		auto result = convert(counted_wide(call, call[1], length));
+		if (!result) {
+			call.fail(123);
+			return;
+		}
+		if (length < 0)
+			result->push_back(u'\0');
+		if (!capacity) {
+			call.ret(result->size());
+			return;
+		}
+		if (result->size() > size_t(capacity)) {
+			call.fail(122);
+			return;
+		}
+		std::vector<uint8_t> bytes(result->size() * 2);
+		std::memcpy(bytes.data(), result->data(), bytes.size());
+		call.write(call[3], bytes);
+		call.ret(result->size());
+	};
+	registry.add("IdnToAscii", 5, [convert_name](ApiCall &call) { convert_name(call, idn_to_ascii); });
+	registry.add("IdnToUnicode", 5, [convert_name](ApiCall &call) { convert_name(call, idn_to_unicode); });
 	registry.add("LCMapStringA", 6, [&, map_string, ansi_page](ApiCall &call) {
 		const int32_t length = call.i32(3);
 		const auto narrow = counted_narrow(call, call[2], length);
@@ -852,9 +1087,42 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("GetUserDefaultLocaleName", 2, [locale_name](ApiCall &call) { locale_name(call, call[0], call.i32(1)); });
 	registry.add("GetSystemDefaultLocaleName", 2, [locale_name](ApiCall &call) { locale_name(call, call[0], call.i32(1)); });
-	registry.add("LocaleNameToLCID", 2, [](ApiCall &call) { call.ret(0x409); });
+	// A name the table does not know, as the culture-neutral "x-none" programs use, is not a locale. No name is the user's, the empty one
+	// the invariant locale.
+	registry.add("LocaleNameToLCID", 2, [](ApiCall &call) {
+		if (!call[0]) {
+			call.ret(0x409);
+			return;
+		}
+		const auto name = call.wide(call[0], 85);
+		if (name.empty()) {
+			call.ret(0x7f);
+			return;
+		}
+		if (name == u"!x-sys-default-locale") {
+			call.ret(0x409);
+			return;
+		}
+		for (const auto &[known, locale] : known_locales)
+			if (!compare_fold(name, known)) {
+				call.ret(locale);
+				return;
+			}
+		call.fail(87);
+	});
 	registry.add("LCIDToLocaleName", 4, [](ApiCall &call) {
-		const std::u16string name = u"en-US";
+		const uint32_t locale = call.u32(0);
+		std::u16string name;
+		if (locale == 0 || locale == 0x400 || locale == 0x800)
+			name = u"en-US";
+		else if (locale != 0x7f) {
+			const auto known = std::find_if(std::begin(known_locales), std::end(known_locales), [locale](const auto &entry) { return entry.second == locale; });
+			if (known == std::end(known_locales)) {
+				call.fail(87);
+				return;
+			}
+			name = known->first;
+		}
 		const int32_t capacity = call.i32(2);
 		if (capacity && size_t(capacity) <= name.size()) {
 			call.fail(122);

@@ -66,5 +66,12 @@ int raven_entry(void)
 		return 16;
 	if (!IsValidLocaleName(L"en-US") || !IsValidLocaleName(L"EN-us") || IsValidLocaleName(L"invalid-locale") || IsValidLocaleName(L"en-US-extra"))
 		return 17;
+	/* Names convert to identifiers and back; the culture-neutral "x-none" is no locale. */
+	WCHAR name[LOCALE_NAME_MAX_LENGTH];
+	if (LocaleNameToLCID(L"it-IT", 0) != 0x410 || LocaleNameToLCID(L"EN-us", 0) != 0x409 || LocaleNameToLCID(L"", 0) != 0x7f) return 18;
+	SetLastError(0);
+	if (LocaleNameToLCID(L"x-none", 0) || GetLastError() != ERROR_INVALID_PARAMETER) return 19;
+	if (LCIDToLocaleName(0x407, name, LOCALE_NAME_MAX_LENGTH, 0) != 6 || name[0] != 'd' || name[3] != 'D') return 20;
+	if (LCIDToLocaleName(0x1234, name, LOCALE_NAME_MAX_LENGTH, 0)) return 21;
 	return 0;
 }
