@@ -135,7 +135,8 @@ public:
 	const std::u16string &title() const { return caption; }
 	// Keeps the title and shows it in the terminal's window title; a negative descriptor only keeps it.
 	bool set_title(int descriptor, std::u16string text);
-	uint32_t input_code_page = 437, output_code_page = 437;
+	// The terminal reads and writes UTF-8, so that is the console's code page until a program chooses another.
+	uint32_t input_code_page = 65001, output_code_page = 65001;
 
 	// Puts the terminal back as it was before this process changed it.
 	void restore();

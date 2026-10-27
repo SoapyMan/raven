@@ -69,6 +69,8 @@ public:
 	uint16_t characteristics;
 	uint64_t image_base;
 	uint64_t stack_reserve;
+	// IMAGE_SUBSYSTEM_*: 2 for a windowed program, 3 for a console one.
+	uint16_t subsystem;
 	uint64_t heap_reserve;
 	uint64_t heap_commit;
 	uint32_t image_size;

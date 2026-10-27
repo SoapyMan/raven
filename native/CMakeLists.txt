@@ -2413,6 +2413,46 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         add_dependencies(console_test console_fixture raven)
         add_test(NAME native_console COMMAND console_test $<TARGET_FILE:raven> ${CMAKE_CURRENT_BINARY_DIR}/console-client.exe)
         set_tests_properties(native_console PROPERTIES TIMEOUT 60)
+        # The command processor, built for each width beside the runtime, which copies it into every prefix's system folders.
+        set(RAVEN_CMD_SOURCE ${PROJECT_SOURCE_DIR}/native/upstream/raven-cmd/cmd.c)
+        set(RAVEN_CMD_FLAGS -O2 -nostdlib -fno-builtin -fno-tree-loop-distribute-patterns -fno-stack-protector)
+        add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cmd.exe
+            COMMAND ${RAVEN_MINGW64} ${RAVEN_CMD_FLAGS} -Wl,--entry,raven_cmd_entry,--no-insert-timestamp
+                -o ${CMAKE_CURRENT_BINARY_DIR}/cmd.exe ${RAVEN_CMD_SOURCE} -lkernel32 -lgcc
+            DEPENDS ${RAVEN_CMD_SOURCE} VERBATIM)
+        set(RAVEN_CMD_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/cmd.exe)
+        find_program(RAVEN_MINGW32 i686-w64-mingw32-gcc)
+        if(RAVEN_MINGW32)
+            add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/x86/cmd.exe
+                COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/x86
+                COMMAND ${RAVEN_MINGW32} ${RAVEN_CMD_FLAGS} -Wl,--entry,_raven_cmd_entry,--no-insert-timestamp
+                    -o ${CMAKE_CURRENT_BINARY_DIR}/x86/cmd.exe ${RAVEN_CMD_SOURCE} -lkernel32 -lgcc
+                DEPENDS ${RAVEN_CMD_SOURCE} VERBATIM)
+            list(APPEND RAVEN_CMD_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/x86/cmd.exe)
+        endif()
+        add_custom_target(raven_cmd ALL DEPENDS ${RAVEN_CMD_OUTPUTS})
+        add_dependencies(raven raven_cmd)
+        # Batch files through CreateProcess, cmd /c, and commands piped to the prompt, for 64-bit and 32-bit callers.
+        add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cmd-client.exe
+            COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-tree-loop-distribute-patterns -fno-stack-protector
+                -Wl,--entry,raven_entry,--no-insert-timestamp
+                -o ${CMAKE_CURRENT_BINARY_DIR}/cmd-client.exe ${LOADER_SOURCES}/cmd_client.c -lkernel32 -lgcc
+            DEPENDS ${LOADER_SOURCES}/cmd_client.c VERBATIM)
+        set(RAVEN_CMD_CLIENTS ${CMAKE_CURRENT_BINARY_DIR}/cmd-client.exe)
+        add_test(NAME native_cmd COMMAND raven --run-process --execution=native --timeout-ms=60000 ${CMAKE_CURRENT_BINARY_DIR}/cmd-client.exe)
+        set_tests_properties(native_cmd PROPERTIES TIMEOUT 90 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        if(RAVEN_MINGW32)
+            add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/x86-cmd-client.exe
+                COMMAND ${RAVEN_MINGW32} -O2 -nostdlib -fno-builtin -fno-tree-loop-distribute-patterns -fno-stack-protector
+                    -Wl,--entry,_raven_entry,--no-insert-timestamp
+                    -o ${CMAKE_CURRENT_BINARY_DIR}/x86-cmd-client.exe ${LOADER_SOURCES}/cmd_client.c -lkernel32 -lgcc
+                DEPENDS ${LOADER_SOURCES}/cmd_client.c VERBATIM)
+            list(APPEND RAVEN_CMD_CLIENTS ${CMAKE_CURRENT_BINARY_DIR}/x86-cmd-client.exe)
+            add_test(NAME native_cmd_x32 COMMAND raven --run-process --execution=native --timeout-ms=60000
+                ${CMAKE_CURRENT_BINARY_DIR}/x86-cmd-client.exe)
+            set_tests_properties(native_cmd_x32 PROPERTIES TIMEOUT 90 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        endif()
+        add_custom_target(cmd_fixture ALL DEPENDS ${RAVEN_CMD_CLIENTS})
         find_package(Python3 COMPONENTS Interpreter QUIET)
         if(Python3_Interpreter_FOUND)
             find_program(RAVEN_MINGW32 i686-w64-mingw32-gcc)

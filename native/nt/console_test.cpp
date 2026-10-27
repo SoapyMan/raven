@@ -201,7 +201,8 @@ static void terminal(const char *raven, const char *client)
 	const pid_t child = ::forkpty(&master, nullptr, nullptr, &window);
 	check(child >= 0, "no pseudo-terminal");
 	if (!child) {
-		::execl(raven, raven, "--run-process", "--execution=native", "--timeout-ms=60000", "--stdio=inherit", client, "--", "--exact", nullptr);
+		// No --stdio=inherit: a console program started from a terminal has it for its console by default.
+		::execl(raven, raven, "--run-process", "--execution=native", "--timeout-ms=60000", client, "--", "--exact", nullptr);
 		::_exit(127);
 	}
 	Terminal screen(master);

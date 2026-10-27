@@ -60,6 +60,7 @@ PEImage::PEImage(std::span<const uint8_t> bytes) : bytes(bytes)
 		throw std::runtime_error("truncated PE optional header");
 	entry = read32(bytes, optional + 16);
 	image_base = read_le(bytes, optional + (is_64 ? 24 : 28), is_64 ? 8 : 4);
+	subsystem = uint16_t(read_le(bytes, optional + 68, 2));
 	stack_reserve = read_le(bytes, optional + 72, is_64 ? 8 : 4);
 	heap_reserve = read_le(bytes, optional + (is_64 ? 88 : 80), is_64 ? 8 : 4);
 	heap_commit = read_le(bytes, optional + (is_64 ? 96 : 84), is_64 ? 8 : 4);

@@ -22,6 +22,7 @@
     {
       "name": "Raven guest adapters",
       "paths": [
+        "native/upstream/raven-cmd/cmd.c",
         "native/upstream/raven-control/control.c",
         "native/upstream/raven-control/control.manifest",
         "native/upstream/raven-control/control.rc",
