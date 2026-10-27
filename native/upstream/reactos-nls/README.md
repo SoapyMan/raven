@@ -19,7 +19,23 @@ the qualified 65536-byte Unicode-to-CP1252 and 256-entry byte-to-Unicode tables
 are embedded. Raven's conversion
 uses that immutable data; no upstream loader or process state is adopted.
 The SBCS mapping passed every UTF-16 code unit against pinned Wine NT and Win32
-conversion. Other legacy code pages, DBCS and UTF-8 ACP remain unsupported.
+conversion.
+
+## Other Windows single-byte code pages
+
+`c_1250.txt`, `c_1251.txt` and `c_1253.txt` to `c_1258.txt` come from the same
+ReactOS revision and archive, at `media/nls/src`. Each matches Unicode's
+`WindowsBestFit/bestfit<page>.txt` byte for byte after CRLF-to-LF conversion;
+`single-byte-provenance.json` records the URLs and hashes under the same
+Unicode-3.0 terms. CP874 is left out because its ReactOS copy differs from the
+Unicode file.
+
+`sbcs.cmake` reads each text at build time into its 256-entry byte table and its
+best-fit table, sorted by character; the build checks every input hash first.
+MultiByteToWideChar, WideCharToMultiByte, IsValidCodePage and GetCPInfo use them,
+and WC_NO_BEST_FIT_CHARS keeps only characters that read back unchanged. MB_COMPOSITE
+decomposes only the CP1252 characters. Other legacy code pages, DBCS and UTF-8 ACP
+remain unsupported.
 
 MultiByteToWideChar uses this byte table for the owned ACP profile and explicit
 CP1252. MB_COMPOSITE uses the selected Unicode canonical decompositions. Explicit

@@ -113,6 +113,22 @@
       "provenance": "native/upstream/reactos-nls/data-provenance.json"
     },
     {
+      "name": "Windows single-byte code page data",
+      "paths": [
+        "native/upstream/reactos-nls/c_1250.txt",
+        "native/upstream/reactos-nls/c_1251.txt",
+        "native/upstream/reactos-nls/c_1253.txt",
+        "native/upstream/reactos-nls/c_1254.txt",
+        "native/upstream/reactos-nls/c_1255.txt",
+        "native/upstream/reactos-nls/c_1256.txt",
+        "native/upstream/reactos-nls/c_1257.txt",
+        "native/upstream/reactos-nls/c_1258.txt"
+      ],
+      "license": "Unicode-3.0",
+      "review": "reviewed",
+      "provenance": "native/upstream/reactos-nls/single-byte-provenance.json"
+    },
+    {
       "name": "ReactOS NLS converter",
       "paths": [
         "native/upstream/reactos-nls/txt2nls.cpp"

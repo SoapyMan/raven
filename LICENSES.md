@@ -17,6 +17,7 @@ GPLv3 license applied to every file.
 | ReactOS-derived PE controls, RTL, installer and optional text components | Distributed under GPL version 2 with the original GPL, LGPL, BSD and other source notices retained; pinned recipes and modifications in `scripts/provision-*.py` and `native/upstream` |
 | CP1252 build converter | GPL-2.0-or-later; build tool, not linked into the host |
 | CP1252 mapping data | Unicode-3.0; `native/upstream/reactos-nls/data-provenance.json` |
+| Code pages 1250, 1251 and 1253-1258 mapping data | Unicode-3.0; `native/upstream/reactos-nls/single-byte-provenance.json` |
 | Unicode decomposition data | Unicode terms; `native/upstream/unicode/LICENSE` and provenance.json |
 | libpng codec | PNG Reference Library License version 2; `native/upstream/libpng` |
 | Skia CPU backend | BSD-style terms and the notices of any compiled dependencies; `native/upstream/skia` |

@@ -81,6 +81,26 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_BINARY_DIR}/nls-generated/c_1252.nls
             -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/nls-generated/nls-cp1252.h -P ${NLS_SOURCE}/embed.cmake
         DEPENDS raven-txt2nls ${NLS_SOURCE}/c_1252.txt ${NLS_SOURCE}/embed.cmake VERBATIM)
+    # The other Windows single-byte code pages, which rich text and ANSI programs written for other regions convert through.
+    set(NLS_SINGLE_BYTE_PAGES 1250 1251 1253 1254 1255 1256 1257 1258)
+    set(NLS_SINGLE_BYTE_HASHES
+        d6479e3a622ae1c80eced54ce11551f6e7bf40f68d1f45ba54fb274a5e9c592e 7ced69ac085f129fc0ba78f847d0519bc47092c1625a33e35828bfed4972005a
+        15a6b99022011f70fad05221d7be4c6fccc5213bf7c75c7146bb565808e6c8d9 736c96e1f8135e7db4bec13517193ba42a81f773e6aa94df1b50c0ca25e02549
+        e73e5fcf861fc9612688dc5abc11c348a998aa9e64420b296bb9b5c6990fa3d8 554a127084d0d30e94fc6f9b2d21c616900c78bde9498c7e4bdc14ae1e4a83bf
+        efbee49b9e1094a46adc96ad8149d989aa5ab3e2c0fbaf1564516da9b49f42ab 6956c82004b36fbf480aeeba541e0abbe329a2c42964353e4e54baf1d227242b)
+    set(NLS_SINGLE_BYTE_TEXTS "")
+    foreach(PAGE HASH IN ZIP_LISTS NLS_SINGLE_BYTE_PAGES NLS_SINGLE_BYTE_HASHES)
+        file(SHA256 ${NLS_SOURCE}/c_${PAGE}.txt PAGE_HASH)
+        if(NOT PAGE_HASH STREQUAL HASH)
+            message(FATAL_ERROR "Pinned ReactOS code page ${PAGE} differs")
+        endif()
+        list(APPEND NLS_SINGLE_BYTE_TEXTS ${NLS_SOURCE}/c_${PAGE}.txt)
+    endforeach()
+    list(JOIN NLS_SINGLE_BYTE_PAGES "," NLS_SINGLE_BYTE_ARGUMENT)
+    add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/nls-generated/nls-sbcs.h
+        COMMAND ${CMAKE_COMMAND} -DSOURCE=${NLS_SOURCE} -DPAGES=${NLS_SINGLE_BYTE_ARGUMENT}
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/nls-generated/nls-sbcs.h -P ${NLS_SOURCE}/sbcs.cmake
+        DEPENDS ${NLS_SINGLE_BYTE_TEXTS} ${NLS_SOURCE}/sbcs.cmake VERBATIM)
     # The case tables of l_intl.nls, which the .NET Framework 2.0 runtime maps from the system directory of either width.
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_FOUND)
@@ -91,7 +111,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             DEPENDS ${PROJECT_SOURCE_DIR}/scripts/generate-intl-nls.py VERBATIM)
         add_custom_target(intl_nls ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/l_intl.nls ${CMAKE_CURRENT_BINARY_DIR}/x86/l_intl.nls)
     endif()
-    target_sources(raven_cpu PRIVATE nt/nls.cpp nt/multibyte.cpp nt/startup.cpp nt/launch.cpp nt/file.cpp nt/prefix.cpp nt/registry.cpp nt/advapi_api.cpp nt/msvcrt_api.cpp nt/profile_api.cpp nt/x86_process.cpp nt/x86_thread_api.cpp nt/x86_compat_api.cpp nt/x86_loader.cpp nt/x86_system_api.cpp nt/registry_words.cpp nt/x86_tls.cpp nt/x86_com.cpp nt/x86_dsound.cpp nt/x86_d3d9.cpp ${CMAKE_CURRENT_BINARY_DIR}/nls-generated/nls-cp1252.h)
+    target_sources(raven_cpu PRIVATE nt/nls.cpp nt/multibyte.cpp nt/startup.cpp nt/launch.cpp nt/file.cpp nt/prefix.cpp nt/registry.cpp nt/advapi_api.cpp nt/msvcrt_api.cpp nt/profile_api.cpp nt/x86_process.cpp nt/x86_thread_api.cpp nt/x86_compat_api.cpp nt/x86_loader.cpp nt/x86_system_api.cpp nt/registry_words.cpp nt/x86_tls.cpp nt/x86_com.cpp nt/x86_dsound.cpp nt/x86_d3d9.cpp ${CMAKE_CURRENT_BINARY_DIR}/nls-generated/nls-cp1252.h
+        ${CMAKE_CURRENT_BINARY_DIR}/nls-generated/nls-sbcs.h)
     file(SHA256 ${CMAKE_CURRENT_SOURCE_DIR}/upstream/reactos-utf8/decode.inc UTF8_SOURCE_HASH)
     if(NOT UTF8_SOURCE_HASH STREQUAL "5aafb54712b7c21db62bfdf966e5d8852200941643bde751150eb0d55a909524")
         message(FATAL_ERROR "Pinned ReactOS UTF-8 decoder differs")

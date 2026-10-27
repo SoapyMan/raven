@@ -176,6 +176,8 @@ std::u16string decode_ansi(std::string_view text, uint32_t code_page)
 {
 	if (code_page == 65001)
 		return from_utf8(text);
+	if (const auto *page = native_single_byte_page(code_page))
+		return decode_single_byte(*page, text);
 	std::u16string result;
 	for (const auto byte : text) {
 		const auto value = static_cast<unsigned char>(byte);
@@ -525,6 +527,14 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 		bool replaced = false;
 		if (page == 65001) {
 			encoded = encode_utf8(source, true);
+		} else if (const auto *single = native_single_byte_page(page)) {
+			// WC_NO_BEST_FIT_CHARS keeps only characters the page has a byte of their own for.
+			const bool exact = call.u32(1) & 0x400;
+			for (const auto character : source) {
+				const auto byte = encode_single_byte(*single, character, exact);
+				encoded.push_back(byte < 0 ? '?' : char(byte));
+				replaced |= byte < 0;
+			}
 		} else if (page == 1252 || page == 437 || page == 850 || page == 28591 || page == 20127) {
 			encoded = encode_ansi(source, 1252);
 			for (size_t at = 0; at < source.size(); ++at)
@@ -754,7 +764,9 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 
 	struct CodePage { uint32_t id, maximum; const char *name; };
 	static constexpr CodePage code_pages[] = {
-		{437, 1, "OEM United States"}, {850, 1, "OEM Multilingual Latin 1"}, {1252, 1, "Western European (Windows)"},
+		{437, 1, "OEM United States"}, {850, 1, "OEM Multilingual Latin 1"}, {1250, 1, "Central European (Windows)"}, {1251, 1, "Cyrillic (Windows)"},
+		{1252, 1, "Western European (Windows)"}, {1253, 1, "Greek (Windows)"}, {1254, 1, "Turkish (Windows)"}, {1255, 1, "Hebrew (Windows)"},
+		{1256, 1, "Arabic (Windows)"}, {1257, 1, "Baltic (Windows)"}, {1258, 1, "Vietnamese (Windows)"},
 		{28591, 1, "Western European (ISO)"}, {20127, 1, "US-ASCII"}, {65001, 4, "Unicode (UTF-8)"}
 	};
 	const auto code_page = [](uint32_t page) -> const CodePage * {
@@ -797,7 +809,8 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 	}
 	registry.add("IsValidCodePage", 1, [](ApiCall &call) {
 		const uint32_t page = call.u32(0);
-		call.ret(page == 437 || page == 850 || page == 1252 || page == 28591 || page == 20127 || page == 65001 || page == 1200 || page == 1201);
+		call.ret(page == 437 || page == 850 || page == 1252 || page == 28591 || page == 20127 || page == 65001 || page == 1200 || page == 1201 ||
+			native_single_byte_page(page) != nullptr);
 	});
 	registry.add("GetOEMCP", 0, [](ApiCall &call) { call.ret(437); });
 	registry.add("GetConsoleOutputCP", 0, [](ApiCall &call) { call.ret(437); });

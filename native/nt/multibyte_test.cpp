@@ -68,6 +68,11 @@ int main(int argc,char **argv)
 		check(call({1252,0,page+4093,3,0x400000000000ULL,0})==3,"query accessed its ignored output pointer");
 		call({1252,0,page+4093,4,output,8},0);
 		call({1252,0,0x400000000000ULL,1,output,8},0);
+		// The other single-byte pages read their bytes through their own tables.
+		const std::array<uint8_t,2> regional{0x8a,0xc0};process.write_memory(output+256,regional);
+		check(call({1250,0,output+256,2,output+512,8})==2 && process.read_memory(output+512,4)==std::vector<uint8_t>({0x60,1,0x54,1}) &&
+			call({1251,0,output+256,2,output+512,8})==2 && process.read_memory(output+512,4)==std::vector<uint8_t>({0x09,4,0x10,4}),
+			"single-byte code page conversion differs from its table");
 		process.protect_memory(output,4096,PROT_READ);
 		call({1252,0,page+4093,3,output,8},1);
 		check(process.read_memory(output,6)==std::vector<uint8_t>({'a',0,'b',0,0,0}),"readonly output was modified");
