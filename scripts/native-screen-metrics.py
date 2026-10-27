@@ -21,6 +21,7 @@ def main():
         "rotated": ((1024, 768), "1", "90", (768, 1024)),
         "resize": ((1280, 720), "1", "normal", (1280, 720)),
         "dark": ((1280, 720), "1", "normal", (1280, 720)),
+        "frames": ((1280, 720), "1", "normal", (1280, 720)),
     }[mode]
     work.mkdir(parents=True, exist_ok=True)
     runtime = Path(tempfile.mkdtemp(prefix="wl-", dir=os.environ.get("TMPDIR", str(work))))
@@ -43,7 +44,7 @@ def main():
                             "--scale", scale, "--transform", transform], env=env, check=True, timeout=10)
             guest = subprocess.Popen([str(raven), "--run-process", "--execution=native", "--timeout-ms=20000",
                                       "--desktop=wayland", "--stdio=inherit", str(client), "--",
-                                      *map(str, logical), *map(str, next_size), "1" if mode == "dark" else "0"], env=env,
+                                      *map(str, logical), *map(str, next_size), {"dark": "1", "frames": "2"}.get(mode, "0")], env=env,
                                      stdout=log, stderr=subprocess.STDOUT)
             changed = False
             deadline = time.monotonic() + 20
@@ -74,6 +75,10 @@ def main():
             caption = image.getpixel((image.width // 3, 4))
             if mode in ("normal", "dark") and (max(caption) > 0x40 if mode == "dark" else min(caption) < 0xc0):
                 raise RuntimeError(f"caption shade {caption} does not match the {mode} frame")
+            # One child's border is its own, drawn blue; the other's blue lies under the border drawn for it.
+            blue = colors.get((0, 0, 255), 0)
+            if mode == "frames" and not 2 * (100 + 40) - 4 <= blue <= 2 * (100 + 40):
+                raise RuntimeError(f"{blue} blue border pixels instead of one child's own border")
             if guest.wait(timeout=10):
                 raise RuntimeError("screen workload cleanup failed")
             print(f"Display metrics and maximized corners verified: {mode}")

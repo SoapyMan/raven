@@ -238,6 +238,8 @@ struct DesktopWindow {
 	std::optional<std::array<int32_t,4>> glass{};
 	// The dark caption and border DWMWA_USE_IMMERSIVE_DARK_MODE asks for.
 	bool dark_frame = false;
+	// A child whose program answered its last WM_NCPAINT without the default handling, drawing its border itself.
+	bool own_frame = false;
 	uint64_t instance = 0,userdata = 0;
 	// The guest thread that created the window: its messages go to that thread's queue and its procedure runs on it.
 	uint32_t thread = 0;

@@ -595,8 +595,24 @@ DesktopRect NativeWindows::update_rect(uint64_t handle,uint64_t address)
 	return rect;
 }
 
+// A child with a border hears WM_NCPAINT as BeginPaint starts, as on Windows. A program that draws that border itself, answering
+// without the default handling, keeps what it drew: the frame the surface draws for children leaves that window out.
+void NativeWindows::paint_frame(uint64_t handle)
+{
+	const auto *window=objects.window(handle);
+	if (!window || !window->parent || !((window->ex_style & 0x20200U) || (window->style & 0x800000U))) return;
+	const auto saved=framing; const bool saved_default=framed_by_default;
+	framing=handle; framed_by_default=false;
+	send(handle,0x85,1,0);
+	const bool by_default=framed_by_default;
+	framing=saved; framed_by_default=saved_default;
+	if (auto *record=objects.window(handle)) record->own_frame=!by_default;
+}
+
 NativeWindows::PaintStart NativeWindows::start_paint(uint64_t handle)
 {
+	paint_frame(handle);
+	if (!objects.window(handle)) throw std::runtime_error("frame callback destroyed its painting window");
 	const auto dc=surface_dc(handle);
 	const bool erase=objects.start_paint(handle);
 	const auto rect=objects.dc(dc)->clip->bounds();
@@ -1429,8 +1445,11 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 		return 1;
 	}
 	if (message==0x85) {
-		// The frame is repainted from window state each time the surface is presented.
-		if (objects.window_visible(args[0])) present(args[0]);
+		// The frame is repainted from window state each time the surface is presented; a child's waits for that, as its WM_NCPAINT
+		// comes while it starts painting.
+		if (args[0]==framing) framed_by_default=true;
+		if (window->parent) drawing(args[0]);
+		else if (objects.window_visible(args[0])) present(args[0]);
 		return 0;
 	}
 	if (message==0x84 && !window->parent && (frame_layout(*window).border || frame_layout(*window).caption_height || window->menu))

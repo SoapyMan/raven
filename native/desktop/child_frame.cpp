@@ -28,6 +28,10 @@ void NativeWindows::paint_child_frames(uint64_t root)
 				continue;
 			const DesktopRect rect{window->outer.left - top->outer.left, window->outer.top - top->outer.top,
 				window->outer.right - top->outer.left, window->outer.bottom - top->outer.top};
+			if (window->own_frame) {
+				self(self, handle);
+				continue;
+			}
 			// With visual styles the sunken edges become the thin light borders of Windows 11 fields and lists, or dark ones for a window
 			// given a dark theme variant.
 			if (themed() && (window->ex_style & 0x20200U || window->style & 0x800000U)) {

@@ -455,6 +455,10 @@ private:
 	DesktopRect update_rect(uint64_t window,uint64_t address);
 	struct PaintStart { uint64_t dc; DesktopRect rect; bool erase; };
 	PaintStart start_paint(uint64_t window);
+	// WM_NCPAINT for a child with a border, and the window whose WM_NCPAINT is being sent, with whether it reached the default handling.
+	void paint_frame(uint64_t window);
+	uint64_t framing = 0;
+	bool framed_by_default = false;
 	std::string text(uint64_t address);
 	std::u16string window_text(uint64_t address);
 	uint64_t copy_window_text(uint64_t window,uint64_t output,uint64_t capacity);

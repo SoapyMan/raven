@@ -2,7 +2,7 @@
 #include <windows.h>
 #include <dwmapi.h>
 
-static int painted, paint_error;
+static int painted, paint_error, frames;
 
 static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
@@ -20,6 +20,38 @@ static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPAR
 		DeleteObject(green); DeleteObject(red);
 		EndPaint(window, &paint);
 		painted = 1;
+		return 0;
+	}
+	return DefWindowProcA(window, message, wparam, lparam);
+}
+
+/* Children with a client edge that draw their border in WM_NCPAINT: the first keeps it, the second passes the message on afterwards and
+   gets the default border over it. The script counts the blue left on the screen. */
+static LRESULT CALLBACK bordered(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+{
+	if (message == WM_NCPAINT) {
+		HDC device = GetWindowDC(window);
+		HBRUSH blue = CreateSolidBrush(RGB(0, 0, 255));
+		RECT outer;
+		if (!device || !blue || !GetWindowRect(window, &outer)) paint_error = 1;
+		else {
+			OffsetRect(&outer, -outer.left, -outer.top);
+			if (!FrameRect(device, &outer, blue)) paint_error = 1;
+		}
+		DeleteObject(blue);
+		ReleaseDC(window, device);
+		++frames;
+		if (GetDlgCtrlID(window) == 2) return DefWindowProcA(window, message, wparam, lparam);
+		return 0;
+	}
+	if (message == WM_PAINT) {
+		PAINTSTRUCT paint;
+		RECT client;
+		HDC device = BeginPaint(window, &paint);
+		HBRUSH green = CreateSolidBrush(RGB(0, 255, 0));
+		if (!device || !green || !GetClientRect(window, &client) || !FillRect(device, &client, green)) paint_error = 1;
+		DeleteObject(green);
+		EndPaint(window, &paint);
 		return 0;
 	}
 	return DefWindowProcA(window, message, wparam, lparam);
@@ -59,7 +91,8 @@ int raven_entry(void)
 	if (*cursor == '"') { ++cursor; while (*cursor && *cursor != '"') ++cursor; if (*cursor) ++cursor; }
 	else while (*cursor && *cursor != ' ') ++cursor;
 	int width = number(&cursor), height = number(&cursor);
-	const int next_width = number(&cursor), next_height = number(&cursor), dark = number(&cursor);
+	/* The last number picks a variant: 1 the dark frame, 2 the bordered children. */
+	const int next_width = number(&cursor), next_height = number(&cursor), variant = number(&cursor), dark = variant == 1;
 	if (!width || !height) return 10;
 	HDC screen = GetDC(NULL);
 	if (!screen) return 11;
@@ -96,6 +129,18 @@ int raven_entry(void)
 	if (!GetClientRect(window, &client) || client.right <= 32 || client.bottom <= 32 || client.right > width || client.bottom > height) return 15;
 	UpdateWindow(window);
 	if (!painted || paint_error) return 16;
+	if (variant == 2) {
+		definition.lpfnWndProc = bordered;
+		definition.lpszClassName = "Bordered";
+		if (!RegisterClassA(&definition)) return 30;
+		for (int id = 1; id <= 2; ++id) {
+			HWND child = CreateWindowExA(WS_EX_CLIENTEDGE, "Bordered", "", WS_CHILD | WS_VISIBLE, 200 * id + 200, 300, 100, 40, window,
+				(HMENU)(INT_PTR)id, NULL, NULL);
+			if (!child) return 31;
+			UpdateWindow(child);
+		}
+		if (frames < 2 || paint_error) return 32;
+	}
 	OutputDebugStringA("Screen metrics frame presented");
 	Sleep(3000);
 	if (!DestroyWindow(window) || !ReleaseDC(NULL, screen)) return 18;

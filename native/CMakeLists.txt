@@ -2960,7 +2960,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                 endif()
             endif()
             if(RAVEN_WAYLAND_SCREEN_TESTS)
-                foreach(mode normal scaled rotated resize dark)
+                foreach(mode normal scaled rotated resize dark frames)
                     add_test(NAME native_screen_metrics_${mode} COMMAND ${RAVEN_PIL_PYTHON} ${PROJECT_SOURCE_DIR}/scripts/native-screen-metrics.py
                         $<TARGET_FILE:raven> ${CMAKE_CURRENT_BINARY_DIR}/screen-metrics.exe ${mode}
                         ${CMAKE_CURRENT_BINARY_DIR}/screen-metrics-${mode})
@@ -2971,7 +2971,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     ${CMAKE_CURRENT_BINARY_DIR}/screen-metrics-parallel)
                 set_tests_properties(native_screen_metrics_parallel PROPERTIES TIMEOUT 45 ENVIRONMENT RAVEN_PARALLEL=1)
                 if(RAVEN_MINGW32)
-                    foreach(mode normal resize)
+                    foreach(mode normal resize frames)
                         add_test(NAME native_screen_metrics_x32_${mode} COMMAND ${RAVEN_PIL_PYTHON} ${PROJECT_SOURCE_DIR}/scripts/native-screen-metrics.py
                             $<TARGET_FILE:raven> ${CMAKE_CURRENT_BINARY_DIR}/screen-metrics32.exe ${mode}
                             ${CMAKE_CURRENT_BINARY_DIR}/screen-metrics-x32-${mode})
