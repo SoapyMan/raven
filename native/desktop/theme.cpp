@@ -343,7 +343,10 @@ bool NativeWindows::themed() const
 void NativeWindows::register_theme_api(ApiRegistry &registry)
 {
 	const auto palette = [this](uint64_t theme) -> const Palette & { return dark_themes.contains(theme) ? dark : light; };
-	const auto open = [this](ApiCall &call, uint64_t window, uint64_t list) {
+	// A window a program allowed dark mode takes the dark variant of the application names it opens, as the system does while the app
+	// mode forces dark; the system itself is light, so allowing dark alone changes nothing.
+	const auto dark_allowed = [this](uint64_t window) { return app_mode == 2 && dark_allowed_windows.contains(window); };
+	const auto open = [this, dark_allowed](ApiCall &call, uint64_t window, uint64_t list) {
 		if (!themed() || (window && unthemed_windows.contains(window)) || !list) {
 			call.fail(1168, 0);
 			return;
@@ -363,9 +366,10 @@ void NativeWindows::register_theme_api(ApiRegistry &registry)
 				name.push_back(char(text[at] < 128 ? std::tolower(int(text[at])) : '?'));
 			bool dark = window && dark_windows.contains(window);
 			if (const auto colon = name.rfind("::"); colon != name.npos) {
-				dark = dark || name.find("darkmode_") != name.npos;
+				dark = dark || name.find("darkmode_") != name.npos || (window && dark_allowed(window));
 				name = name.substr(colon + 2);
 			}
+			dark = dark || (window && named_windows.contains(window) && dark_allowed(window));
 			while (!name.empty() && name.front() == ' ')
 				name.erase(name.begin());
 			if (known.contains(name)) {
@@ -414,11 +418,41 @@ void NativeWindows::register_theme_api(ApiRegistry &registry)
 			dark_windows.insert(call[0]);
 		else
 			dark_windows.erase(call[0]);
+		if (!application.empty())
+			named_windows.insert(call[0]);
+		else
+			named_windows.erase(call[0]);
 		// The window hears that its theme changed, as controls reopen their theme data then.
 		if (objects.window(call[0]))
 			send(call[0], 0x31a, 0, 0);
 		call.ret(s_ok);
 	});
+	// The dark mode functions programs take by number: the window and app permissions the theme data follows, and the system's own
+	// preference, which is light.
+	registry.add("AllowDarkModeForWindow", 2, [this](ApiCall &call) {
+		if (!objects.window(call[0])) {
+			call.ret(0);
+			return;
+		}
+		if (call.u32(1) & 0xff)
+			dark_allowed_windows.insert(call[0]);
+		else
+			dark_allowed_windows.erase(call[0]);
+		call.ret(1);
+	});
+	registry.add("IsDarkModeAllowedForWindow", 1, [this](ApiCall &call) { call.ret(dark_allowed_windows.contains(call[0])); });
+	registry.add("SetPreferredAppMode", 1, [this](ApiCall &call) {
+		const uint32_t previous = app_mode;
+		if (call.u32(0) <= 3)
+			app_mode = call.u32(0);
+		call.ret(previous);
+	});
+	registry.add("IsDarkModeAllowedForApp", 0, [this](ApiCall &call) { call.ret(app_mode == 1 || app_mode == 2); });
+	registry.add("ShouldAppsUseDarkMode", 0, [](ApiCall &call) { call.ret(0); });
+	registry.add("ShouldSystemUseDarkMode", 0, [](ApiCall &call) { call.ret(0); });
+	registry.add("GetIsImmersiveColorUsingHighContrast", 1, [](ApiCall &call) { call.ret(0); });
+	registry.add("RefreshImmersiveColorPolicyState", 0, [](ApiCall &call) { call.ret(0); });
+	registry.add("FlushMenuThemes", 0, [](ApiCall &call) { call.ret(0); });
 	registry.add("IsThemeActive", 0, [this](ApiCall &call) { call.ret(themed()); });
 	registry.add("IsAppThemed", 0, [this](ApiCall &call) { call.ret(themed()); });
 	registry.add("IsCompositionActive", 0, [this](ApiCall &call) { call.ret(themed()); });

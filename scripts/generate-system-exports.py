@@ -31,6 +31,13 @@ EXTRA_WORDS = {"kernel32": {**INTERLOCKED, "FlsGetValue2": 1, "QueryUnbiasedInte
 EXTRA["sfc"] = ["SfpDeleteCatalog", "SfpInstallCatalog"]
 EXTRA_WORDS["sfc"] = {"SfpDeleteCatalog": 1, "SfpInstallCatalog": 2, "SRSetRestorePoint": 2, "SRSetRestorePointA": 2, "SRSetRestorePointW": 2, "SfcGetNextProtectedFile": 2, "SfcIsFileProtected": 2,
                       "SfcWLEventLogoff": 1, "SfcWLEventLogon": 1, "SfpVerifyFile": 3}
+# uxtheme.dll's dark mode functions have numbers and no names, and Windows does not document them; the names and argument words are
+# those public dark mode write-ups give them.
+UXTHEME_DARK = {"RefreshImmersiveColorPolicyState": 0, "GetIsImmersiveColorUsingHighContrast": 1, "ShouldAppsUseDarkMode": 0,
+                "AllowDarkModeForWindow": 2, "SetPreferredAppMode": 1, "FlushMenuThemes": 0, "IsDarkModeAllowedForWindow": 1,
+                "ShouldSystemUseDarkMode": 0, "IsDarkModeAllowedForApp": 0}
+EXTRA["uxtheme"] = sorted(UXTHEME_DARK)
+EXTRA_WORDS["uxtheme"] = UXTHEME_DARK
 # loadperf.dll has no 32-bit import library in mingw-w64 either.
 EXTRA_WORDS["loadperf"] = {"LoadPerfCounterTextStringsA": 2, "LoadPerfCounterTextStringsW": 2, "UnloadPerfCounterTextStringsA": 2,
                            "UnloadPerfCounterTextStringsW": 2, "InstallPerfDllA": 3, "InstallPerfDllW": 3, "UpdatePerfNameFilesA": 4,

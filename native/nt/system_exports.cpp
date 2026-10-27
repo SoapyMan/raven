@@ -47,6 +47,12 @@ constexpr std::array<std::pair<std::string_view, uint16_t>, 12> dsound_ordinals{
 }};
 // The system file checker's catalog functions have numbers and no names.
 constexpr std::array<std::pair<std::string_view, uint16_t>, 2> sfc_ordinals{{{"SfpInstallCatalog", 8}, {"SfpDeleteCatalog", 9}}};
+// uxtheme.dll's dark mode functions, which programs take by these numbers.
+constexpr std::array<std::pair<std::string_view, uint16_t>, 9> uxtheme_ordinals{{
+	{"AllowDarkModeForWindow", 133}, {"FlushMenuThemes", 136}, {"GetIsImmersiveColorUsingHighContrast", 106}, {"IsDarkModeAllowedForApp", 139},
+	{"IsDarkModeAllowedForWindow", 137}, {"RefreshImmersiveColorPolicyState", 104}, {"SetPreferredAppMode", 135}, {"ShouldAppsUseDarkMode", 132},
+	{"ShouldSystemUseDarkMode", 138},
+}};
 
 }
 
@@ -91,6 +97,8 @@ std::span<const std::pair<std::string_view, uint16_t>> system_export_ordinals(st
 		return dsound_ordinals;
 	if (dll == "sfc.dll")
 		return sfc_ordinals;
+	if (dll == "uxtheme.dll")
+		return uxtheme_ordinals;
 	if (dll == "wldap32.dll")
 		return wldap32_spec_ordinals;
 	return {};
