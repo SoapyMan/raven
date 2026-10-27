@@ -315,11 +315,53 @@ void NativeWindows::menu_select(size_t level, size_t index)
 		return;
 	}
 	const auto owner = open_menu_window;
+	const auto found = system_menus.find(owner);
+	const bool system = found != system_menus.end() && popups.front().menu == found->second;
 	menu_close();
 	if (menu_tracking)
 		tracked_command = item.id;
 	else if (owner && objects.window(owner) && messages.size() < 10000)
-		queue({owner, item.id, 0, 0x111, message_time(), cursor_x, cursor_y});
+		queue({owner, item.id, 0, system ? 0x112U : 0x111U, message_time(), cursor_x, cursor_y});
+}
+
+void NativeWindows::system_menu_open(uint64_t window, int32_t x, int32_t y)
+{
+	if (menu_active() || menu_tracking || !objects.window(window))
+		return;
+	const auto handle = system_menu(window);
+	if (!handle)
+		return;
+	const auto *owner = objects.window(window);
+	// As in Windows, the standard commands are greyed for what the window's state and style rule out; items a program added keep theirs.
+	const uint32_t style = owner->style;
+	const bool maximized = style & 0x01000000U, minimized = style & 0x20000000U;
+	const auto *type = objects.window_class(owner->class_id);
+	for (auto &entry : objects.edit_menu(handle)->items) {
+		bool grayed;
+		switch (entry.id) {
+		case 0xf120: grayed = !maximized && !minimized; break;
+		case 0xf010: grayed = maximized; break;
+		case 0xf000: grayed = maximized || minimized || !(style & 0x40000U); break;
+		case 0xf020: grayed = minimized || !(style & 0x20000U); break;
+		case 0xf030: grayed = maximized || !(style & 0x10000U); break;
+		case 0xf060: grayed = type && (type->style & 0x200U); break;
+		default: continue;
+		}
+		entry.state = grayed ? entry.state | 3U : entry.state & ~3U;
+	}
+	open_menu_window = window;
+	send(window, 0x211, 0, 0);
+	send(window, 0x116, handle, 0);
+	// The high word of WM_INITMENUPOPUP's lParam says the popup is the window menu.
+	send(window, 0x117, handle, 0x10000);
+	if (!objects.window(window) || !objects.menu(handle)) {
+		open_menu_window = 0;
+		if (objects.window(window))
+			send(window, 0x212, 0, 0);
+		return;
+	}
+	menu_open_popup(handle, window, x, y);
+	present(window);
 }
 
 uint64_t NativeWindows::track_popup_menu(uint64_t menu, uint32_t flags, int32_t x, int32_t y, uint64_t window)
@@ -548,7 +590,26 @@ void NativeWindows::menu_highlight(size_t, std::optional<size_t>) {}
 void NativeWindows::menu_select(size_t, size_t) {}
 bool NativeWindows::menu_event(const DesktopEvent &) { return false; }
 uint64_t NativeWindows::track_popup_menu(uint64_t, uint32_t, int32_t, int32_t, uint64_t) { throw uint32_t(120); }
+void NativeWindows::system_menu_open(uint64_t, int32_t, int32_t) {}
 
 #endif
+
+uint64_t NativeWindows::system_menu(uint64_t window)
+{
+	if (!objects.window(window))
+		return 0;
+	auto found = system_menus.find(window);
+	if (found == system_menus.end() || !objects.menu(found->second)) {
+		DesktopMenu menu;
+		const auto item = [](uint32_t id, const char16_t *text) { return DesktopMenuItem{0, 0, id, text}; };
+		menu.items = {item(0xf120, u"&Restore"), item(0xf010, u"&Move"), item(0xf000, u"&Size"), item(0xf020, u"Mi&nimize"),
+			item(0xf030, u"Ma&ximize"), DesktopMenuItem{0x800, 0, 0, u""}, item(0xf060, u"&Close\tAlt+F4")};
+		const auto handle = objects.add(std::move(menu));
+		if (!handle)
+			return 0;
+		found = system_menus.insert_or_assign(window, handle).first;
+	}
+	return found->second;
+}
 
 }

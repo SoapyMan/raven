@@ -771,21 +771,11 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 			call.ret(0);
 			return;
 		}
-		auto found = system_menus.find(call[0]);
-		if (found != system_menus.end() && objects.menu(found->second)) {
-			call.ret(found->second);
-			return;
-		}
-		DesktopMenu menu;
-		const auto item = [](uint32_t id, const char16_t *text) { return DesktopMenuItem{0, 0, id, text}; };
-		menu.items = {item(0xf120, u"&Restore"), item(0xf010, u"&Move"), item(0xf000, u"&Size"), item(0xf020, u"Mi&nimize"),
-			item(0xf030, u"Ma&ximize"), DesktopMenuItem{0x800, 0, 0, u""}, item(0xf060, u"&Close\tAlt+F4")};
-		const auto handle = objects.add(std::move(menu));
+		const auto handle = system_menu(call[0]);
 		if (!handle) {
 			call.fail(8);
 			return;
 		}
-		system_menus[call[0]] = handle;
 		call.ret(handle);
 	});
 

@@ -101,10 +101,16 @@ void NativeWindows::hover_frame(uint64_t handle,uint64_t hit)
 
 void NativeWindows::nonclient_pointer(uint64_t handle,uint64_t hit,uint32_t message,int32_t x,int32_t y)
 {
-	// Only primary-button transitions act on the frame so far; hover and other buttons are ignored.
 	const auto *window=objects.window(handle);
 	if (!window) return;
-	constexpr uint64_t menu_hit=5,minimize_hit=8,maximize_hit=9,close_hit=20;
+	constexpr uint64_t caption_hit=2,system_menu_hit=3,menu_hit=5,minimize_hit=8,maximize_hit=9,close_hit=20;
+	// The window menu opens where the secondary button is released over the caption, or under the icon when the icon is pressed.
+	if (message==0x205 && (hit==caption_hit || hit==system_menu_hit)) { system_menu_open(handle,x,y); return; }
+	if (message==0x201 && hit==system_menu_hit) {
+		const auto layout=frame_layout(*window);
+		system_menu_open(handle,layout.icon.left,layout.caption.bottom+1);
+		return;
+	}
 	if (message==0x200) {
 		// The caption button under the pointer lights up in the Windows 11 frame.
 		hover_frame(handle,hit==minimize_hit || hit==maximize_hit || hit==close_hit ? hit : 0);
@@ -137,7 +143,6 @@ void NativeWindows::nonclient_pointer(uint64_t handle,uint64_t hit,uint32_t mess
 		else if (hit==minimize_hit && (window->style & 0x20000U)) send(handle,0x112,0xf020,0);
 		else if (hit==maximize_hit && (window->style & 0x10000U)) send(handle,0x112,0xf030,0);
 	}
-	(void)y;
 }
 
 #ifdef RAVEN_SKIA

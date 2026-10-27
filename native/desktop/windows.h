@@ -315,6 +315,9 @@ private:
 	uint64_t tracked_command=0;
 	uint64_t track_popup_menu(uint64_t menu,uint32_t flags,int32_t x,int32_t y,uint64_t window);
 	void nonclient_pointer(uint64_t window,uint64_t hit,uint32_t message,int32_t x,int32_t y);
+	// The window menu GetSystemMenu answers, made on first use; it opens from the caption and Alt+Space, and its choices are WM_SYSCOMMAND.
+	uint64_t system_menu(uint64_t window);
+	void system_menu_open(uint64_t window,int32_t x,int32_t y);
 	bool system_dispatch(std::string_view name);
 	void register_message_api(ApiRegistry &registry);
 	void register_manager_api(ApiRegistry &registry);

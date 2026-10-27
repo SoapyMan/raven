@@ -28,6 +28,20 @@ int raven_entry(void)
 		if (!GetMenuItemInfoW(bar,0,TRUE,&info) || (info.fType&MFT_RIGHTJUSTIFY)) return 15;
 		if (!DestroyMenu(bar)) return 16;
 	}
+	{
+		/* Each window has its own window menu; what a program adds to it stays, and it goes away with the window. */
+		WNDCLASSW wc={0};
+		wc.lpfnWndProc=DefWindowProcW; wc.hInstance=GetModuleHandleW(NULL); wc.lpszClassName=L"window menu";
+		if (!RegisterClassW(&wc)) return 17;
+		HWND first=CreateWindowExW(0,wc.lpszClassName,L"",WS_OVERLAPPEDWINDOW,0,0,120,90,NULL,NULL,wc.hInstance,NULL);
+		HWND fixed=CreateWindowExW(0,wc.lpszClassName,L"",WS_CAPTION|WS_SYSMENU,0,0,120,90,NULL,NULL,wc.hInstance,NULL);
+		HMENU own=first ? GetSystemMenu(first,FALSE) : NULL,other=fixed ? GetSystemMenu(fixed,FALSE) : NULL;
+		if (!own || !other || own==other || GetSystemMenu(first,FALSE)!=own || GetMenuItemCount(own)!=7) return 18;
+		if (GetMenuItemID(own,0)!=SC_RESTORE || GetMenuItemID(own,4)!=SC_MAXIMIZE || GetMenuItemID(own,6)!=SC_CLOSE) return 19;
+		if (!AppendMenuW(own,MF_STRING,0x100,L"About") || GetSystemMenu(first,FALSE)!=own || GetMenuItemCount(own)!=8 ||
+			GetMenuItemID(own,7)!=0x100) return 20;
+		if (!DestroyWindow(first) || IsMenu(own) || !IsMenu(other) || !DestroyWindow(fixed) || IsMenu(other)) return 21;
+	}
 #ifdef MENU_BOUNDARY
 	SetLastError(71);
 	if (DestroyMenu(levels) || GetLastError()!=ERROR_CALL_NOT_IMPLEMENTED || !IsMenu(levels) || GetMenuItemCount(game)!=3) return 11;

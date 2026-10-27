@@ -1363,6 +1363,11 @@ bool NativeWindows::destroy(uint64_t handle)
 	}
 	release_surface(handle);
 	painted_frames.erase(handle);
+	// The window menu goes with its window.
+	if (const auto menu=system_menus.find(handle); menu!=system_menus.end()) {
+		if (objects.menu(menu->second)) objects.erase(menu->second);
+		system_menus.erase(menu);
+	}
 	foreign_content.erase(handle);
 	foreign_black.erase(handle);
 	return objects.erase(handle);
@@ -1493,6 +1498,12 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 		return 0;
 	}
 	if (message==0x112) {
+		if ((uint32_t(args[2]) & 0xfff0U)==0xf100U && args[3]==' ' && !window->parent) {
+			// SC_KEYMENU with a space is Alt+Space: the window menu opens under the caption icon.
+			const auto layout=frame_layout(*window);
+			system_menu_open(args[0],layout.icon.left,layout.caption.bottom+1);
+			return 0;
+		}
 		if ((uint32_t(args[2]) & 0xfff0U)==0xf100U && window->menu) {
 			// SC_KEYMENU: Alt plus a menu bar mnemonic opens that menu.
 			if (const auto *bar=objects.menu(window->menu)) {
@@ -1515,6 +1526,12 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 		if ((uint32_t(args[2]) & 0xfff0U)==0xf030U) { show_window(args[0],3); return 0; }
 		if ((uint32_t(args[2]) & 0xfff0U)==0xf020U) { show_window(args[0],6); return 0; }
 		if ((uint32_t(args[2]) & 0xfff0U)==0xf120U) { show_window(args[0],9); return 0; }
+		// SC_MOVE and SC_SIZE hand the window to the compositor, which moves or sizes host windows itself.
+		if (((uint32_t(args[2]) & 0xfff0U)==0xf010U || (uint32_t(args[2]) & 0xfff0U)==0xf000U) && presentation.interactive && !window->parent &&
+			!(window->style & 0x01000000U)) {
+			presentation.interactive(args[0],(uint32_t(args[2]) & 0xfff0U)==0xf010U ? 0 : 10);
+			return 0;
+		}
 		return 0;
 	}
 	if (message==0x21) return 1;
