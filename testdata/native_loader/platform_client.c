@@ -32,6 +32,14 @@ static int same(const void *left, const void *right, int length)
 	return 1;
 }
 
+static int contains_narrow(const char *text, char part)
+{
+	for (; *text; ++text)
+		if (*text == part)
+			return 1;
+	return 0;
+}
+
 static int contains(const WCHAR *text, const WCHAR *part)
 {
 	int at, index;
@@ -152,6 +160,22 @@ int raven_entry(void)
 	if (!loopback)
 		return 7;
 	HeapFree(GetProcessHeap(), 0, adapters);
+	/* The IPv4 list leaves loopback out: a host with only loopback has no data, any other adapter has a dotted address and mask. */
+	needed = 0;
+	error = GetAdaptersInfo(NULL, &needed);
+	if (error == ERROR_BUFFER_OVERFLOW) {
+		IP_ADAPTER_INFO *infos = HeapAlloc(GetProcessHeap(), 0, needed), *info;
+		if (!infos || GetAdaptersInfo(infos, &needed) != NO_ERROR)
+			return 60;
+		for (info = infos; info; info = info->Next)
+			if (info->Type == MIB_IF_TYPE_LOOPBACK || info->AdapterName[0] != '{' || !info->IpAddressList.IpAddress.String[0] ||
+				!contains_narrow(info->IpAddressList.IpMask.String, '.') || !contains_narrow(info->GatewayList.IpAddress.String, '.'))
+				return 61;
+		HeapFree(GetProcessHeap(), 0, infos);
+	} else if (error != ERROR_NO_DATA)
+		return 62;
+	if (GetAdaptersInfo(NULL, NULL) != ERROR_INVALID_PARAMETER)
+		return 63;
 
 	if (!CryptProtectData(&plain, L"note", &entropy, NULL, NULL, 0, &sealed) || sealed.cbData <= plain.cbData)
 		return 8;

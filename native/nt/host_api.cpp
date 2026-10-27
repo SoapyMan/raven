@@ -277,6 +277,84 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 		(void)skip_anycast; (void)skip_multicast; (void)skip_dns_server;
 		call.ret(0);
 	});
+	// The IPv4 adapters in IP_ADAPTER_INFO records, loopback left out; addresses past the first of an adapter are chained after the records.
+	registry.add("GetAdaptersInfo", 2, [](ApiCall &call) {
+		if (!call[1]) {
+			call.ret(error_invalid_parameter);
+			return;
+		}
+		auto adapters = host_adapters(AF_INET);
+		adapters.erase(std::remove_if(adapters.begin(), adapters.end(), [](const Adapter &adapter) { return adapter.type == if_type_loopback; }),
+			adapters.end());
+		if (adapters.empty()) {
+			call.ret(error_no_data);
+			return;
+		}
+		const size_t width = call.pointer_width();
+		const auto align = [](size_t value, size_t boundary) { return (value + boundary - 1) & ~(boundary - 1); };
+		// IP_ADDR_STRING: next, the address and the mask as dotted text, a context.
+		const size_t string_size = align(width + 36, width);
+		const size_t name_at = width + 4, description_at = name_at + 260, address_length_at = description_at + 132, address_at = address_length_at + 4;
+		const size_t index_at = address_at + 8, type_at = index_at + 4, current_at = align(type_at + 8, width);
+		const size_t list_at = align(current_at + width, width), gateway_at = list_at + string_size, dhcp_at = gateway_at + string_size;
+		const size_t wins_at = dhcp_at + string_size, primary_at = align(wins_at + 4, width), secondary_at = primary_at + string_size;
+		const size_t record = secondary_at + string_size + 2 * width;
+		size_t extra = 0;
+		for (const auto &adapter : adapters)
+			extra += (adapter.unicast.size() - 1) * string_size;
+		const size_t needed = adapters.size() * record + extra;
+		const uint32_t capacity = call.load<uint32_t>(call[1]);
+		if (!call[0] || capacity < needed) {
+			call.store<uint32_t>(call[1], uint32_t(needed));
+			call.ret(error_buffer_overflow);
+			return;
+		}
+		std::vector<uint8_t> block(needed, 0);
+		const uint64_t base = call[0];
+		const auto put32 = [&](size_t at, uint32_t value) { std::memcpy(block.data() + at, &value, 4); };
+		const auto put_pointer = [&](size_t at, uint64_t value) { std::memcpy(block.data() + at, &value, width); };
+		const auto put_text = [&](size_t at, const std::string &text) { std::memcpy(block.data() + at, text.data(), text.size()); };
+		const auto dotted = [](const uint8_t *bytes) {
+			return std::to_string(bytes[0]) + "." + std::to_string(bytes[1]) + "." + std::to_string(bytes[2]) + "." + std::to_string(bytes[3]);
+		};
+		const auto put_string = [&](size_t at, const uint8_t *address, uint8_t prefix) {
+			const uint32_t mask = prefix ? htonl(~uint32_t(0) << (32 - prefix)) : 0;
+			put_text(at + width, address ? dotted(address) : "0.0.0.0");
+			put_text(at + width + 16, dotted(reinterpret_cast<const uint8_t *>(&mask)));
+		};
+		size_t chained = adapters.size() * record;
+		for (size_t number = 0; number < adapters.size(); ++number) {
+			const auto &adapter = adapters[number];
+			const size_t self = number * record;
+			if (number + 1 < adapters.size())
+				put_pointer(self, base + self + record);
+			put32(self + width, adapter.index);
+			char guid[64];
+			std::snprintf(guid, sizeof(guid), "{00000000-0000-0000-0000-%012x}", adapter.index);
+			put_text(self + name_at, guid);
+			put_text(self + description_at, adapter.name.substr(0, 131));
+			put32(self + address_length_at, adapter.hardware_length);
+			std::memcpy(block.data() + self + address_at, adapter.hardware, 8);
+			put32(self + index_at, adapter.index);
+			put32(self + type_at, adapter.type);
+			size_t previous = self + list_at;
+			for (size_t which = 0; which < adapter.unicast.size(); ++which) {
+				const auto &address = adapter.unicast[which];
+				size_t at = previous;
+				if (which) {
+					at = chained;
+					chained += string_size;
+					put_pointer(previous, base + at);
+				}
+				put_string(at, address.socket_address.data() + 4, address.prefix);
+				previous = at;
+			}
+			for (const size_t at : {gateway_at, dhcp_at, primary_at, secondary_at})
+				put_string(self + at, nullptr, 0);
+		}
+		call.write(base, block);
+		call.ret(0);
+	});
 	// Winsock events are ordinary manual-reset events.
 	registry.add("WSACreateEvent", 0, [&objects](ApiCall &call) {
 		const auto made = objects.create_event(0x1f0003, 0, false);
@@ -800,6 +878,20 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// The user's region is United States; the keyboard layout is US English.
 	registry.add("GetUserGeoID", 1, [](ApiCall &call) { call.ret(244); });
+	// The region's two-letter code; the count includes the terminator, and a call without a buffer asks for it.
+	registry.add("GetUserDefaultGeoName", 2, [](ApiCall &call) {
+		constexpr std::u16string_view name = u"US";
+		if (!call[0] || call.i32(1) <= 0) {
+			call.ret(call.i32(1) == 0 ? uint32_t(name.size() + 1) : 0);
+			return;
+		}
+		if (size_t(call.i32(1)) <= name.size()) {
+			call.fail(122, 0);
+			return;
+		}
+		call.put_wide(call[0], name, size_t(call.i32(1)));
+		call.ret(uint32_t(name.size() + 1));
+	});
 	registry.add("GetGeoInfoW", 5, [](ApiCall &call) {
 		if (call.u32(0) != 244) {
 			call.fail(87, 0);
