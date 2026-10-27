@@ -144,6 +144,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         target_compile_definitions(raven_cpu PRIVATE RAVEN_OPENSSL=1)
         # The Schannel package of SSPI is a TLS client over the same library.
         target_sources(raven_cpu PRIVATE nt/schannel_api.cpp)
+        # WinINet's HTTP client uses it for HTTPS.
+        target_sources(raven_cpu PRIVATE nt/wininet_api.cpp)
         target_link_libraries(raven_cpu PUBLIC OpenSSL::SSL)
     endif()
     # Font files are read and rasterized for the DirectWrite component with FreeType when it is there.

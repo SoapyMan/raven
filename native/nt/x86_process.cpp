@@ -105,6 +105,12 @@ constexpr std::array shared_exports{
 // More shared handlers a 32-bit program may use as they are; their words come from the registry and their library from the public
 // export lists. Anything with a pointer-width structure, a 64-bit argument or a callback into x64 conventions is not here.
 constexpr std::string_view shared_allowed[] = {
+	// WinINet: the accept types array is read at the program's pointer width.
+	"InternetOpenW", "InternetOpenA", "InternetConnectW", "InternetConnectA", "HttpOpenRequestW", "HttpOpenRequestA",
+	"HttpAddRequestHeadersW", "HttpAddRequestHeadersA", "HttpSendRequestW", "HttpSendRequestA", "InternetOpenUrlW", "InternetOpenUrlA",
+	"InternetReadFile", "InternetQueryDataAvailable", "HttpQueryInfoW", "HttpQueryInfoA", "InternetCloseHandle", "InternetSetOptionW",
+	"InternetSetOptionA", "InternetQueryOptionW", "InternetQueryOptionA", "InternetSetStatusCallbackW", "InternetSetStatusCallbackA",
+	"InternetSetStatusCallback", "InternetGetConnectedState", "InternetGetLastResponseInfoW", "InternetGetLastResponseInfoA",
 	"WaitForSingleObjectEx",
 	// ICONINFO is read at the program's pointer width.
 	"CreateIconIndirect",
@@ -1196,6 +1202,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	register_security_api(shared_api, kernel);
 	register_child_process_api(shared_api, kernel);
 	register_winsock_api(shared_api, kernel);
+#ifdef RAVEN_OPENSSL
+	register_wininet_api(shared_api, kernel);
+#endif
 	register_host_api(shared_api, kernel);
 	register_pipe_api(shared_api, kernel);
 	register_job_api(shared_api, kernel);

@@ -87,6 +87,8 @@ void register_security_api(ApiRegistry &registry, KernelContext &context);
 void register_schannel_api(ApiRegistry &registry, KernelContext &context);
 void register_child_process_api(ApiRegistry &registry, KernelContext &context);
 void register_winsock_api(ApiRegistry &registry, KernelContext &context);
+// WinINet's synchronous HTTP client over host sockets and the host's OpenSSL.
+void register_wininet_api(ApiRegistry &registry, KernelContext &context);
 // SetFileCompletionNotificationModes for a socket handle; false when the handle is not a socket.
 bool set_socket_completion_modes(NativeObjects &objects, uint64_t handle, uint32_t modes);
 void register_host_api(ApiRegistry &registry, KernelContext &context);
