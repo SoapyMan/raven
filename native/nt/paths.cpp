@@ -166,6 +166,38 @@ std::u16string NativePaths::redirected(std::u16string path) const
 std::optional<NativePaths::Resolved> NativePaths::resolve(std::u16string_view input) const
 {
 	const auto path = redirected(full(input));
+	auto result = resolve_direct(path);
+	if (result && !result->exists && package_roots)
+		if (auto virtual_file = resolve_virtual(path))
+			return virtual_file;
+	return result;
+}
+
+// The folders a package's vfs folder stands for, by the tokens App-V names them with; the longer folder comes first so that Common
+// Files is not taken for a program folder.
+std::optional<NativePaths::Resolved> NativePaths::resolve_virtual(const std::u16string &path) const
+{
+	static constexpr std::pair<std::u16string_view, std::u16string_view> tokens[] = {
+		{u"C:\\Program Files (x86)\\Common Files", u"ProgramFilesCommonX86"}, {u"C:\\Program Files\\Common Files", u"ProgramFilesCommonX64"},
+		{u"C:\\Program Files (x86)", u"ProgramFilesX86"}, {u"C:\\Program Files", u"ProgramFilesX64"}, {u"C:\\Windows\\SysWOW64", u"SystemX86"},
+		{u"C:\\Windows\\System32", u"SystemX64"}, {u"C:\\Windows\\Fonts", u"Fonts"}, {u"C:\\Windows", u"Windows"},
+		{u"C:\\ProgramData", u"Common AppData"}};
+	for (const auto &[folder, token] : tokens) {
+		if (path.size() <= folder.size() || path[folder.size()] != u'\\' || !equal_fold(std::u16string_view(path).substr(0, folder.size()), folder))
+			continue;
+		for (const auto &root : package_roots()) {
+			const auto candidate = full(root + u"\\Root\\VFS\\" + std::u16string(token) + path.substr(folder.size()));
+			// Looked up directly: a package's files never stand for files of another package.
+			if (auto found = resolve_direct(candidate); found && found->exists)
+				return found;
+		}
+		return std::nullopt;
+	}
+	return std::nullopt;
+}
+
+std::optional<NativePaths::Resolved> NativePaths::resolve_direct(const std::u16string &path) const
+{
 	if (path.size() < 3)
 		return std::nullopt;
 	auto host = drive_root(path[0]);

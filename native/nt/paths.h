@@ -3,10 +3,12 @@
 #include "prefix.h"
 
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace raven {
 
@@ -44,6 +46,9 @@ public:
 	void set_wow64(bool enabled) { wow64 = enabled; }
 	// Turns redirection on or off and tells whether it was on.
 	bool redirect(bool enabled) { return std::exchange(redirecting, enabled); }
+	// The roots of the virtual application packages installed in the prefix, asked for when a path is missing: a file such a package
+	// keeps under its Root\VFS folder appears at the place it stands for, as the App-V file system shows it to the package's programs.
+	void set_package_roots(std::function<std::vector<std::u16string>()> source) { package_roots = std::move(source); }
 	// True for the DOS device names that are not files (NUL, CON, ...), optionally behind \\.\ or \\?\.
 	static bool device(std::u16string_view path);
 
@@ -52,7 +57,10 @@ private:
 	std::u16string directory;
 	std::optional<std::u16string> dll_folder;
 	bool wow64 = false, redirecting = true;
+	std::function<std::vector<std::u16string>()> package_roots;
 	std::optional<std::filesystem::path> drive_root(char16_t letter) const;
+	std::optional<Resolved> resolve_direct(const std::u16string &path) const;
+	std::optional<Resolved> resolve_virtual(const std::u16string &path) const;
 	std::u16string redirected(std::u16string path) const;
 };
 

@@ -88,4 +88,7 @@ private:
 	bool seeding = false;
 };
 
+// The roots of the App-V packages that Click-to-Run registers, one value named after each root under HKLM\Software\Microsoft\AppVISV.
+std::vector<std::u16string> virtual_package_roots(NativeRegistry &registry);
+
 }

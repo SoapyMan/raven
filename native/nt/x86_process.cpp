@@ -780,6 +780,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	NativeModuleAPI module_api(process, environment, modules, entry);
 	NativePaths paths(prefix);
 	paths.set_wow64(true);
+	paths.set_package_roots([&registry] { return virtual_package_roots(registry); });
 	if (!launch->directory.empty())
 		paths.set_current(launch->directory);
 	std::function<NativeResult(uint64_t, std::span<const uint64_t>)> call_guest;

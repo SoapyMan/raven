@@ -803,4 +803,20 @@ void NativeRegistry::apply(const std::string &line)
 	}
 }
 
+std::vector<std::u16string> virtual_package_roots(NativeRegistry &registry)
+{
+	std::vector<std::u16string> roots;
+	uint64_t key = 0;
+	if (registry.open(0x80000002ULL, u"Software\\Microsoft\\AppVISV", key))
+		return roots;
+	std::u16string name;
+	uint32_t type = 0;
+	std::vector<uint8_t> data;
+	for (uint32_t index = 0; !registry.enum_value(key, index, name, type, data); ++index)
+		if (name.size() > 2 && name[1] == u':')
+			roots.push_back(name);
+	registry.close(key);
+	return roots;
+}
+
 }

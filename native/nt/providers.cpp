@@ -2414,6 +2414,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	desktop.register_image_api(desktop_api);
 	NativeRegistry hive(prefix.registry_file());
 	apply_registry_settings(hive);
+	paths.set_package_roots([&hive] { return virtual_package_roots(hive); });
 	register_registry_api(api_registry, kernel, hive);
 	register_service_api(api_registry, kernel, hive);
 	NativeProfile profile(process, environment, prefix);
