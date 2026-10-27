@@ -52,6 +52,186 @@ static int contains(const WCHAR *text, const WCHAR *part)
 	return 0;
 }
 
+/* Imported from ntdll by name, as the programs that set a key's information do. */
+__declspec(dllimport) LONG WINAPI NtSetInformationKey(HANDLE, int, void *, ULONG);
+
+
+/* The natives the virtualization layer of Click-to-Run Office finds by name in ntdll. */
+typedef struct { USHORT Length, MaximumLength; WCHAR *Buffer; } counted_string;
+typedef enum { avl_less, avl_more, avl_match } avl_order;
+/* Opaque room for RTL_AVL_TABLE, which is smaller than this on both architectures. */
+typedef struct { void *slots[32]; } avl_table_shape;
+static avl_order __stdcall avl_compare(void *table, void *first, void *second)
+{
+	int left = *(int *)first, right = *(int *)second;
+	return left < right ? avl_less : left > right ? avl_more : avl_match;
+}
+static void *__stdcall avl_allocate(void *table, ULONG size) { return HeapAlloc(GetProcessHeap(), 0, size); }
+static void __stdcall avl_release(void *table, void *block) { HeapFree(GetProcessHeap(), 0, block); }
+static void *native(const char *name) { return (void *)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), name); }
+
+static int click_to_run_natives(HKEY key)
+{
+	BYTE details[512];
+	ULONG size = 0;
+	LONG (WINAPI *enumerate_key)(HANDLE, ULONG, int, void *, ULONG, ULONG *) = native("NtEnumerateKey");
+	LONG (WINAPI *enumerate_value)(HANDLE, ULONG, int, void *, ULONG, ULONG *) = native("NtEnumerateValueKey");
+	LONG (WINAPI *flush_key)(HANDLE) = native("NtFlushKey");
+	if (!enumerate_key || !enumerate_value || !flush_key) return 1;
+	RtlSecureZeroMemory(details, sizeof details);
+	if (enumerate_key(key, 0, 0, details, sizeof details, &size) || size != 16 + 10 || lstrcmpW((WCHAR *)(details + 16), L"Inner")) return 2;
+	if (enumerate_key(key, 1, 0, details, sizeof details, &size) != (LONG)0x8000001a) return 3;
+	RtlSecureZeroMemory(details, sizeof details);
+	if (enumerate_value(key, 0, 1, details, sizeof details, &size) || *(ULONG *)(details + 4) != REG_DWORD || *(ULONG *)(details + 12) != 4 ||
+		*(ULONG *)(details + *(ULONG *)(details + 8)) != 7 || lstrcmpW((WCHAR *)(details + 20), L"Seven")) return 4;
+	if (enumerate_value(key, 1, 0, details, sizeof details, &size) != (LONG)0x8000001a || flush_key(key)) return 5;
+
+	LONG (WINAPI *compare)(const counted_string *, const counted_string *, BOOLEAN) = native("RtlCompareUnicodeString");
+	BOOLEAN (WINAPI *equal)(const counted_string *, const counted_string *, BOOLEAN) = native("RtlEqualUnicodeString");
+	BOOLEAN (WINAPI *prefix)(const counted_string *, const counted_string *, BOOLEAN) = native("RtlPrefixUnicodeString");
+	void (WINAPI *copy)(counted_string *, const counted_string *) = native("RtlCopyUnicodeString");
+	LONG (WINAPI *number)(ULONG, ULONG, counted_string *) = native("RtlIntegerToUnicodeString");
+	BOOLEAN (WINAPI *in_expression)(const counted_string *, const counted_string *, BOOLEAN, WCHAR *) = native("RtlIsNameInExpression");
+	if (!compare || !equal || !prefix || !copy || !number || !in_expression) return 6;
+	WCHAR upper[] = L"OFFICE16", lower[] = L"office16\\winword.exe", room[8];
+	counted_string first = {16, 18, upper}, second = {16, 40, lower}, longer = {38, 40, lower}, target = {0, sizeof room, room};
+	if (!equal(&first, &second, TRUE) || equal(&first, &second, FALSE) || compare(&first, &second, TRUE) || compare(&first, &second, FALSE) >= 0) return 7;
+	if (!prefix(&first, &longer, TRUE) || prefix(&longer, &first, TRUE)) return 8;
+	copy(&target, &longer);
+	if (target.Length != sizeof room || room[7] != L'6') return 9;
+	if (number(255, 16, &target) || target.Length != 4 || lstrcmpW(room, L"FF") || number(1234567890, 10, &target) != (LONG)0x80000005) return 10;
+	WCHAR expression[] = L"*.EXE", dos[] = L"WIN<.EXE", name_text[] = L"winword.exe", other[] = L"winword.dll";
+	counted_string pattern = {10, 12, expression}, dos_pattern = {16, 18, dos}, name = {22, 24, name_text}, wrong = {22, 24, other};
+	if (!in_expression(&pattern, &name, TRUE, NULL) || in_expression(&pattern, &wrong, TRUE, NULL) || in_expression(&pattern, &name, FALSE, NULL) ||
+		!in_expression(&dos_pattern, &name, TRUE, NULL)) return 11;
+
+	void (WINAPI *initialize)(avl_table_shape *, void *, void *, void *, void *) = native("RtlInitializeGenericTableAvl");
+	void *(WINAPI *insert)(avl_table_shape *, void *, ULONG, BOOLEAN *) = native("RtlInsertElementGenericTableAvl");
+	void *(WINAPI *lookup)(avl_table_shape *, void *) = native("RtlLookupElementGenericTableAvl");
+	void *(WINAPI *walk)(avl_table_shape *, BOOLEAN) = native("RtlEnumerateGenericTableAvl");
+	BOOLEAN (WINAPI *remove)(avl_table_shape *, void *) = native("RtlDeleteElementGenericTableAvl");
+	BOOLEAN (WINAPI *empty)(avl_table_shape *) = native("RtlIsGenericTableEmptyAvl");
+	if (!initialize || !insert || !lookup || !walk || !remove || !empty) return 12;
+	avl_table_shape table;
+	initialize(&table, avl_compare, avl_allocate, avl_release, NULL);
+	BOOLEAN created = FALSE;
+	for (int value = 5; value > 0; --value)
+		if (!insert(&table, &value, sizeof value, &created) || !created) return 13;
+	int wanted = 3, previous = 0, seen = 0;
+	if (!lookup(&table, &wanted)) return 14;
+	if (*(int *)lookup(&table, &wanted) != 3) return 23;
+	if (!remove(&table, &wanted)) return 24;
+	if (lookup(&table, &wanted)) return 25;
+	for (int *entry = walk(&table, TRUE); entry; entry = walk(&table, FALSE), ++seen)
+		if (*entry <= previous) return 15;
+		else previous = *entry;
+	if (seen != 4 || empty(&table)) return 16;
+
+	LONG (WINAPI *duplicate)(HANDLE, HANDLE, HANDLE, HANDLE *, ULONG, ULONG, ULONG) = native("NtDuplicateObject");
+	LONG (WINAPI *query_security)(HANDLE, ULONG, void *, ULONG, ULONG *) = native("NtQuerySecurityObject");
+	LONG (WINAPI *open_job)(HANDLE *, ULONG, void *) = native("NtOpenJobObject");
+	if (!duplicate || !query_security || !open_job) return 17;
+	HANDLE event = CreateEventW(NULL, TRUE, FALSE, NULL), copy_handle = NULL;
+	if (duplicate(GetCurrentProcess(), event, GetCurrentProcess(), &copy_handle, 0, 0, DUPLICATE_SAME_ACCESS) || !copy_handle || !SetEvent(copy_handle) ||
+		WaitForSingleObject(event, 0) != WAIT_OBJECT_0) return 18;
+	if (duplicate(GetCurrentProcess(), (HANDLE)(ULONG_PTR)0x7ffc, GetCurrentProcess(), &copy_handle, 0, 0, DUPLICATE_SAME_ACCESS) != (LONG)0xc0000008) return 19;
+	if (query_security(event, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, details, 8, &size) != (LONG)0xc0000023 || size < 20) return 20;
+	if (query_security(event, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, details, sizeof details, &size) ||
+		!IsValidSecurityDescriptor(details)) return 21;
+	HANDLE job = NULL;
+	if (open_job(&job, 0, NULL) != (LONG)0xc0000034) return 22;
+	CloseHandle(copy_handle);
+	CloseHandle(event);
+	return 0;
+}
+
+
+static int same_guid(const GUID *a, const GUID *b)
+{
+	const DWORD *left = (const DWORD *)a, *right = (const DWORD *)b;
+	return left[0] == right[0] && left[1] == right[1] && left[2] == right[2] && left[3] == right[3];
+}
+
+/* The known folder manager, as the application virtualization of Click-to-Run Office asks it for the folders it turns into tokens. */
+static int known_folder_manager(void)
+{
+	IKnownFolderManager *manager = NULL;
+	IKnownFolder *folder = NULL;
+	KNOWNFOLDER_DEFINITION definition;
+	KNOWNFOLDERID id, *ids = NULL;
+	UINT count = 0;
+	WCHAR *path = NULL;
+	int csidl = 0;
+	CoInitializeEx(NULL, COINIT_MULTITHREADED);
+	if (CoCreateInstance(&CLSID_KnownFolderManager, NULL, CLSCTX_INPROC_SERVER, &IID_IKnownFolderManager, (void **)&manager) != S_OK || !manager)
+		return 1;
+	if (manager->lpVtbl->GetFolderIds(manager, &ids, &count) != S_OK || count < 20)
+		return 2;
+	CoTaskMemFree(ids);
+	if (manager->lpVtbl->GetFolder(manager, &FOLDERID_ProgramFilesCommonX64, &folder) != S_OK || !folder)
+		return 3;
+	if (folder->lpVtbl->GetPath(folder, 0, &path) != S_OK || !contains(path, L"Program Files\\Common Files"))
+		return 4;
+	CoTaskMemFree(path);
+	if (folder->lpVtbl->GetFolderDefinition(folder, &definition) != S_OK || definition.category != KF_CATEGORY_FIXED ||
+		lstrcmpW(definition.pszName, L"ProgramFilesCommonX64"))
+		return 5;
+	FreeKnownFolderDefinitionFields(&definition);
+	folder->lpVtbl->Release(folder);
+	if (manager->lpVtbl->GetFolderByName(manager, L"common appdata", &folder) != S_OK || folder->lpVtbl->GetId(folder, &id) != S_OK ||
+		!same_guid(&id, &FOLDERID_ProgramData))
+		return 6;
+	folder->lpVtbl->Release(folder);
+	if (manager->lpVtbl->FolderIdFromCsidl(manager, CSIDL_SYSTEM, &id) != S_OK || !same_guid(&id, &FOLDERID_System) ||
+		manager->lpVtbl->FolderIdToCsidl(manager, &FOLDERID_Fonts, &csidl) != S_OK || csidl != CSIDL_FONTS)
+		return 7;
+	if (manager->lpVtbl->FindFolderFromPath(manager, L"C:\\Windows\\System32\\drivers", FFFP_NEARESTPARENTMATCH, &folder) != S_OK ||
+		folder->lpVtbl->GetId(folder, &id) != S_OK || !same_guid(&id, &FOLDERID_System))
+		return 8;
+	folder->lpVtbl->Release(folder);
+	if (manager->lpVtbl->FindFolderFromPath(manager, L"C:\\Windows\\System32\\drivers", FFFP_EXACTMATCH, &folder) == S_OK)
+		return 9;
+	manager->lpVtbl->Release(manager);
+	return 0;
+}
+
+/* A file an App-V package keeps under its Root\\VFS folder is seen at the folder the token names, while the package root is registered. */
+static int virtual_package_files(void)
+{
+	HKEY key;
+	HANDLE file;
+	DWORD done = 0;
+	char text[8];
+	int result = 0;
+	CreateDirectoryW(L"C:\\RavenPackage", NULL);
+	CreateDirectoryW(L"C:\\RavenPackage\\Root", NULL);
+	CreateDirectoryW(L"C:\\RavenPackage\\Root\\VFS", NULL);
+	CreateDirectoryW(L"C:\\RavenPackage\\Root\\VFS\\ProgramFilesCommonX64", NULL);
+	CreateDirectoryW(L"C:\\RavenPackage\\Root\\VFS\\ProgramFilesCommonX64\\RavenShared", NULL);
+	file = CreateFileW(L"C:\\RavenPackage\\Root\\VFS\\ProgramFilesCommonX64\\RavenShared\\probe.txt", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+	if (file == INVALID_HANDLE_VALUE || !WriteFile(file, "vfs", 3, &done, NULL))
+		return 1;
+	CloseHandle(file);
+	if (GetFileAttributesW(L"C:\\Program Files\\Common Files\\RavenShared\\probe.txt") != INVALID_FILE_ATTRIBUTES)
+		return 2;
+	if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\AppVISV", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &key, NULL) ||
+		RegSetValueExW(key, L"C:\\RavenPackage", 0, REG_SZ, (const BYTE *)L"package", 16))
+		return 3;
+	file = CreateFileW(L"C:\\Program Files\\Common Files\\RavenShared\\probe.txt", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+	if (file == INVALID_HANDLE_VALUE || !ReadFile(file, text, sizeof text, &done, NULL) || done != 3 || text[0] != 'v' || text[2] != 's')
+		result = 4;
+	if (file != INVALID_HANDLE_VALUE)
+		CloseHandle(file);
+	if (!result && GetFileAttributesW(L"C:\\Program Files\\Common Files\\RavenShared\\absent.txt") != INVALID_FILE_ATTRIBUTES)
+		result = 5;
+	RegDeleteValueW(key, L"C:\\RavenPackage");
+	RegCloseKey(key);
+	if (!result && GetFileAttributesW(L"C:\\Program Files\\Common Files\\RavenShared\\probe.txt") != INVALID_FILE_ATTRIBUTES)
+		result = 6;
+	DeleteFileW(L"C:\\RavenPackage\\Root\\VFS\\ProgramFilesCommonX64\\RavenShared\\probe.txt");
+	return result;
+}
+
 int raven_entry(void)
 {
 	{
@@ -140,6 +320,24 @@ int raven_entry(void)
 	if (SHGetKnownFolderPath(&FOLDERID_ProgramFilesX86, 0, NULL, &folder) != S_OK || !contains(folder, L"Program Files (x86)"))
 		return 2;
 	CoTaskMemFree(folder);
+	if (SHGetKnownFolderPath(&FOLDERID_UserProfiles, 0, NULL, &folder) != S_OK || lstrcmpiW(folder, L"C:\\Users"))
+		return 240;
+	CoTaskMemFree(folder);
+	if ((size = known_folder_manager()))
+		return 230 + (int)size;
+	if ((size = virtual_package_files()))
+		return 250 + (int)size;
+	{
+		/* Without a compiler behind it, a compile is refused and leaves no blobs. */
+		typedef HRESULT (WINAPI *compile_type)(const void *, SIZE_T, const char *, const void *, void *, const char *, const char *, UINT, UINT,
+			void **, void **);
+		HMODULE compiler = LoadLibraryW(L"d3dcompiler_47.dll");
+		compile_type compile = compiler ? (compile_type)(void *)GetProcAddress(compiler, "D3DCompile") : NULL;
+		void *code = (void *)1, *errors = (void *)1;
+		if (!compile || compile("float4 main() : SV_Target { return 1; }", 39, NULL, NULL, NULL, "main", "ps_4_0", 0, 0, &code, &errors) !=
+			(HRESULT)0x80004001 || code || errors)
+			return 260;
+	}
 
 	size = 64;
 	if (!GetComputerNameExW(ComputerNameDnsHostname, name, &size) || size == 0 || name[0] == 0)
@@ -383,10 +581,40 @@ int raven_entry(void)
 	/* A thread has no I/O pending in the kernel's sense; a key takes its last write time and refuses a class it does not have. */
 	BOOL pending = TRUE;
 	if (!GetThreadIOPendingFlag(GetCurrentThread(), &pending) || pending) return 170;
+	HKEY key = NULL;
+	LARGE_INTEGER written = {{0}};
+	if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\RavenKeyInformation", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &key, NULL))
+		return 171;
+	if (NtSetInformationKey(key, 0, &written, sizeof written) || NtSetInformationKey(key, 9, &written, sizeof written) != (LONG)0xc0000003)
+		return 172;
+	/* A key names itself by its last part and by its full native path, and counts what it holds. */
+	HKEY child = NULL;
+	if (RegCreateKeyExW(key, L"Inner", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &child, NULL) || RegSetValueExW(key, L"Seven", 0, REG_DWORD, (BYTE *)&(DWORD){7}, 4))
+		return 173;
+	RegCloseKey(child);
+	/* Looked up by name, as a library loaded after start finds it. */
+	LONG (WINAPI *NtQueryKey)(HANDLE, int, void *, ULONG, ULONG *) = (void *)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryKey");
+	if (!NtQueryKey) return 180;
+	ULONG key_size = 0;
+	BYTE details[512];
+	RtlSecureZeroMemory(details, sizeof details);
+	if (NtQueryKey(key, 0, details, sizeof details, &key_size) || key_size != 16 + 38 || *(ULONG *)(details + 12) != 38 ||
+		lstrcmpW((WCHAR *)(details + 16), L"RavenKeyInformation")) return 174;
+	if (NtQueryKey(key, 3, details, 8, &key_size) != (LONG)0x80000005 || key_size < 4 + 2 * 50) return 175;
+	RtlSecureZeroMemory(details, sizeof details);
+	if (NtQueryKey(key, 3, details, sizeof details, &key_size) || !contains((WCHAR *)(details + 4), L"\\REGISTRY\\USER\\S-1-5-21-") ||
+		!contains((WCHAR *)(details + 4), L"\\Software\\RavenKeyInformation")) return 176;
+	if (NtQueryKey(key, 2, details, sizeof details, &key_size) || *(ULONG *)(details + 20) != 1 || *(ULONG *)(details + 24) != 10 ||
+		*(ULONG *)(details + 32) != 1 || *(ULONG *)(details + 40) != 4) return 177;
+	if (NtQueryKey(key, 2, details, 10, &key_size) != (LONG)0xc0000023 || key_size != 44) return 178;
 	/* PathCchCanonicalize removes the . and .. parts and refuses a result that does not fit. */
 	HRESULT (WINAPI *canonicalize)(WCHAR *, size_t, const WCHAR *) = (void *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "PathCchCanonicalize");
 	WCHAR clean[MAX_PATH];
 	if (!canonicalize || canonicalize(clean, MAX_PATH, L"C:\\a\\.\\b\\..\\c.txt") || lstrcmpW(clean, L"C:\\a\\c.txt") ||
 		canonicalize(clean, 4, L"C:\\a\\c.txt") != (HRESULT)0x8007007a) return 179;
+	if ((key_size = click_to_run_natives(key))) return 180 + (int)key_size;
+	RegDeleteKeyW(key, L"Inner");
+	RegCloseKey(key);
+	RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\RavenKeyInformation");
 	return 0;
 }

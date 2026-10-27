@@ -616,10 +616,11 @@ uint32_t NativeRegistry::enum_value(uint64_t key, uint32_t index, std::u16string
 uint32_t NativeRegistry::info(uint64_t key, Info &result) const
 {
 	refresh();
-	std::u16string folded;
+	std::u16string folded, shown;
 	if (predefined(key)) {
 		static const char16_t *const names[] = {u"HKEY_CLASSES_ROOT", u"HKEY_CURRENT_USER", u"HKEY_LOCAL_MACHINE", u"HKEY_USERS"};
-		folded = fold(names[uint32_t(key) - 0x80000000U]);
+		shown = names[uint32_t(key) - 0x80000000U];
+		folded = fold(shown);
 	} else {
 		const auto found = open_keys.find(key);
 		if (found == open_keys.end())
@@ -627,13 +628,15 @@ uint32_t NativeRegistry::info(uint64_t key, Info &result) const
 		folded = found->second;
 	}
 	result = {};
+	const auto own = keys.find(folded);
+	result.path = own != keys.end() ? own->second.path : shown.empty() ? folded : shown;
 	for (const auto &child : children(folded)) {
 		++result.subkeys;
 		const auto &display = keys.at(child).path;
 		result.longest_subkey = std::max<uint32_t>(result.longest_subkey, uint32_t(display.size() - display.find_last_of(u'\\') - 1));
 	}
-	if (const auto entry = keys.find(folded); entry != keys.end())
-		for (const auto &[unused, value] : entry->second.values) {
+	if (own != keys.end())
+		for (const auto &[unused, value] : own->second.values) {
 			++result.values;
 			result.longest_name = std::max<uint32_t>(result.longest_name, uint32_t(value.name.size()));
 			result.longest_data = std::max<uint32_t>(result.longest_data, uint32_t(value.data.size()));

@@ -1589,7 +1589,20 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		"RtlInitializeSListHead", "RtlInterlockedPushEntrySList", "RtlInterlockedPopEntrySList", "RtlInterlockedFlushSList",
 		"RtlQueryDepthSList",
 		// What Wine's builds of the Direct3D 10.1 and Direct2D libraries import from ntdll.
-		"_vsnprintf"})
+		"_vsnprintf",
+		// The registry natives, which libraries loaded after start (the Click-to-Run integration of Office among them) import by name.
+		"NtCreateKey", "NtOpenKey", "NtOpenKeyEx", "NtQueryKey", "NtQueryValueKey", "NtSetValueKey", "NtDeleteValueKey", "NtSetInformationKey",
+		// Looked up by diagnostics code that records where a call came from.
+		"RtlCaptureStackBackTrace",
+		// What the virtualization layer of Click-to-Run Office imports from ntdll: more of the registry and the objects, counted strings,
+		// file name expressions, and the generic tables, which the guest RTL holds.
+		"NtDuplicateObject", "NtEnumerateKey", "NtEnumerateValueKey", "NtFlushKey", "NtNotifyChangeKey", "NtNotifyChangeMultipleKeys",
+		"NtOpenJobObject", "NtQuerySecurityObject", "NtRenameKey", "NtSetSecurityObject", "RtlInitUnicodeString", "RtlCompareUnicodeString",
+		"RtlCopyUnicodeString", "RtlEqualUnicodeString", "RtlPrefixUnicodeString", "RtlIntegerToUnicodeString", "RtlIsNameInExpression",
+		"RtlInitializeGenericTableAvl", "RtlInsertElementGenericTableAvl", "RtlInsertElementGenericTableFullAvl", "RtlIsGenericTableEmptyAvl",
+		"RtlNumberGenericTableElementsAvl", "RtlLookupElementGenericTableAvl", "RtlLookupElementGenericTableFullAvl", "RtlEnumerateGenericTableAvl",
+		"RtlEnumerateGenericTableWithoutSplayingAvl", "RtlLookupFirstMatchingElementGenericTableAvl", "RtlGetElementGenericTableAvl",
+		"RtlDeleteElementGenericTableAvl"})
 		if (std::find(nt_names.begin(),nt_names.end(),name)==nt_names.end()) nt_names.push_back(name);
 	std::sort(nt_names.begin(),nt_names.end());
 	// Every Windows system library that a program may import gets a provider; names without a handler stop visibly when called.

@@ -1703,7 +1703,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                 COMMAND ${RAVEN_MINGW64} -nostdlib -O1 -fno-builtin -fno-stack-protector
                     -Wl,--entry,raven_entry,--image-base,0x1df000000,--no-insert-timestamp
                     -o ${PLATFORM_CLIENT} ${PROJECT_SOURCE_DIR}/testdata/native_loader/platform_client.c
-                    -lkernel32 -lshell32 -liphlpapi -ladvapi32 -lcrypt32 -lole32 -lws2_32 -lgcc
+                    -lkernel32 -lshell32 -liphlpapi -ladvapi32 -lcrypt32 -lole32 -luuid -lws2_32 -lntdll -lgcc
                 DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/platform_client.c VERBATIM)
             add_custom_target(platform_fixture ALL DEPENDS ${PLATFORM_CLIENT})
             add_test(NAME native_platform_services COMMAND raven --run-process --execution=native --timeout-ms=30000 ${PLATFORM_CLIENT})

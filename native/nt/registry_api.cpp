@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
+#include <functional>
+#include <tuple>
 
 namespace raven {
 
@@ -416,7 +418,143 @@ void register_registry_api(ApiRegistry &registry, KernelContext &context, Native
 			std::memcpy(text.data(), call.read(buffer, length).data(), length / 2 * 2);
 		return text;
 	};
-	registry.add("NtDeleteValueKey", 2, [&hive, name_of, status_of](ApiCall &call) { call.ret(status_of(hive.remove_value(call[0], name_of(call, call[1])))); });
+	// The last write time (0), the flags of a WOW64 key (1) and the control flags (2) are the classes a key takes; the time keeps the
+	// hive's own record, so a valid key and class only succeed.
+	registry.add("NtSetInformationKey", 4, [&hive, status_of](ApiCall &call) {
+		NativeRegistry::Info info;
+		if (const auto status = hive.info(call[0], info)) {
+			call.ret(status_of(status));
+			return;
+		}
+		static constexpr uint32_t sizes[] = {8, 4, 4};
+		const uint32_t information = call.u32(1);
+		if (information >= std::size(sizes)) {
+			call.ret(0xc0000003);
+			return;
+		}
+		call.ret(call.u32(3) != sizes[information] ? 0xc0000004 : 0);
+	});
+	// What the KEY_* and KEY_VALUE_* information forms share: little-endian words and UTF-16 text, and a buffer that takes the fixed part or
+	// fails, then takes what fits of the rest.
+	const auto put32 = [](std::vector<uint8_t> &out, uint32_t value) { for (int shift = 0; shift < 32; shift += 8) out.push_back(uint8_t(value >> shift)); };
+	const auto put_text = [](std::vector<uint8_t> &out, std::u16string_view text) {
+		for (const auto unit : text) {
+			out.push_back(uint8_t(unit));
+			out.push_back(uint8_t(unit >> 8));
+		}
+	};
+	const auto deliver = [status_overflow, status_too_small](ApiCall &call, const std::vector<uint8_t> &out, size_t header, uint64_t buffer,
+		uint32_t capacity, uint64_t result) {
+		if (result)
+			call.store<uint32_t>(result, uint32_t(out.size()));
+		if (capacity < header) {
+			call.ret(status_too_small);
+			return;
+		}
+		call.write(buffer, std::span<const uint8_t>(out.data(), std::min<size_t>(out.size(), capacity)));
+		call.ret(out.size() > capacity ? status_overflow : 0);
+	};
+	// KEY_*_INFORMATION: the basic and node forms carry the last name of the key, the name form its full path in the native namespace,
+	// the full and cached forms the counts. The hive keeps no write times or classes, so both read as zero. The header size is 0 for a class
+	// the hive does not answer.
+	const auto key_information = [put32, put_text](uint32_t information, const NativeRegistry::Info &info, std::vector<uint8_t> &out) -> size_t {
+		static constexpr std::pair<std::u16string_view, std::u16string_view> roots[] = {
+			{u"HKEY_LOCAL_MACHINE", u"\\REGISTRY\\MACHINE"}, {u"HKEY_USERS", u"\\REGISTRY\\USER"},
+			{u"HKEY_CURRENT_USER", u"\\REGISTRY\\USER\\S-1-5-21-1000-1000-1000-1000"}, {u"HKEY_CLASSES_ROOT", u"\\REGISTRY\\MACHINE\\SOFTWARE\\Classes"}};
+		std::u16string native = info.path;
+		for (const auto &[root, replacement] : roots)
+			if (native.size() >= root.size() && equal_fold(native.substr(0, root.size()), root) &&
+				(native.size() == root.size() || native[root.size()] == u'\\')) {
+				native = std::u16string(replacement) + native.substr(root.size());
+				break;
+			}
+		const std::u16string last = native.substr(native.find_last_of(u'\\') + 1);
+		const uint32_t name_size = uint32_t(last.size() * 2);
+		switch (information) {
+		case 0: // basic
+			for (const uint32_t word : {0u, 0u, 0u, name_size}) put32(out, word);
+			put_text(out, last);
+			return 16;
+		case 1: // node: the class would follow the name
+			for (const uint32_t word : {0u, 0u, 0u, 24 + name_size, 0u, name_size}) put32(out, word);
+			put_text(out, last);
+			return 24;
+		case 2: // full
+			for (const uint32_t word : {0u, 0u, 0u, 44u, 0u, info.subkeys, info.longest_subkey * 2, 0u, info.values, info.longest_name * 2, info.longest_data})
+				put32(out, word);
+			return 44;
+		case 3: // name
+			put32(out, uint32_t(native.size() * 2));
+			put_text(out, native);
+			return 4;
+		case 4: // cached
+			for (const uint32_t word : {0u, 0u, 0u, info.subkeys, info.longest_subkey * 2, info.values, info.longest_name * 2, info.longest_data, name_size})
+				put32(out, word);
+			return 36;
+		default:
+			return 0;
+		}
+	};
+	registry.add("NtQueryKey", 5, [&hive, status_of, key_information, deliver](ApiCall &call) {
+		NativeRegistry::Info info;
+		if (const auto status = hive.info(call[0], info)) {
+			call.ret(status_of(status));
+			return;
+		}
+		std::vector<uint8_t> out;
+		const size_t header = key_information(call.u32(1), info, out);
+		if (!header) {
+			call.ret(0xc0000003U);
+			return;
+		}
+		deliver(call, out, header, call[2], call.u32(3), call[4]);
+	});
+	// A subkey by its position: its own information, read through a handle opened for the moment. STATUS_NO_MORE_ENTRIES past the last.
+	registry.add("NtEnumerateKey", 6, [&hive, status_of, key_information, deliver](ApiCall &call) {
+		std::u16string name;
+		if (const auto status = hive.enum_key(call[0], call.u32(1), name)) {
+			call.ret(status == 259 ? 0x8000001aU : status_of(status));
+			return;
+		}
+		uint64_t child = 0;
+		NativeRegistry::Info info;
+		auto status = hive.open(call[0], name, child);
+		if (!status) {
+			status = hive.info(child, info);
+			hive.close(child);
+		}
+		if (status) {
+			call.ret(status_of(status));
+			return;
+		}
+		std::vector<uint8_t> out;
+		const size_t header = call.u32(2) == 3 ? 0 : key_information(call.u32(2), info, out);
+		if (!header) {
+			call.ret(0xc000000dU);
+			return;
+		}
+		deliver(call, out, header, call[3], call.u32(4), call[5]);
+	});
+	// The hive is written as it changes, so a flush has nothing left to do for a key that exists.
+	registry.add("NtFlushKey", 1, [&hive, status_of](ApiCall &call) {
+		NativeRegistry::Info info;
+		call.ret(status_of(hive.info(call[0], info)));
+	});
+	// Change notification is not delivered: an asynchronous request stays pending, as one would until a change, and a synchronous one returns
+	// at once rather than block its thread for ever, as RegNotifyChangeKeyValue does here.
+	registry.add("NtNotifyChangeKey", 10, [&hive, status_of](ApiCall &call) {
+		NativeRegistry::Info info;
+		const auto status = hive.info(call[0], info);
+		call.ret(status ? status_of(status) : call.u32(9) ? 0x103U : 0);
+	});
+	registry.add("NtNotifyChangeMultipleKeys", 12, [&hive, status_of](ApiCall &call) {
+		NativeRegistry::Info info;
+		const auto status = hive.info(call[0], info);
+		call.ret(status ? status_of(status) : call.u32(11) ? 0x103U : 0);
+	});
+	// The hive has no rename; a program sees the failure a key that cannot be renamed gives.
+	registry.add("NtRenameKey", 2, [](ApiCall &call) { call.ret(0xc0000002U); });
+	registry.add("NtDeleteValueKey", 2,[&hive, name_of, status_of](ApiCall &call) { call.ret(status_of(hive.remove_value(call[0], name_of(call, call[1])))); });
 	registry.add("NtSetValueKey", 6, [&hive, name_of, status_of](ApiCall &call) {
 		const uint32_t size = call.u32(5);
 		if (!call[4] && size) {
@@ -425,44 +563,62 @@ void register_registry_api(ApiRegistry &registry, KernelContext &context, Native
 		}
 		call.ret(status_of(hive.set(call[0], name_of(call, call[1]), call.u32(3), size ? call.read(call[4], size) : std::vector<uint8_t>{})));
 	});
-	// KEY_VALUE_*_INFORMATION: the type and sizes come first; the basic form carries the name, the full form the name and the data, the partial one the data.
-	registry.add("NtQueryValueKey", 6, [&hive, name_of, status_of, status_overflow, status_too_small](ApiCall &call) {
+	// KEY_VALUE_*_INFORMATION: the type and sizes come first; the basic form carries the name, the full form the name and the data, the partial one
+	// the data. The header size is 0 for a class the hive does not answer.
+	const auto value_information = [put32, put_text](uint32_t information, std::u16string_view name, uint32_t type, const std::vector<uint8_t> &data,
+		std::vector<uint8_t> &out) -> size_t {
+		const uint32_t name_size = uint32_t(name.size() * 2);
+		if (information == 0) {
+			for (const uint32_t word : {0u, type, name_size}) put32(out, word);
+			put_text(out, name);
+			return 12;
+		}
+		if (information == 1) {
+			const uint32_t data_at = (20 + name_size + 3) / 4 * 4;
+			for (const uint32_t word : {0u, type, data_at, uint32_t(data.size()), name_size}) put32(out, word);
+			put_text(out, name);
+			out.resize(data_at);
+			out.insert(out.end(), data.begin(), data.end());
+			return 20;
+		}
+		if (information == 2) {
+			for (const uint32_t word : {0u, type, uint32_t(data.size())}) put32(out, word);
+			out.insert(out.end(), data.begin(), data.end());
+			return 12;
+		}
+		return 0;
+	};
+	registry.add("NtQueryValueKey", 6, [&hive, name_of, status_of, value_information, deliver](ApiCall &call) {
 		const auto name = name_of(call, call[1]);
 		uint32_t type = 0;
 		std::vector<uint8_t> data;
-		const auto status = hive.query(call[0], name, type, data);
-		if (status) {
+		if (const auto status = hive.query(call[0], name, type, data)) {
 			call.ret(status_of(status));
 			return;
 		}
-		const uint32_t information = call.u32(2), capacity = call.u32(4);
 		std::vector<uint8_t> out;
-		const auto put32 = [&](uint32_t value) { for (int shift = 0; shift < 32; shift += 8) out.push_back(uint8_t(value >> shift)); };
-		const auto put_name = [&] { for (const auto unit : name) { out.push_back(uint8_t(unit)); out.push_back(uint8_t(unit >> 8)); } };
-		if (information == 0) {
-			put32(0); put32(type); put32(uint32_t(name.size() * 2)); put_name();
-		} else if (information == 1) {
-			const uint32_t data_at = uint32_t(20 + name.size() * 2 + 3) / 4 * 4;
-			put32(0); put32(type); put32(data_at); put32(uint32_t(data.size())); put32(uint32_t(name.size() * 2));
-			put_name();
-			out.resize(data_at);
-			out.insert(out.end(), data.begin(), data.end());
-		} else if (information == 2) {
-			put32(0); put32(type); put32(uint32_t(data.size()));
-			out.insert(out.end(), data.begin(), data.end());
-		} else {
+		const size_t header = value_information(call.u32(2), name, type, data, out);
+		if (!header) {
 			call.ret(status_invalid);
 			return;
 		}
-		if (call[5])
-			call.store<uint32_t>(call[5], uint32_t(out.size()));
-		const size_t header = information == 0 ? 12 : information == 1 ? 20 : 12;
-		if (capacity < header) {
-			call.ret(status_too_small);
+		deliver(call, out, header, call[3], call.u32(4), call[5]);
+	});
+	registry.add("NtEnumerateValueKey", 6, [&hive, status_of, value_information, deliver](ApiCall &call) {
+		std::u16string name;
+		uint32_t type = 0;
+		std::vector<uint8_t> data;
+		if (const auto status = hive.enum_value(call[0], call.u32(1), name, type, data)) {
+			call.ret(status == 259 ? 0x8000001aU : status_of(status));
 			return;
 		}
-		call.write(call[3], std::span<const uint8_t>(out.data(), std::min<size_t>(out.size(), capacity)));
-		call.ret(out.size() > capacity ? status_overflow : 0);
+		std::vector<uint8_t> out;
+		const size_t header = value_information(call.u32(2), name, type, data, out);
+		if (!header) {
+			call.ret(status_invalid);
+			return;
+		}
+		deliver(call, out, header, call[3], call.u32(4), call[5]);
 	});
 	// The key path of the current user in the native namespace; the string belongs to the program, which frees it with RtlFreeUnicodeString.
 	registry.add("RtlFormatCurrentUserKeyPath", 1, [&context](ApiCall &call) {
@@ -577,6 +733,110 @@ void register_registry_api(ApiRegistry &registry, KernelContext &context, Native
 		std::memcpy(text.data() + (width == 4 ? 4 : 8), &source, width);
 		call.write(call[0], text);
 	});
+	// Counted strings compared, copied and written. Case-insensitive comparison goes through upper case, as RtlUpcaseUnicodeChar would.
+	const auto upper_text = [](std::u16string text) {
+		for (auto &unit : text)
+			unit = upper_case(unit);
+		return text;
+	};
+	registry.add("RtlCompareUnicodeString", 3, [name_of, upper_text](ApiCall &call) {
+		auto left = name_of(call, call[0]), right = name_of(call, call[1]);
+		if (call.u32(2) & 0xff) {
+			left = upper_text(left);
+			right = upper_text(right);
+		}
+		const size_t shared = std::min(left.size(), right.size());
+		for (size_t index = 0; index < shared; ++index)
+			if (left[index] != right[index]) {
+				call.ret(uint64_t(int64_t(int32_t(left[index]) - int32_t(right[index]))));
+				return;
+			}
+		call.ret(uint64_t(int64_t(int32_t(left.size()) - int32_t(right.size()))));
+	});
+	registry.add("RtlEqualUnicodeString", 3, [name_of, upper_text](ApiCall &call) {
+		const auto left = name_of(call, call[0]), right = name_of(call, call[1]);
+		call.ret(call.u32(2) & 0xff ? upper_text(left) == upper_text(right) : left == right);
+	});
+	registry.add("RtlPrefixUnicodeString", 3, [name_of, upper_text](ApiCall &call) {
+		auto prefix = name_of(call, call[0]), text = name_of(call, call[1]);
+		if (call.u32(2) & 0xff) {
+			prefix = upper_text(prefix);
+			text = upper_text(text);
+		}
+		call.ret(text.size() >= prefix.size() && text.compare(0, prefix.size(), prefix) == 0);
+	});
+	// UNICODE_STRING: the length and capacity in bytes, then the buffer pointer after alignment.
+	const auto string_fields = [](ApiCall &call, uint64_t address) {
+		return std::tuple{call.load<uint16_t>(address + 2), call.load_pointer(address + (call.pointer_width() == 4 ? 4 : 8))};
+	};
+	registry.add("RtlCopyUnicodeString", 2, [name_of, string_fields](ApiCall &call) {
+		const auto [capacity, buffer] = string_fields(call, call[0]);
+		const auto source = call[1] ? name_of(call, call[1]) : std::u16string();
+		const size_t units = std::min<size_t>(source.size(), capacity / 2);
+		std::vector<uint8_t> bytes(units * 2);
+		std::memcpy(bytes.data(), source.data(), bytes.size());
+		if (units)
+			call.write(buffer, bytes);
+		if (units * 2 + 2 <= capacity)
+			call.store<uint16_t>(buffer + units * 2, 0);
+		call.store<uint16_t>(call[0], uint16_t(units * 2));
+	});
+	// The digits of a value in base 2, 8, 10 (also for 0) or 16, upper case, ending with a NUL when it fits.
+	registry.add("RtlIntegerToUnicodeString", 3, [string_fields](ApiCall &call) {
+		uint32_t value = call.u32(0), base = call.u32(1) ? call.u32(1) : 10;
+		if (base != 2 && base != 8 && base != 10 && base != 16) {
+			call.ret(0xc000000dU);
+			return;
+		}
+		std::u16string digits;
+		do {
+			digits.insert(digits.begin(), u"0123456789ABCDEF"[value % base]);
+			value /= base;
+		} while (value);
+		const auto [capacity, buffer] = string_fields(call, call[2]);
+		if (digits.size() * 2 > capacity) {
+			call.ret(0x80000005U);
+			return;
+		}
+		if (digits.size() * 2 + 2 <= capacity)
+			digits.push_back(u'\0');
+		std::vector<uint8_t> bytes(digits.size() * 2);
+		std::memcpy(bytes.data(), digits.data(), bytes.size());
+		call.write(buffer, bytes);
+		call.store<uint16_t>(call[2], uint16_t((digits.back() ? digits.size() : digits.size() - 1) * 2));
+		call.ret(0);
+	});
+	// A name against an expression with the file system's wildcards: * and ? as usual, and the DOS forms < (any run up to the last dot),
+	// > (one character, or none at a dot or the end) and " (a dot, or none at the end). With case ignored the expression is already upper case.
+	registry.add("RtlIsNameInExpression", 4, [name_of, upper_text](ApiCall &call) {
+		const auto expression = name_of(call, call[0]);
+		const auto name = call.u32(2) & 0xff ? upper_text(name_of(call, call[1])) : name_of(call, call[1]);
+		const size_t length = name.size(), last_dot = name.rfind(u'.');
+		std::vector<int8_t> memo((expression.size() + 1) * (length + 1), -1);
+		std::function<bool(size_t, size_t)> match = [&](size_t at, size_t position) -> bool {
+			auto &known = memo[at * (length + 1) + position];
+			if (known >= 0)
+				return known;
+			bool result = false;
+			if (at == expression.size()) {
+				result = position == length;
+			} else {
+				const char16_t wanted = expression[at];
+				const bool more = position < length;
+				switch (wanted) {
+				case u'*': result = match(at + 1, position) || (more && match(at, position + 1)); break;
+				case u'<': result = match(at + 1, position) || (more && (name[position] != u'.' || position != last_dot) && match(at, position + 1)); break;
+				case u'>': result = more && name[position] != u'.' ? match(at + 1, position + 1) : match(at + 1, position); break;
+				case u'"': result = more && name[position] == u'.' ? match(at + 1, position + 1) : !more && match(at + 1, position); break;
+				case u'?': result = more && match(at + 1, position + 1); break;
+				default: result = more && name[position] == wanted && match(at + 1, position + 1); break;
+				}
+			}
+			known = result;
+			return result;
+		};
+		call.ret(match(0, 0));
+	});
 	registry.add("RtlGetLastNtStatus", 0, [](ApiCall &call) { call.ret(0); });
 	registry.add("RtlNtStatusToDosError", 1, [](ApiCall &call) {
 		switch (call.u32(0)) {
@@ -635,11 +895,11 @@ void register_registry_api(ApiRegistry &registry, KernelContext &context, Native
 	registry.add("RegQueryInfoKeyA", 12, query_info);
 	// RegGetValue filters by type (RRF_RT_*), opens the subkey itself in the caller's registry view (RRF_SUBKEY_WOW6464KEY and
 	// RRF_SUBKEY_WOW6432KEY choose one) and expands REG_EXPAND_SZ unless told not to.
-	registry.add("RegGetValueW", 7, [&hive, &context, text_of, view](ApiCall &call) {
+	const auto get_value = [&hive, &context, text_of, view, ansi_page](ApiCall &call, bool wide) {
 		const uint32_t flags = call.u32(3);
 		uint64_t key = call[0];
 		uint64_t opened = 0;
-		const auto subkey = text_of(call, call[1], true);
+		const auto subkey = text_of(call, call[1], wide);
 		if (!subkey.empty()) {
 			const uint32_t access = (flags & 0x10000 ? 0x100 : 0) | (flags & 0x20000 ? 0x200 : 0);
 			const auto status = hive.open(key, view(key, subkey, access), opened);
@@ -651,7 +911,7 @@ void register_registry_api(ApiRegistry &registry, KernelContext &context, Native
 		}
 		uint32_t type = 0;
 		std::vector<uint8_t> data;
-		auto status = hive.query(key, text_of(call, call[2], true), type, data);
+		auto status = hive.query(key, text_of(call, call[2], wide), type, data);
 		if (opened) {
 			hive.close(opened);
 			context.objects.release_reserved(opened);
@@ -671,6 +931,8 @@ void register_registry_api(ApiRegistry &registry, KernelContext &context, Native
 			call.ret(1629);
 			return;
 		}
+		if (!wide && is_text(type))
+			data = to_ansi_bytes(data, ansi_page);
 		if (call[4]) call.store<uint32_t>(call[4], type);
 		if (!call[5]) {
 			if (call[6]) call.store<uint32_t>(call[6], uint32_t(data.size()));
@@ -685,7 +947,39 @@ void register_registry_api(ApiRegistry &registry, KernelContext &context, Native
 		}
 		call.write(call[5], data);
 		call.ret(0);
-	});
+	};
+	registry.add("RegGetValueW", 7, [get_value](ApiCall &call) { get_value(call, true); });
+	registry.add("RegGetValueA", 7, [get_value](ApiCall &call) { get_value(call, false); });
+	// RegSetKeyValue creates the subkey when it is missing, then writes the value as RegSetValueEx does.
+	for (const bool wide : {true, false})
+		registry.add(wide ? "RegSetKeyValueW" : "RegSetKeyValueA", 6, [&hive, &context, text_of, view, ansi_page, wide](ApiCall &call) {
+			const uint32_t type = call.u32(3), size = call.u32(5);
+			if (!call[4] && size) {
+				call.ret(error_invalid_parameter);
+				return;
+			}
+			uint64_t key = call[0];
+			uint64_t created = 0;
+			const auto subkey = text_of(call, call[1], wide);
+			if (!subkey.empty()) {
+				uint32_t disposition = 0;
+				const auto status = hive.create(key, view(key, subkey, 0), created, disposition);
+				if (status) {
+					call.ret(status);
+					return;
+				}
+				key = created;
+			}
+			auto data = size ? call.read(call[4], size) : std::vector<uint8_t>{};
+			if (!wide && is_text(type))
+				data = from_ansi_bytes(data, ansi_page);
+			const auto status = hive.set(key, text_of(call, call[2], wide), type, data);
+			if (created) {
+				hive.close(created);
+				context.objects.release_reserved(created);
+			}
+			call.ret(status);
+		});
 	// Whether .NET programs run as 64-bit ones on 64-bit Windows: the system reads it from Enable64Bit of the framework's key, and the
 	// framework's setup turns it on through SetComPlusPackageInstallStatus. Only bit 0 has a meaning.
 	registry.add("GetComPlusPackageInstallStatus", 0, [&hive](ApiCall &call) {
