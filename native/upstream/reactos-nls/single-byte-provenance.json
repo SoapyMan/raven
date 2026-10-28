@@ -70,6 +70,24 @@
       "local_sha256": "6956c82004b36fbf480aeeba541e0abbe329a2c42964353e4e54baf1d227242b",
       "transformation": "CRLF to LF only; all remaining bytes identical",
       "original_import": "ReactOS dacf2a6c47fa562799f9c8a41ab6d5c558556558 media/nls/src/c_1258.txt"
+    },
+    {
+      "source": "https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/PC/CP437.TXT",
+      "source_sha256": "6bad4dabcdf5940227c7d81fab130dcb18a77850b5d79de28b5dc4e047b0aaac",
+      "local_file": "CP437.TXT",
+      "local_sha256": "6bad4dabcdf5940227c7d81fab130dcb18a77850b5d79de28b5dc4e047b0aaac",
+      "transformation": "none",
+      "retrieved": "2026-10-28",
+      "cross_check": "Every byte maps to the same character as MBTABLE in ReactOS dacf2a6c47fa562799f9c8a41ab6d5c558556558 media/nls/src/c_437.txt"
+    },
+    {
+      "source": "https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/PC/CP850.TXT",
+      "source_sha256": "ffdcc3c1c72f1aef600a63547100ef3dc452a09ad84923d382085519751c7479",
+      "local_file": "CP850.TXT",
+      "local_sha256": "ffdcc3c1c72f1aef600a63547100ef3dc452a09ad84923d382085519751c7479",
+      "transformation": "none",
+      "retrieved": "2026-10-28",
+      "cross_check": "Every byte maps to the same character as MBTABLE in ReactOS dacf2a6c47fa562799f9c8a41ab6d5c558556558 media/nls/src/c_850.txt"
     }
   ]
 }

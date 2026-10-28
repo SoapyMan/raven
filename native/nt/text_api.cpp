@@ -741,7 +741,7 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 				encoded.push_back(byte < 0 ? '?' : char(byte));
 				replaced |= byte < 0;
 			}
-		} else if (page == 1252 || page == 437 || page == 850 || page == 28591 || page == 20127) {
+		} else if (page == 1252 || page == 28591 || page == 20127) {
 			encoded = encode_ansi(source, 1252);
 			for (size_t at = 0; at < source.size(); ++at)
 				if (source[at] > 0xff && !(source[at] >= 0x2013 && source[at] <= 0x2122) && encoded[at] == '?')

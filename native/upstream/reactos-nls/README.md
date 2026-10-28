@@ -30,6 +30,15 @@ ReactOS revision and archive, at `media/nls/src`. Each matches Unicode's
 Unicode-3.0 terms. CP874 is left out because its ReactOS copy differs from the
 Unicode file.
 
+## OEM code pages
+
+`CP437.TXT` and `CP850.TXT`, the OEM pages a console uses, are Unicode's
+`MAPPINGS/VENDORS/MICSFT/PC` tables, unchanged. Unicode publishes no best-fit
+table for them, so they carry only the byte-to-character table; every byte maps
+to the same character as in ReactOS's `c_437.txt` and `c_850.txt` at the
+revision above. A character converts back only to its own byte: there is no best
+fit for these two pages, and a character they lack becomes the default `?`.
+
 `sbcs.cmake` reads each text at build time into its 256-entry byte table and its
 best-fit table, sorted by character; the build checks every input hash first.
 MultiByteToWideChar, WideCharToMultiByte, IsValidCodePage and GetCPInfo use them,

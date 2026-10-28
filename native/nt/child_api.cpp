@@ -106,16 +106,32 @@ std::shared_ptr<ProcessObject> start_program(KernelContext &context, const std::
 		error = 2;
 		return nullptr;
 	}
-	char magic[2] = {};
-	std::ifstream file(image->host, std::ios::binary);
-	file.read(magic, 2);
-	if (magic[0] != 'M' || magic[1] != 'Z') {
-		error = 193;
-		return nullptr;
+	auto program = image->host;
+	auto command_line = line.empty() ? u"\"" + names.front() + u"\"" : line;
+	// A batch file runs in the command processor, which CreateProcess starts with the whole command line as `cmd /c "..."`; the
+	// system folder resolves to SysWOW64 for a 32-bit program, as its cmd.exe is the 32-bit one there.
+	const auto extension = program.extension().u16string();
+	if (equal_fold(extension, u".bat") || equal_fold(extension, u".cmd")) {
+		const std::u16string processor = u"C:\\Windows\\System32\\cmd.exe";
+		const auto interpreter = paths.resolve(processor);
+		if (!interpreter || !interpreter->exists) {
+			error = 2;
+			return nullptr;
+		}
+		program = interpreter->host;
+		command_line = processor + u" /c \"" + command_line + u"\"";
+	} else {
+		char magic[2] = {};
+		std::ifstream file(program, std::ios::binary);
+		file.read(magic, 2);
+		if (magic[0] != 'M' || magic[1] != 'Z') {
+			error = 193;
+			return nullptr;
+		}
 	}
 	ChildLaunch launch;
-	launch.image = image->host;
-	launch.command_line = line.empty() ? u"\"" + names.front() + u"\"" : line;
+	launch.image = program;
+	launch.command_line = command_line;
 	launch.directory = directory.empty() ? paths.current() : directory;
 	std::copy(std::begin(standard), std::end(standard), launch.standard);
 	launch.environment = environment;

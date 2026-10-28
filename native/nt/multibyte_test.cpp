@@ -73,6 +73,12 @@ int main(int argc,char **argv)
 		check(call({1250,0,output+256,2,output+512,8})==2 && process.read_memory(output+512,4)==std::vector<uint8_t>({0x60,1,0x54,1}) &&
 			call({1251,0,output+256,2,output+512,8})==2 && process.read_memory(output+512,4)==std::vector<uint8_t>({0x09,4,0x10,4}),
 			"single-byte code page conversion differs from its table");
+		// The OEM pages, CP_OEMCP being 437.
+		const std::array<uint8_t,2> oem{0x8a,0xd5};process.write_memory(output+256,oem);
+		check(call({437,0,output+256,2,output+512,8})==2 && process.read_memory(output+512,4)==std::vector<uint8_t>({0xe8,0,0x52,0x25}) &&
+			call({850,0,output+256,2,output+512,8})==2 && process.read_memory(output+512,4)==std::vector<uint8_t>({0xe8,0,0x31,1}) &&
+			call({1,0,output+256,2,output+512,8})==2 && process.read_memory(output+512,4)==std::vector<uint8_t>({0xe8,0,0x52,0x25}),
+			"OEM code page conversion differs from its table");
 		process.protect_memory(output,4096,PROT_READ);
 		call({1252,0,page+4093,3,output,8},1);
 		check(process.read_memory(output,6)==std::vector<uint8_t>({'a',0,'b',0,0,0}),"readonly output was modified");

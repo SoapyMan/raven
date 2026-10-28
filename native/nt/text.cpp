@@ -1,5 +1,7 @@
 #include "text.h"
 
+#include "nls.h"
+
 #include <clocale>
 #include <cstdint>
 #include <cwctype>
@@ -117,7 +119,9 @@ std::u16string from_ansi(std::string_view text, uint32_t code_page)
 {
 	if (code_page == 65001)
 		return from_utf8(text);
-	// Windows-1252 differs from Latin-1 only in 0x80..0x9f; the OEM page 437 is approximated by Latin-1 above ASCII.
+	if (const auto *page = native_single_byte_page(code_page))
+		return decode_single_byte(*page, text);
+	// Windows-1252 differs from Latin-1 only in 0x80..0x9f.
 	static constexpr char16_t high[32] = {0x20ac, 0x81, 0x201a, 0x192, 0x201e, 0x2026, 0x2020, 0x2021, 0x2c6, 0x2030, 0x160, 0x2039, 0x152,
 		0x8d, 0x17d, 0x8f, 0x90, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x2dc, 0x2122, 0x161, 0x203a, 0x153, 0x9d, 0x17e, 0x178};
 	std::u16string result;
@@ -139,6 +143,8 @@ std::u16string widen_ascii(std::string_view text)
 
 std::string to_ansi(std::u16string_view text, uint32_t code_page)
 {
+	if (native_single_byte_page(code_page))
+		return encode_ansi(text, code_page);
 	std::string result;
 	result.reserve(text.size());
 	for (const auto character : text) {
@@ -148,7 +154,6 @@ std::string to_ansi(std::u16string_view text, uint32_t code_page)
 		else
 			result.push_back('?');
 	}
-	(void)code_page;
 	return result;
 }
 
