@@ -2430,6 +2430,28 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                 DEPENDS ${RAVEN_CMD_SOURCE} VERBATIM)
             list(APPEND RAVEN_CMD_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/x86/cmd.exe)
         endif()
+        # The command-line tools a prefix has beside cmd, one program each as Windows has them, for each width; MORE is a .com.
+        set(RAVEN_TOOLS_DIRECTORY ${PROJECT_SOURCE_DIR}/native/upstream/raven-tools)
+        set(RAVEN_TOOL_HEADERS ${RAVEN_TOOLS_DIRECTORY}/tool.h ${RAVEN_TOOLS_DIRECTORY}/processes.h)
+        foreach(tool find findstr more sort where xcopy attrib timeout choice whoami hostname tasklist taskkill reg)
+            set(tool_file ${tool}.exe)
+            if(tool STREQUAL "more")
+                set(tool_file more.com)
+            endif()
+            add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${tool_file}
+                COMMAND ${RAVEN_MINGW64} ${RAVEN_CMD_FLAGS} -Wl,--entry,raven_tool_entry,--no-insert-timestamp
+                    -o ${CMAKE_CURRENT_BINARY_DIR}/${tool_file} ${RAVEN_TOOLS_DIRECTORY}/${tool}.c -lkernel32 -ladvapi32 -lgcc
+                DEPENDS ${RAVEN_TOOLS_DIRECTORY}/${tool}.c ${RAVEN_TOOL_HEADERS} VERBATIM)
+            list(APPEND RAVEN_CMD_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/${tool_file})
+            if(RAVEN_MINGW32)
+                add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/x86/${tool_file}
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/x86
+                    COMMAND ${RAVEN_MINGW32} ${RAVEN_CMD_FLAGS} -Wl,--entry,_raven_tool_entry,--no-insert-timestamp
+                        -o ${CMAKE_CURRENT_BINARY_DIR}/x86/${tool_file} ${RAVEN_TOOLS_DIRECTORY}/${tool}.c -lkernel32 -ladvapi32 -lgcc
+                    DEPENDS ${RAVEN_TOOLS_DIRECTORY}/${tool}.c ${RAVEN_TOOL_HEADERS} VERBATIM)
+                list(APPEND RAVEN_CMD_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/x86/${tool_file})
+            endif()
+        endforeach()
         add_custom_target(raven_cmd ALL DEPENDS ${RAVEN_CMD_OUTPUTS})
         add_dependencies(raven raven_cmd)
         # Batch files through CreateProcess, cmd /c, and commands piped to the prompt, for 64-bit and 32-bit callers.

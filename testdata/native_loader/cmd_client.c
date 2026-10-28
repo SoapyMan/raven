@@ -2,7 +2,8 @@
 
 /* The command processor in the prefix, through pipes: a batch file started with CreateProcess runs in cmd /c, cmd /c runs built-in
    commands and programs and ends with their ERRORLEVEL, commands piped to its prompt run one by one, and a batch file that uses the
-   parser and the built-ins gives exactly the output it should. Returns the failed step, after the output that failed it. */
+   parser and the built-ins, and one that uses the command-line tools, give exactly the output they should. Returns the failed step,
+   after the output that failed it. */
 
 static WCHAR folder[MAX_PATH];
 
@@ -191,6 +192,116 @@ static const char features_output[] = "if\r\n"
 	"missing 1\r\n"
 	"nx0 features.bat\r\n";
 
+/* The command-line tools beside cmd: FIND, FINDSTR, SORT, WHERE, XCOPY, ATTRIB, REG, CHOICE, HOSTNAME, WHOAMI, TASKLIST and
+   TASKKILL, each used as a batch file uses it. */
+static const char tools[] = "@echo off\r\n"
+	"echo banana> fruit.txt\r\n"
+	"echo apple>> fruit.txt\r\n"
+	"echo Cherry>> fruit.txt\r\n"
+	"echo apple pie>> fruit.txt\r\n"
+	"find \"apple\" fruit.txt\r\n"
+	"find /c /i \"APPLE\" fruit.txt\r\n"
+	"type fruit.txt | find /v \"apple\"\r\n"
+	"find \"zzz\" fruit.txt >nul || echo find none\r\n"
+	"findstr /n \"^a.*e$\" fruit.txt\r\n"
+	"findstr /i /c:\"apple pie\" fruit.txt\r\n"
+	"findstr /i \"ban che\" fruit.txt\r\n"
+	"findstr /x \"apple\" fruit.txt\r\n"
+	"findstr \"\\<pie\\>\" fruit.txt\r\n"
+	"findstr \"[bc]\" fruit.txt\r\n"
+	"findstr \"zzz\" fruit.txt || echo findstr none\r\n"
+	"sort fruit.txt\r\n"
+	"sort /r fruit.txt\r\n"
+	"where cmd\r\n"
+	"where /q nothing-here || echo where none\r\n"
+	"md src\\sub\r\n"
+	"echo one> src\\a.txt\r\n"
+	"echo two> src\\sub\\b.txt\r\n"
+	"xcopy src dst /s /i\r\n"
+	"dir /b dst dst\\sub\r\n"
+	"attrib +r src\\a.txt\r\n"
+	"attrib src\\a.txt | find /c \"R\"\r\n"
+	"attrib -r src\\a.txt\r\n"
+	"rd /s /q src dst\r\n"
+	"reg add HKCU\\Software\\RavenToolsTest /v Name /d hello /f\r\n"
+	"reg add HKCU\\Software\\RavenToolsTest /v Count /t REG_DWORD /d 42 /f\r\n"
+	"reg add HKCU\\Software\\RavenToolsTest\\Sub /ve /d inner /f\r\n"
+	"reg query HKCU\\Software\\RavenToolsTest /s\r\n"
+	"reg export HKCU\\Software\\RavenToolsTest saved.reg /y\r\n"
+	"reg delete HKCU\\Software\\RavenToolsTest /f\r\n"
+	"reg query HKCU\\Software\\RavenToolsTest 2>nul || echo reg deleted\r\n"
+	"reg import saved.reg\r\n"
+	"reg query HKCU\\Software\\RavenToolsTest\\Sub /ve\r\n"
+	"reg delete HKCU\\Software\\RavenToolsTest /f\r\n"
+	"del saved.reg fruit.txt\r\n"
+	"echo n| choice /c yn /m \"Go\"\r\n"
+	"echo choice %errorlevel%\r\n"
+	"hostname | find /v \"\" >nul && echo hostname\r\n"
+	"whoami | find /v \"\" >nul && echo whoami\r\n"
+	"tasklist /nh /fo csv | find /i \"tasklist.exe\" >nul && echo tasklist\r\n"
+	"taskkill /pid 999999 2>nul || echo taskkill none\r\n"
+	"exit /b 0\r\n";
+
+static const char tools_output[] = "\r\n"
+	"---------- FRUIT.TXT\r\n"
+	"apple\r\n"
+	"apple pie\r\n"
+	"\r\n"
+	"---------- FRUIT.TXT: 2\r\n"
+	"banana\r\n"
+	"Cherry\r\n"
+	"find none\r\n"
+	"2:apple\r\n"
+	"4:apple pie\r\n"
+	"apple pie\r\n"
+	"banana\r\n"
+	"Cherry\r\n"
+	"apple\r\n"
+	"apple pie\r\n"
+	"banana\r\n"
+	"findstr none\r\n"
+	"apple\r\n"
+	"apple pie\r\n"
+	"banana\r\n"
+	"Cherry\r\n"
+	"Cherry\r\n"
+	"banana\r\n"
+	"apple pie\r\n"
+	"apple\r\n"
+	"C:\\Windows\\system32\\cmd.exe\r\n"
+	"where none\r\n"
+	"src\\a.txt\r\n"
+	"src\\sub\\b.txt\r\n"
+	"2 File(s) copied\r\n"
+	"a.txt\r\n"
+	"sub\r\n"
+	"b.txt\r\n"
+	"1\r\n"
+	"The operation completed successfully.\r\n"
+	"The operation completed successfully.\r\n"
+	"The operation completed successfully.\r\n"
+	"\r\n"
+	"HKEY_CURRENT_USER\\Software\\RavenToolsTest\r\n"
+	"    Count    REG_DWORD    0x2a\r\n"
+	"    Name    REG_SZ    hello\r\n"
+	"\r\n"
+	"HKEY_CURRENT_USER\\Software\\RavenToolsTest\\Sub\r\n"
+	"    (Default)    REG_SZ    inner\r\n"
+	"The operation completed successfully.\r\n"
+	"The operation completed successfully.\r\n"
+	"reg deleted\r\n"
+	"The operation completed successfully.\r\n"
+	"\r\n"
+	"HKEY_CURRENT_USER\\Software\\RavenToolsTest\\Sub\r\n"
+	"    (Default)    REG_SZ    inner\r\n"
+	"The operation completed successfully.\r\n"
+	"Go [Y,N]?N\r\n"
+	"choice 2\r\n"
+	"hostname\r\n"
+	"whoami\r\n"
+	"tasklist\r\n"
+	"taskkill none\r\n";
+
 int raven_entry(void)
 {
 	static char text[8192];
@@ -245,6 +356,18 @@ int raven_entry(void)
 		return 11;
 	}
 	DeleteFileW(features_path);
+	WCHAR tools_path[MAX_PATH] = {0};
+	append(tools_path, folder);
+	append(tools_path, L"\\tools.bat");
+	file = CreateFileW(tools_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+	if (file == INVALID_HANDLE_VALUE || !WriteFile(file, tools, sizeof tools - 1, &written, NULL))
+		return 12;
+	CloseHandle(file);
+	if (!run(processor, L"cmd.exe /c tools.bat", NULL, text, sizeof text, &code) || code || !same(text, tools_output)) {
+		WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), text, length_of(text), &written, NULL);
+		return 13;
+	}
+	DeleteFileW(tools_path);
 	DeleteFileW(path);
 	RemoveDirectoryW(folder);
 	return 0;
