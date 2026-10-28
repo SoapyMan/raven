@@ -35,11 +35,12 @@ an installer leaves in the system directory. Each new prefix registers the class
 `msxml3.dll`, `windowscodecs.dll`, `mlang.dll` and `propsys.dll` through `regsvr32`.
 
 Raven's corrections to upstream behavior live in `patches/` and are applied before the
-build. `support.c`, `storage.c`, `codecs.c`, `setup.c`, `printers.c`, `dllmain.c`, `entry.c`
-and `entry_wide.c` are Raven code: they answer the compatibility database, binary file
-patches, the class key helper and the delay-loaded imports the sources expect from
-libraries Raven does not ship, and give the programs and plain libraries their entry
-points. Binary patches of installed files are not applied yet.
+build. `support.c`, `storage.c`, `codecs.c`, `setup.c`, `printers.c`, `dllmain.c`, `entry.c`,
+`entry_wide.c` and `clicktorun.c` are Raven code: they answer the compatibility database,
+binary file patches, the class key helper and the delay-loaded imports the sources expect
+from libraries Raven does not ship, give the programs and plain libraries their entry
+points, and let the installer's queries find the components of Click-to-Run products in
+the manifests their packages keep. Binary patches of installed files are not applied yet.
 The build records every command, the hash of each extracted source and of each
 component in `provenance.json`.
 

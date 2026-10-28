@@ -275,6 +275,7 @@ def main():
          "-D_M_IX86" if x86 else "-D_M_AMD64", "-I" + str(msi_root), "-i", msi_root / "msi.rc", "-o", objects / "msi.res.o"])
     msi.append(objects / "msi.res.o")
     msi.append(objects / "installer_support.o")
+    msi.append(compile(support / "clicktorun.c", "msi_clicktorun"))
     msi.append(compile(source / "sdk/lib/3rdparty/libwine/dll_register.c", "msi_dll_register", ["-I" + str(msi_root)]))
     link("msi.dll", bases["msi"], [*msi, *debug], output / "msi.def",
          ["-L" + str(output), "-lsxs", "-lcabinet", "-lrpcrt4", *[f"-l{library}" for library in ("advapi32", "comctl32", "gdi32", "ole32", "oleaut32", "shell32",
