@@ -7,16 +7,29 @@ and `CreateProcess` runs batch files through it as `cmd /c "..."`.
 It is written from Microsoft's public description of the command processor and its commands, and from how they behave; no Windows
 code is used or consulted, nor the command processors of other projects.
 
-What it does so far:
+What it does:
 
-- the options `/C`, `/K`, `/Q` and `/S`, with the quote rule `cmd /?` describes for the command after `/C` or `/K`;
-- a prompt from `PROMPT` (`$P$G` by default) reading commands from the console or from redirected input;
-- `%NAME%` expansion, with `%ERRORLEVEL%` and `%CD%`, and in batch files `%0` to `%9`, `%*` and `%%`;
-- batch files, run line by line with `ECHO` showing each command, labels and `GOTO` (with `:EOF`);
-- `ECHO`, `REM`, `CD`/`CHDIR` (with `/D`), drive changes, `SET`, `CLS`, `VER`, `TITLE`, `TYPE`, `PAUSE`, `PATH`, `EXIT` (with `/B`);
+- the options `/C`, `/K`, `/R`, `/Q`, `/S`, `/D`, `/V:ON` and `/T:fg`, with the quote rule `cmd /?` describes for the command after
+  `/C` or `/K`;
+- a prompt from `PROMPT` (`$P$G` by default, with the codes `PROMPT /?` lists). At a console it has its own line editor: Left, Right,
+  Home and End (by words, or deleting to either end, with Ctrl), Backspace, Delete, Insert, Escape, F3, Up and Down through the
+  commands typed before, and Tab or Shift+Tab completing file names. `More?` asks for the rest of an open block;
+- the phases of a line: `%NAME%` with `:~start,count` and `:old=new` edits, `%ERRORLEVEL%`, `%CD%`, `%DATE%`, `%TIME%`, `%RANDOM%`
+  and the other dynamic variables; in batch files `%0` to `%9`, `%*`, `%%` and the `%~fdpnxsatz` and `%~$VAR:` modifiers. Then
+  carets, quotes, `&`, `&&`, `||`, `|`, the redirections `<`, `>`, `>>`, `n>` and `n>&m`, and parenthesised blocks over several
+  lines; FOR variables and, with delayed expansion, `!NAME!` as each command runs;
+- `IF` with `/I`, `NOT`, `ERRORLEVEL`, `EXIST`, `DEFINED`, `CMDEXTVERSION`, `==` and `EQU NEQ LSS LEQ GTR GEQ`, and `ELSE`;
+- `FOR` over sets of words and files, and with `/D`, `/R`, `/L` and `/F` (`eol`, `skip`, `delims`, `tokens`, `usebackq`; over
+  files, strings and the output of a command);
+- batch files with labels, `GOTO`, `CALL` of other batch files and of labels with their own arguments, `SHIFT`, `SETLOCAL` and
+  `ENDLOCAL`, `EXIT /B`, and Ctrl+C asking whether to end the batch job;
+- the built-ins `ASSOC`, `BREAK`, `CALL`, `CD`/`CHDIR` (with each drive's own folder), `CLS`, `COLOR`, `COPY` (with wildcards and
+  `+`), `DATE`, `DEL`/`ERASE`, `DIR` (`/A`, `/B`, `/L`, `/O`, `/S`, `/W`, `/-C`, `DIRCMD`), `ECHO`, `ENDLOCAL`, `EXIT`, `FTYPE`,
+  `GOTO`, `IF`, `FOR`, `MD`/`MKDIR`, `MKLINK`, `MOVE`, `PATH`, `PAUSE`, `POPD`, `PROMPT`, `PUSHD`, `RD`/`RMDIR`, `REM`,
+  `REN`/`RENAME`, `SET` (with `/A` and `/P`), `SETLOCAL`, `SHIFT`, `START`, `TIME`, `TITLE`, `TYPE`, `VER`, `VERIFY` and `VOL`, each
+  with a short `/?`;
 - programs found by their path, or in the current folder and then `PATH`, with the extensions of `PATHEXT`; a program's exit code
   becomes `ERRORLEVEL`, and a command nothing runs sets it to 9009.
 
-Not yet: the operators `&`, `&&`, `||` and `|`, redirection, parenthesised blocks, `IF`, `FOR`, `CALL`, `SETLOCAL`, delayed expansion,
-`%~` modifiers, `SET /A` and `SET /P`, and the other built-ins (`DIR`, `COPY`, `DEL`, `MD`, `RD`, `MOVE`, `REN`, `PUSHD`, `POPD`,
-`START`, ...).
+As on Windows, the left side of a pipe and the command of `FOR /F` run in a command processor of their own. The right side of a pipe
+runs in this one, so a variable it sets stays set.

@@ -1,7 +1,8 @@
 #include <windows.h>
 
 /* The command processor in the prefix, through pipes: a batch file started with CreateProcess runs in cmd /c, cmd /c runs built-in
-   commands and programs and ends with their ERRORLEVEL, and commands piped to its prompt run one by one. Returns the failed step. */
+   commands and programs and ends with their ERRORLEVEL, commands piped to its prompt run one by one, and a batch file that uses the
+   parser and the built-ins gives exactly the output it should. Returns the failed step, after the output that failed it. */
 
 static WCHAR folder[MAX_PATH];
 
@@ -40,6 +41,14 @@ static BOOL contains(const char *text, const char *wanted)
 			return TRUE;
 	}
 	return FALSE;
+}
+
+static DWORD length_of(const char *text)
+{
+	DWORD size = 0;
+	while (text[size])
+		++size;
+	return size;
 }
 
 static BOOL same(const char *left, const char *right)
@@ -102,6 +111,86 @@ static const char script[] = "@echo off\r\n"
 	"echo args %1 %2\r\n"
 	"exit /b 7\r\n";
 
+/* The parser and the built-ins together: IF and ELSE, FOR in its forms, CALL to a label, SETLOCAL with delayed expansion, SET /A and
+   the edits of variables, redirection and pipes, the file commands, GOTO and EXIT /B. */
+static const char features[] = "@echo off\r\n"
+	"set A=hello\r\n"
+	"if \"%A%\"==\"hello\" (echo if) else (echo bad)\r\n"
+	"if /i not \"%A%\"==\"X\" echo not\r\n"
+	"if 10 GTR 9 echo gtr\r\n"
+	"if exist features.bat echo exist\r\n"
+	"for %%i in (a b) do echo for %%i\r\n"
+	"for /l %%n in (1,2,5) do echo l %%n\r\n"
+	"for /f \"tokens=1,2 delims=,\" %%a in (\"x,y,z\") do echo f %%a %%b\r\n"
+	"for /f \"delims=\" %%l in ('echo captured') do echo %%l\r\n"
+	"call :sub one \"two words\"\r\n"
+	"echo called %ERRORLEVEL%\r\n"
+	"setlocal enabledelayedexpansion\r\n"
+	"set B=0\r\n"
+	"for %%i in (1 2 3) do set /a B+=%%i >nul\r\n"
+	"echo delayed !B!\r\n"
+	"endlocal\r\n"
+	"echo local [%B%]\r\n"
+	"set /a C=(2+3)*4\r\n"
+	"echo arith %C%\r\n"
+	"set S=abcdef\r\n"
+	"echo edit %S:~1,3% %S:c=X% %S:~-2%\r\n"
+	"echo redirected> out.txt\r\n"
+	"echo appended>> out.txt\r\n"
+	"type out.txt\r\n"
+	"echo exit 7| cmd /q /d >nul\r\n"
+	"echo pipe %ERRORLEVEL%\r\n"
+	"md sub\\deep\r\n"
+	"echo x> sub\\deep\\f.txt\r\n"
+	"copy sub\\deep\\f.txt copy.txt >nul && echo copy\r\n"
+	"ren copy.txt renamed.txt && echo ren\r\n"
+	"move renamed.txt sub >nul && echo move\r\n"
+	"dir /b sub\r\n"
+	"del sub\\renamed.txt && if not exist sub\\renamed.txt echo del\r\n"
+	"rd /s /q sub && if not exist sub echo rd\r\n"
+	"del out.txt\r\n"
+	"pushd sub 2>nul || echo pushd failed\r\n"
+	"nosuch 2>nul || echo missing %ERRORLEVEL%\r\n"
+	"goto end\r\n"
+	"echo never\r\n"
+	":end\r\n"
+	"echo nx0 %~nx0\r\n"
+	"exit /b 3\r\n"
+	":sub\r\n"
+	"echo sub %1 %~2 %0\r\n"
+	"exit /b 5\r\n";
+
+static const char features_output[] = "if\r\n"
+	"not\r\n"
+	"gtr\r\n"
+	"exist\r\n"
+	"for a\r\n"
+	"for b\r\n"
+	"l 1\r\n"
+	"l 3\r\n"
+	"l 5\r\n"
+	"f x y\r\n"
+	"captured\r\n"
+	"sub one two words :sub\r\n"
+	"called 5\r\n"
+	"delayed 6\r\n"
+	"local []\r\n"
+	"arith 20\r\n"
+	"edit bcd abXdef ef\r\n"
+	"redirected\r\n"
+	"appended\r\n"
+	"pipe 7\r\n"
+	"copy\r\n"
+	"ren\r\n"
+	"move\r\n"
+	"deep\r\n"
+	"renamed.txt\r\n"
+	"del\r\n"
+	"rd\r\n"
+	"pushd failed\r\n"
+	"missing 1\r\n"
+	"nx0 features.bat\r\n";
+
 int raven_entry(void)
 {
 	static char text[8192];
@@ -143,6 +232,19 @@ int raven_entry(void)
 	if (!run(processor, L"cmd.exe", "echo piped\r\nset RAVEN_TYPED=yes\r\necho %RAVEN_TYPED%\r\nexit 4\r\n", text, sizeof text, &code) ||
 		code != 4 || !contains(text, "raven-cmd-test>") || !contains(text, "piped\r\n") || !contains(text, "yes\r\n"))
 		return 9;
+	/* A batch file through cmd /c, its output exact, and the code its EXIT /B gives. */
+	WCHAR features_path[MAX_PATH] = {0};
+	append(features_path, folder);
+	append(features_path, L"\\features.bat");
+	file = CreateFileW(features_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+	if (file == INVALID_HANDLE_VALUE || !WriteFile(file, features, sizeof features - 1, &written, NULL))
+		return 10;
+	CloseHandle(file);
+	if (!run(processor, L"cmd.exe /c features.bat", NULL, text, sizeof text, &code) || code != 3 || !same(text, features_output)) {
+		WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), text, length_of(text), &written, NULL);
+		return 11;
+	}
+	DeleteFileW(features_path);
 	DeleteFileW(path);
 	RemoveDirectoryW(folder);
 	return 0;
