@@ -1160,7 +1160,8 @@ uint64_t NativeWindows::retrieve(std::span<const uint64_t> args,bool blocking)
 		}
 		if (!blocking) { queue_status(me,seen,true); return 0; }
 		if (std::chrono::steady_clock::now()>=deadline) throw NativeResult{NativeStop::timeout,0,0,0};
-		if (std::getenv("RAVEN_DUMP_WINDOWS") && !dumped && std::chrono::steady_clock::now()-started>std::chrono::seconds(9)) { dumped=true; dump_windows(); }
+		// RAVEN_DUMP_WINDOWS lists the windows once, after nine seconds or after as many seconds as its value names.
+		if (const char *dump=std::getenv("RAVEN_DUMP_WINDOWS"); dump && !dumped && std::chrono::steady_clock::now()-started>std::chrono::seconds(std::max(9,std::atoi(dump)))) { dumped=true; dump_windows(); }
 		caret_idle();
 		scroll_idle();
 		flush_dirty();
