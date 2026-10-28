@@ -542,6 +542,18 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(s_ok);
 	});
+	// No activation is ever handed to a filter, so registering one succeeds and it is never consulted.
+	registry.add("CoRegisterActivationFilter", 1, [](ApiCall &call) { call.ret(call[0] ? s_ok : 0x80070057U); });
+	// The multithreaded apartment stays alive while a usage cookie is out; the cookie names nothing beyond itself.
+	registry.add("CoIncrementMTAUsage", 1, [](ApiCall &call) {
+		if (!call[0]) {
+			call.ret(0x80070057U);
+			return;
+		}
+		call.store_pointer(call[0], 1);
+		call.ret(s_ok);
+	});
+	registry.add("CoDecrementMTAUsage", 1, [](ApiCall &call) { call.ret(call[0] ? s_ok : 0x80070057U); });
 	// The lock keeps an object alive for clients in other processes. Nothing here hands an object outside the process, so its own references
 	// are all that keep it, and locking or unlocking leaves it as it is.
 	registry.add("CoLockObjectExternal", 3, [](ApiCall &call) { call.ret(call[0] ? s_ok : 0x80070057U); });
