@@ -670,7 +670,11 @@ void NativeWindows::raw_mouse_input(int64_t dx,int64_t dy,uint32_t button_flags,
 
 void NativeWindows::post(uint64_t window,uint32_t message,uint64_t wparam,uint64_t lparam)
 {
-	if (window==0xffff) throw uint32_t(120);
+	// A broadcast goes to every top-level window, each in its own thread's queue.
+	if (window==0xffff) {
+		for (const auto handle : top_level_windows()) post(handle,message,wparam,lparam);
+		return;
+	}
 	if (window && !objects.window(window)) throw uint32_t(1400);
 	if (messages.size()>=10000) throw uint32_t(1816);
 	queue({window,wparam,lparam,message,message_time(),cursor_x,cursor_y});
