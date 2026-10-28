@@ -2665,6 +2665,288 @@ static IDWriteFontFallback *get_fallback(void)
 	return &fallback_object;
 }
 
+/* A fallback a program builds: its own mappings of character ranges to families come first, the system fallback answers the rest. */
+typedef struct {
+	DWRITE_UNICODE_RANGE *ranges;
+	UINT32 range_count;
+	WCHAR **names;
+	UINT32 name_count;
+	IDWriteFontCollection *collection;
+	FLOAT scale;
+} FallbackMapping;
+
+typedef struct {
+	const IDWriteFontFallbackVtbl *vtbl;
+	LONG refs;
+	FallbackMapping *mappings;
+	UINT32 count;
+} BuiltFallback;
+
+typedef struct {
+	const IDWriteFontFallbackBuilderVtbl *vtbl;
+	LONG refs;
+	FallbackMapping *mappings;
+	UINT32 count;
+} FallbackBuilder;
+
+static BOOL mapping_covers(const FallbackMapping *mapping, UINT32 codepoint)
+{
+	UINT32 index;
+	for (index = 0; index < mapping->range_count; ++index)
+		if (codepoint >= mapping->ranges[index].first && codepoint <= mapping->ranges[index].last)
+			return TRUE;
+	return FALSE;
+}
+
+/* The font of the named family in the mapping's collection that holds the character, or NULL. */
+static IDWriteFont *mapping_font(const FallbackMapping *mapping, const WCHAR *name, UINT32 codepoint, DWRITE_FONT_WEIGHT weight,
+	DWRITE_FONT_STYLE style, DWRITE_FONT_STRETCH stretch)
+{
+	IDWriteFontCollection *collection = mapping->collection ? mapping->collection : get_collection();
+	IDWriteFontFamily *family = NULL;
+	IDWriteFont *font = NULL;
+	UINT32 index = 0;
+	WINBOOL exists = FALSE;
+	if (FAILED(IDWriteFontCollection_FindFamilyName(collection, name, &index, &exists)) || !exists)
+		return NULL;
+	if (FAILED(IDWriteFontCollection_GetFontFamily(collection, index, &family)))
+		return NULL;
+	if (SUCCEEDED(IDWriteFontFamily_GetFirstMatchingFont(family, weight, stretch, style, &font))) {
+		exists = FALSE;
+		if (FAILED(IDWriteFont_HasCharacter(font, codepoint, &exists)) || !exists) {
+			IDWriteFont_Release(font);
+			font = NULL;
+		}
+	}
+	IDWriteFontFamily_Release(family);
+	return font;
+}
+
+static void mapping_clear(FallbackMapping *mapping)
+{
+	UINT32 name;
+	if (mapping->ranges)
+		FREE(mapping->ranges);
+	for (name = 0; name < mapping->name_count; ++name)
+		FREE(mapping->names[name]);
+	if (mapping->names)
+		FREE(mapping->names);
+	if (mapping->collection)
+		IDWriteFontCollection_Release(mapping->collection);
+	memset(mapping, 0, sizeof(*mapping));
+}
+
+static void mappings_free(FallbackMapping *mappings, UINT32 count)
+{
+	UINT32 index;
+	for (index = 0; index < count; ++index)
+		mapping_clear(&mappings[index]);
+	if (mappings)
+		FREE(mappings);
+}
+
+static HRESULT STDMETHODCALLTYPE built_query(IDWriteFontFallback *self, REFIID iid, void **out)
+{
+	if (!out)
+		return E_POINTER;
+	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFontFallback)) {
+		InterlockedIncrement(&((BuiltFallback *)self)->refs);
+		*out = self;
+		return S_OK;
+	}
+	*out = NULL;
+	return no_interface(iid);
+}
+static ULONG STDMETHODCALLTYPE built_add_ref(IDWriteFontFallback *self) { return (ULONG)InterlockedIncrement(&((BuiltFallback *)self)->refs); }
+static ULONG STDMETHODCALLTYPE built_release(IDWriteFontFallback *self)
+{
+	BuiltFallback *fallback = (BuiltFallback *)self;
+	LONG left = InterlockedDecrement(&fallback->refs);
+	if (!left) {
+		mappings_free(fallback->mappings, fallback->count);
+		FREE(fallback);
+	}
+	return (ULONG)left;
+}
+static HRESULT STDMETHODCALLTYPE built_map(IDWriteFontFallback *self, IDWriteTextAnalysisSource *source, UINT32 position, UINT32 length, IDWriteFontCollection *collection,
+	const WCHAR *base_name, DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STYLE style, DWRITE_FONT_STRETCH stretch, UINT32 *mapped_length, IDWriteFont **mapped_font, FLOAT *scale)
+{
+	BuiltFallback *fallback = (BuiltFallback *)self;
+	const WCHAR *text = NULL;
+	UINT32 available = 0, units, codepoint, index, name;
+	if (!source || !mapped_length || !mapped_font || !scale)
+		return E_INVALIDARG;
+	if (SUCCEEDED(IDWriteTextAnalysisSource_GetTextAtPosition(source, position, &text, &available)) && text && available) {
+		if (available > length)
+			available = length;
+		codepoint = next_codepoint(text, available, &units);
+		for (index = 0; index < fallback->count; ++index) {
+			const FallbackMapping *mapping = &fallback->mappings[index];
+			if (!mapping_covers(mapping, codepoint))
+				continue;
+			for (name = 0; name < mapping->name_count; ++name) {
+				IDWriteFont *font = mapping_font(mapping, mapping->names[name], codepoint, weight, style, stretch);
+				UINT32 covered = units;
+				if (!font)
+					continue;
+				/* The run goes on while the next characters stay in the mapping and in the font. */
+				while (covered < available) {
+					UINT32 step, next = next_codepoint(text + covered, available - covered, &step);
+					WINBOOL holds = FALSE;
+					if (!mapping_covers(mapping, next) || FAILED(IDWriteFont_HasCharacter(font, next, &holds)) || !holds)
+						break;
+					covered += step;
+				}
+				*mapped_length = covered;
+				*mapped_font = font;
+				*scale = mapping->scale;
+				return S_OK;
+			}
+		}
+	}
+	return fallback_map(get_fallback(), source, position, length, collection, base_name, weight, style, stretch, mapped_length, mapped_font, scale);
+}
+
+static void *Built_table_[IDWriteFontFallback_methods];
+
+static HRESULT STDMETHODCALLTYPE builder_query(IDWriteFontFallbackBuilder *self, REFIID iid, void **out)
+{
+	if (!out)
+		return E_POINTER;
+	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFontFallbackBuilder)) {
+		InterlockedIncrement(&((FallbackBuilder *)self)->refs);
+		*out = self;
+		return S_OK;
+	}
+	*out = NULL;
+	return no_interface(iid);
+}
+static ULONG STDMETHODCALLTYPE builder_add_ref(IDWriteFontFallbackBuilder *self) { return (ULONG)InterlockedIncrement(&((FallbackBuilder *)self)->refs); }
+static ULONG STDMETHODCALLTYPE builder_release(IDWriteFontFallbackBuilder *self)
+{
+	FallbackBuilder *builder = (FallbackBuilder *)self;
+	LONG left = InterlockedDecrement(&builder->refs);
+	if (!left) {
+		mappings_free(builder->mappings, builder->count);
+		FREE(builder);
+	}
+	return (ULONG)left;
+}
+static HRESULT STDMETHODCALLTYPE builder_add_mapping(IDWriteFontFallbackBuilder *self, const DWRITE_UNICODE_RANGE *ranges, UINT32 range_count,
+	const WCHAR **names, UINT32 name_count, IDWriteFontCollection *collection, const WCHAR *locale, const WCHAR *base_name, FLOAT scale)
+{
+	FallbackBuilder *builder = (FallbackBuilder *)self;
+	FallbackMapping *grown, *mapping;
+	UINT32 index;
+	if (!ranges || !range_count || !names || !name_count || scale <= 0.0f)
+		return E_INVALIDARG;
+	grown = builder->mappings ? HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, builder->mappings, (builder->count + 1) * sizeof(FallbackMapping))
+		: ALLOC(sizeof(FallbackMapping));
+	if (!grown)
+		return E_OUTOFMEMORY;
+	builder->mappings = grown;
+	mapping = &grown[builder->count];
+	mapping->ranges = ALLOC(range_count * sizeof(DWRITE_UNICODE_RANGE));
+	mapping->names = ALLOC(name_count * sizeof(WCHAR *));
+	if (!mapping->ranges || !mapping->names) {
+		mapping_clear(mapping);
+		return E_OUTOFMEMORY;
+	}
+	memcpy(mapping->ranges, ranges, range_count * sizeof(DWRITE_UNICODE_RANGE));
+	mapping->range_count = range_count;
+	for (index = 0; index < name_count; ++index)
+		if (names[index] && (mapping->names[mapping->name_count] = wdup(names[index])))
+			++mapping->name_count;
+	mapping->collection = collection;
+	if (collection)
+		IDWriteFontCollection_AddRef(collection);
+	mapping->scale = scale;
+	++builder->count;
+	return S_OK;
+}
+/* The system fallback is what a built fallback falls back to anyway; another built one hands over its mappings. */
+static HRESULT STDMETHODCALLTYPE builder_add_mappings(IDWriteFontFallbackBuilder *self, IDWriteFontFallback *fallback)
+{
+	BuiltFallback *source = (BuiltFallback *)fallback;
+	UINT32 index;
+	HRESULT result = S_OK;
+	if (!fallback)
+		return E_INVALIDARG;
+	if (fallback == get_fallback() || source->vtbl != (const IDWriteFontFallbackVtbl *)Built_table_)
+		return S_OK;
+	for (index = 0; index < source->count && SUCCEEDED(result); ++index) {
+		const FallbackMapping *mapping = &source->mappings[index];
+		result = builder_add_mapping(self, mapping->ranges, mapping->range_count, (const WCHAR **)mapping->names, mapping->name_count,
+			mapping->collection, NULL, NULL, mapping->scale);
+	}
+	return result;
+}
+static HRESULT STDMETHODCALLTYPE builder_create(IDWriteFontFallbackBuilder *self, IDWriteFontFallback **out)
+{
+	FallbackBuilder *builder = (FallbackBuilder *)self;
+	BuiltFallback *fallback;
+	IDWriteFontFallbackBuilder *copy = NULL;
+	if (!out)
+		return E_POINTER;
+	*out = NULL;
+	if (!Built_table_[0]) {
+		memcpy(Built_table_, IDWriteFontFallback_table, sizeof(Built_table_));
+		Built_table_[IDWriteFontFallback_QueryInterface] = (void *)built_query;
+		Built_table_[IDWriteFontFallback_AddRef] = (void *)built_add_ref;
+		Built_table_[IDWriteFontFallback_Release] = (void *)built_release;
+		Built_table_[IDWriteFontFallback_MapCharacters] = (void *)built_map;
+	}
+	fallback = ALLOC(sizeof(BuiltFallback));
+	if (!fallback)
+		return E_OUTOFMEMORY;
+	fallback->vtbl = (const IDWriteFontFallbackVtbl *)Built_table_;
+	fallback->refs = 1;
+	/* The fallback keeps its own copy, so the builder can go on adding mappings for another one. */
+	if (builder->count) {
+		FallbackBuilder scratch = {builder->vtbl, 1, NULL, 0};
+		UINT32 index;
+		copy = (IDWriteFontFallbackBuilder *)&scratch;
+		for (index = 0; index < builder->count; ++index) {
+			const FallbackMapping *mapping = &builder->mappings[index];
+			if (FAILED(builder_add_mapping(copy, mapping->ranges, mapping->range_count, (const WCHAR **)mapping->names, mapping->name_count,
+				mapping->collection, NULL, NULL, mapping->scale))) {
+				mappings_free(scratch.mappings, scratch.count);
+				FREE(fallback);
+				return E_OUTOFMEMORY;
+			}
+		}
+		fallback->mappings = scratch.mappings;
+		fallback->count = scratch.count;
+	}
+	*out = (IDWriteFontFallback *)fallback;
+	return S_OK;
+}
+
+static void *Builder_table_[6];
+
+static HRESULT STDMETHODCALLTYPE factory2_fallback_builder(IDWriteFactory2 *self, IDWriteFontFallbackBuilder **out)
+{
+	FallbackBuilder *builder;
+	if (!out)
+		return E_POINTER;
+	*out = NULL;
+	if (!Builder_table_[0]) {
+		Builder_table_[0] = (void *)builder_query;
+		Builder_table_[1] = (void *)builder_add_ref;
+		Builder_table_[2] = (void *)builder_release;
+		Builder_table_[3] = (void *)builder_add_mapping;
+		Builder_table_[4] = (void *)builder_add_mappings;
+		Builder_table_[5] = (void *)builder_create;
+	}
+	builder = ALLOC(sizeof(FallbackBuilder));
+	if (!builder)
+		return E_OUTOFMEMORY;
+	builder->vtbl = (const IDWriteFontFallbackBuilderVtbl *)Builder_table_;
+	builder->refs = 1;
+	*out = (IDWriteFontFallbackBuilder *)builder;
+	return S_OK;
+}
+
 #include "text.inc"
 #include "analyzer.inc"
 
@@ -2884,6 +3166,7 @@ static HRESULT create_factory(REFIID iid, IUnknown **out)
 		Factory_table_[IDWriteFactory1_GetEudcFontCollection] = (void *)factory1_eudc;
 		Factory_table_[IDWriteFactory1_IDWriteFactory1_CreateCustomRenderingParams] = (void *)factory1_custom_params;
 		Factory_table_[IDWriteFactory2_GetSystemFontFallback] = (void *)factory2_fallback;
+		Factory_table_[IDWriteFactory2_CreateFontFallbackBuilder] = (void *)factory2_fallback_builder;
 		Factory_table_[IDWriteFactory2_TranslateColorGlyphRun] = (void *)factory2_color_run;
 		Factory_table_[IDWriteFactory2_IDWriteFactory2_CreateCustomRenderingParams] = (void *)factory2_custom_params;
 		Factory_table_[IDWriteFactory2_IDWriteFactory2_CreateGlyphRunAnalysis] = (void *)factory2_glyph_analysis;
