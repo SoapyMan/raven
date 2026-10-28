@@ -2740,11 +2740,12 @@ static constexpr std::string_view slc_exports[]{
 	"SLGetWindowsInformation","SLGetWindowsInformationDWORD",
 };
 static constexpr std::string_view sppc_exports[]{
-	"SLClose","SLConsumeRight","SLDepositMigrationBlob","SLGetApplicationInformation","SLGetApplicationPolicy","SLGetAuthenticationResult",
-	"SLGetInstalledProductKeyIds","SLGetLicense","SLGetLicenseFileId","SLGetLicenseInformation","SLGetLicensingStatusInformation","SLGetPKeyInformation",
-	"SLGetPolicyInformation","SLGetPolicyInformationDWORD","SLGetProductSkuInformation","SLGetSLIDList","SLGetServiceInformation","SLInstallLicense",
-	"SLInstallProofOfPurchase","SLLoadApplicationPolicies","SLOpen","SLPersistApplicationPolicies","SLUninstallLicense","SLUninstallProofOfPurchase",
-	"SLUnloadApplicationPolicies",
+	"SLClose","SLConsumeRight","SLDepositMigrationBlob","SLDepositOfflineConfirmationId","SLGenerateOfflineInstallationId","SLGetApplicationInformation",
+	"SLGetApplicationPolicy","SLGetAuthenticationResult","SLGetInstalledProductKeyIds","SLGetLicense","SLGetLicenseFileId","SLGetLicenseInformation",
+	"SLGetLicensingStatusInformation","SLGetPKeyId","SLGetPKeyInformation","SLGetPolicyInformation","SLGetPolicyInformationDWORD","SLGetProductSkuInformation",
+	"SLGetSLIDList","SLGetServiceInformation","SLInstallLicense","SLInstallProofOfPurchase","SLLoadApplicationPolicies","SLOpen",
+	"SLPersistApplicationPolicies","SLPersistRTSPayloadOverride","SLReArm","SLRegisterPlugin","SLSetAuthenticationData","SLUninstallLicense",
+	"SLUninstallProofOfPurchase","SLUnloadApplicationPolicies",
 };
 static constexpr std::string_view rstrtmgr_exports[]{
 	"RmAddFilter","RmCancelCurrentTask","RmEndSession","RmGetFilterList","RmGetList","RmJoinSession",

@@ -498,12 +498,20 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("SLUninstallLicense", 2, answer(0xc004f011U));
 	registry.add("SLUninstallProofOfPurchase", 2, answer(0xc004f012U));
 	registry.add("SLInstallLicense", 4, answer(0xc004f016U));
+	// No product key configuration is installed to tell a key's ID, and no SKU to identify offline, confirm or rearm.
+	registry.add("SLGetPKeyId", 6, answer(0xc004f016U));
+	registry.add("SLGenerateOfflineInstallationId", 3, answer(0xc004f012U));
+	registry.add("SLDepositOfflineConfirmationId", 4, answer(0xc004f016U));
+	registry.add("SLReArm", 4, answer(0xc004f016U));
+	registry.add("SLSetAuthenticationData", 3, answer(0xc004f016U));
 	registry.add("SLInstallProofOfPurchase", 6, answer(0xc004f016U));
 	registry.add("SLGetAuthenticationResult", 2, answer(0xc004f016U));
 	registry.add("SLPersistApplicationPolicies", 3, answer(0));
 	registry.add("SLUnloadApplicationPolicies", 2, answer(0));
-	// Undocumented: present because programs look for it, and it refuses every deposit.
+	// Undocumented: present because programs look for them, and they refuse every request.
 	registry.add("SLDepositMigrationBlob", 4, [](ApiCall &call) { call.ret(0xc004f016U); });
+	registry.add("SLRegisterPlugin", 4, [](ApiCall &call) { call.ret(0xc004f016U); });
+	registry.add("SLPersistRTSPayloadOverride", 4, [](ApiCall &call) { call.ret(0xc004f016U); });
 	// All logical processors form one group of at most 64: the masks of the process and the system are the same.
 	const auto processor_mask = [] {
 		const long count = std::max<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1);
