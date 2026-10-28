@@ -209,6 +209,25 @@ static DWORD cached_render(DWORD font, DWORD glyph, INT32 em16, const INT32 *mat
 	return size;
 }
 
+/* A refused interface goes to the trace by its GUID, so a program that needs one more interface shows which. */
+static HRESULT no_interface(REFIID iid)
+{
+	static const char digits[] = "0123456789abcdef";
+	char text[64] = "dwrite: no interface ";
+	size_t at = 21, index;
+	const BYTE *bytes = (const BYTE *)iid;
+	static const BYTE order[16] = {3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15};
+	for (index = 0; index < 16; ++index) {
+		if (index == 4 || index == 6 || index == 8 || index == 10)
+			text[at++] = '-';
+		text[at++] = digits[bytes[order[index]] >> 4];
+		text[at++] = digits[bytes[order[index]] & 15];
+	}
+	text[at] = 0;
+	RavenTrace(text);
+	return E_NOINTERFACE;
+}
+
 static HRESULT unimplemented(const char *interface_name, const char *method)
 {
 	char text[160];
@@ -618,7 +637,7 @@ static HRESULT STDMETHODCALLTYPE strings_query(IDWriteLocalizedStrings *self, RE
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE strings_add_ref(IDWriteLocalizedStrings *self) { return (ULONG)InterlockedIncrement(&((Strings *)self)->refs); }
 static ULONG STDMETHODCALLTYPE strings_release(IDWriteLocalizedStrings *self)
@@ -722,7 +741,7 @@ static HRESULT STDMETHODCALLTYPE stream_query(IDWriteFontFileStream *self, REFII
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE stream_add_ref(IDWriteFontFileStream *self) { return (ULONG)InterlockedIncrement(&((Stream *)self)->refs); }
 static ULONG STDMETHODCALLTYPE stream_release(IDWriteFontFileStream *self)
@@ -799,7 +818,7 @@ static HRESULT STDMETHODCALLTYPE loader_query(IDWriteFontFileLoader *self, REFII
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE loader_add_ref(IDWriteFontFileLoader *self) { return 2; }
 static ULONG STDMETHODCALLTYPE loader_release(IDWriteFontFileLoader *self) { return 1; }
@@ -910,7 +929,7 @@ static HRESULT STDMETHODCALLTYPE file_query(IDWriteFontFile *self, REFIID iid, v
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE file_add_ref(IDWriteFontFile *self) { return (ULONG)InterlockedIncrement(&((FontFile *)self)->refs); }
 static ULONG STDMETHODCALLTYPE file_release(IDWriteFontFile *self)
@@ -1089,7 +1108,7 @@ static HRESULT STDMETHODCALLTYPE face_query(IDWriteFontFace *self, REFIID iid, v
 	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFontFace) || same_guid(iid, &IID_IDWriteFontFace1))
 		*out = face;
 	else
-		return E_NOINTERFACE;
+		return no_interface(iid);
 	InterlockedIncrement(&face->refs);
 	return S_OK;
 }
@@ -1456,7 +1475,7 @@ static HRESULT STDMETHODCALLTYPE font_query(IDWriteFont *self, REFIID iid, void 
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE font_add_ref(IDWriteFont *self) { return (ULONG)InterlockedIncrement(&FONT_OF(self)->refs); }
 static ULONG STDMETHODCALLTYPE font_release(IDWriteFont *self)
@@ -1649,7 +1668,7 @@ static HRESULT STDMETHODCALLTYPE family_query(IDWriteFontFamily *self, REFIID ii
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE family_add_ref(IDWriteFontFamily *self) { return (ULONG)InterlockedIncrement(&FAMILY_OF(self)->refs); }
 static ULONG STDMETHODCALLTYPE family_release(IDWriteFontFamily *self)
@@ -1735,7 +1754,7 @@ static HRESULT STDMETHODCALLTYPE collection_query(IDWriteFontCollection *self, R
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE collection_add_ref(IDWriteFontCollection *self) { return 2; }
 static ULONG STDMETHODCALLTYPE collection_release(IDWriteFontCollection *self) { return 1; }
@@ -1836,7 +1855,7 @@ static HRESULT STDMETHODCALLTYPE custom_query(IDWriteFontCollection *self, REFII
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE custom_add_ref(IDWriteFontCollection *self) { return 2; }
 static ULONG STDMETHODCALLTYPE custom_release(IDWriteFontCollection *self) { return 1; }
@@ -2074,7 +2093,7 @@ static HRESULT STDMETHODCALLTYPE params_query(IDWriteRenderingParams *self, REFI
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE params_add_ref(IDWriteRenderingParams *self) { return (ULONG)InterlockedIncrement(&PARAMS_OF(self)->refs); }
 static ULONG STDMETHODCALLTYPE params_release(IDWriteRenderingParams *self)
@@ -2155,7 +2174,7 @@ static HRESULT STDMETHODCALLTYPE analysis_query(IDWriteGlyphRunAnalysis *self, R
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE analysis_add_ref(IDWriteGlyphRunAnalysis *self) { return (ULONG)InterlockedIncrement(&ANALYSIS_OF(self)->refs); }
 static ULONG STDMETHODCALLTYPE analysis_release(IDWriteGlyphRunAnalysis *self)
@@ -2376,7 +2395,7 @@ static HRESULT STDMETHODCALLTYPE interop_query(IDWriteGdiInterop *self, REFIID i
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE interop_add_ref(IDWriteGdiInterop *self) { return 2; }
 static ULONG STDMETHODCALLTYPE interop_release(IDWriteGdiInterop *self) { return 1; }
@@ -2484,7 +2503,7 @@ static HRESULT STDMETHODCALLTYPE fallback_query(IDWriteFontFallback *self, REFII
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE fallback_add_ref(IDWriteFontFallback *self) { return 2; }
 static ULONG STDMETHODCALLTYPE fallback_release(IDWriteFontFallback *self) { return 1; }
@@ -2576,7 +2595,7 @@ static HRESULT STDMETHODCALLTYPE factory_query(IDWriteFactory2 *self, REFIID iid
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE factory_add_ref(IDWriteFactory2 *self) { return (ULONG)InterlockedIncrement(&factory_object.refs); }
 static ULONG STDMETHODCALLTYPE factory_release(IDWriteFactory2 *self) { return (ULONG)InterlockedDecrement(&factory_object.refs); }
@@ -2703,7 +2722,7 @@ static HRESULT STDMETHODCALLTYPE substitution_query(IDWriteNumberSubstitution *s
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE substitution_add_ref(IDWriteNumberSubstitution *self) { return (ULONG)InterlockedIncrement(&((Substitution *)self)->refs); }
 static ULONG STDMETHODCALLTYPE substitution_release(IDWriteNumberSubstitution *self)
