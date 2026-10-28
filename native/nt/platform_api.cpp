@@ -752,6 +752,8 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	});
 	registry.add("ReleaseStgMedium", 1, [](ApiCall &) {});
 	registry.add("OleFlushClipboard", 0, [](ApiCall &call) { call.ret(s_ok); });
+	// No data object is ever put on the clipboard, so none is the current one.
+	registry.add("OleIsCurrentClipboard", 1, [](ApiCall &call) { call.ret(1); });
 	registry.add("OleGetClipboard", 1, [](ApiCall &call) {
 		if (call[0]) call.store_pointer(call[0], 0);
 		call.ret(e_notimpl);
