@@ -1303,6 +1303,8 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		group->members.clear();
 	});
 	registry.add("CloseThreadpoolCleanupGroup", 1, [&objects](ApiCall &call) { objects.close(call[0]); });
+	// The pool grows as callbacks need threads, so a long callback needs no notice; another thread is always available.
+	registry.add("CallbackMayRunLong", 1, [](ApiCall &call) { call.ret(1); });
 
 	// Registered waits are checked whenever every thread waits; a satisfied one starts its callback on a new guest thread.
 	auto registrations = std::make_shared<std::vector<std::shared_ptr<WaitRegistration>>>();
