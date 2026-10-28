@@ -2390,7 +2390,7 @@ static HRESULT STDMETHODCALLTYPE interop_query(IDWriteGdiInterop *self, REFIID i
 {
 	if (!out)
 		return E_POINTER;
-	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteGdiInterop)) {
+	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteGdiInterop) || same_guid(iid, &IID_IDWriteGdiInterop1)) {
 		*out = self;
 		return S_OK;
 	}
@@ -2450,13 +2450,96 @@ static HRESULT STDMETHODCALLTYPE interop_face_to_logfont(IDWriteGdiInterop *self
 	return result;
 }
 
-static void *Interop_table_[IDWriteGdiInterop_methods];
+/* IDWriteGdiInterop1: the font a LOGFONT names in a given collection, and the scripts and code pages a font claims. */
+static HRESULT STDMETHODCALLTYPE interop_create_font_in(IDWriteGdiInterop *self, const LOGFONTW *logfont, IDWriteFontCollection *collection,
+	IDWriteFont **font)
+{
+	IDWriteFontFamily *family = NULL;
+	UINT32 index = 0;
+	WINBOOL exists = FALSE;
+	HRESULT result;
+	if (!logfont || !font)
+		return E_INVALIDARG;
+	*font = NULL;
+	if (!collection)
+		return interop_create_font(self, logfont, font);
+	result = IDWriteFontCollection_FindFamilyName(collection, logfont->lfFaceName, &index, &exists);
+	if (FAILED(result))
+		return result;
+	if (!exists)
+		return DWRITE_E_NOFONT;
+	result = IDWriteFontCollection_GetFontFamily(collection, index, &family);
+	if (FAILED(result))
+		return result;
+	result = IDWriteFontFamily_GetFirstMatchingFont(family, (DWRITE_FONT_WEIGHT)(logfont->lfWeight ? logfont->lfWeight : 400),
+		DWRITE_FONT_STRETCH_NORMAL, logfont->lfItalic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL, font);
+	IDWriteFontFamily_Release(family);
+	return result;
+}
+
+static UINT32 big_endian32(const BYTE *bytes) { return ((UINT32)bytes[0] << 24) | ((UINT32)bytes[1] << 16) | ((UINT32)bytes[2] << 8) | bytes[3]; }
+
+/* The two GetFontSignature slots take a font or a font face; either object answers here, whichever order the slots come in. */
+static HRESULT STDMETHODCALLTYPE interop_signature(IDWriteGdiInterop *self, IUnknown *object, FONTSIGNATURE *signature)
+{
+	IDWriteFont *font = NULL;
+	IDWriteFontFace *face = NULL;
+	const void *table = NULL;
+	UINT32 size = 0;
+	void *context = NULL;
+	WINBOOL exists = FALSE;
+	HRESULT result;
+	if (!object || !signature)
+		return E_INVALIDARG;
+	memset(signature, 0, sizeof(*signature));
+	if (SUCCEEDED(IUnknown_QueryInterface(object, &IID_IDWriteFont, (void **)&font))) {
+		result = IDWriteFont_CreateFontFace(font, &face);
+		IDWriteFont_Release(font);
+		if (FAILED(result))
+			return result;
+	} else if (FAILED(IUnknown_QueryInterface(object, &IID_IDWriteFontFace, (void **)&face))) {
+		return E_INVALIDARG;
+	}
+	result = IDWriteFontFace_TryGetFontTable(face, DWRITE_MAKE_OPENTYPE_TAG('O', 'S', '/', '2'), &table, &size, &context, &exists);
+	if (SUCCEEDED(result) && exists && size >= 58) {
+		const BYTE *bytes = table;
+		UINT32 index;
+		for (index = 0; index < 4; ++index)
+			signature->fsUsb[index] = big_endian32(bytes + 42 + index * 4);
+		if (size >= 86 && ((bytes[0] << 8) | bytes[1]) >= 1) {
+			signature->fsCsb[0] = big_endian32(bytes + 78);
+			signature->fsCsb[1] = big_endian32(bytes + 82);
+		}
+	}
+	if (exists)
+		IDWriteFontFace_ReleaseFontTable(face, context);
+	IDWriteFontFace_Release(face);
+	/* A font that claims no script still draws Latin text. */
+	if (!signature->fsCsb[0] && !signature->fsCsb[1]) {
+		signature->fsUsb[0] |= 3;
+		signature->fsCsb[0] = 1;
+	}
+	return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE interop_matching_fonts(IDWriteGdiInterop *self, const LOGFONTW *logfont, IUnknown *set, IUnknown **subset)
+{
+	if (subset)
+		*subset = NULL;
+	return unimplemented("IDWriteGdiInterop1", "GetMatchingFontsByLOGFONT");
+}
+
+/* The IDWriteGdiInterop1 slots after those of IDWriteGdiInterop. */
+enum { Interop1_CreateFontFromLOGFONT = 8, Interop1_GetFontSignature_face = 9, Interop1_GetFontSignature = 10,
+	Interop1_GetMatchingFontsByLOGFONT = 11, Interop1_methods = 12 };
+
+static void *Interop_table_[Interop1_methods];
 static IDWriteGdiInterop interop_object;
 
 static IDWriteGdiInterop *get_interop(void)
 {
 	if (!interop_object.lpVtbl) {
-		memcpy(Interop_table_, IDWriteGdiInterop_table, sizeof(Interop_table_));
+		memcpy(Interop_table_, IDWriteGdiInterop_table, IDWriteGdiInterop_methods * sizeof(void *));
 		Interop_table_[IDWriteGdiInterop_QueryInterface] = (void *)interop_query;
 		Interop_table_[IDWriteGdiInterop_AddRef] = (void *)interop_add_ref;
 		Interop_table_[IDWriteGdiInterop_Release] = (void *)interop_release;
@@ -2464,6 +2547,10 @@ static IDWriteGdiInterop *get_interop(void)
 		Interop_table_[IDWriteGdiInterop_ConvertFontToLOGFONT] = (void *)interop_font_to_logfont;
 		Interop_table_[IDWriteGdiInterop_ConvertFontFaceToLOGFONT] = (void *)interop_face_to_logfont;
 		Interop_table_[IDWriteGdiInterop_CreateBitmapRenderTarget] = (void *)interop_create_target;
+		Interop_table_[Interop1_CreateFontFromLOGFONT] = (void *)interop_create_font_in;
+		Interop_table_[Interop1_GetFontSignature_face] = (void *)interop_signature;
+		Interop_table_[Interop1_GetFontSignature] = (void *)interop_signature;
+		Interop_table_[Interop1_GetMatchingFontsByLOGFONT] = (void *)interop_matching_fonts;
 		interop_object.lpVtbl = (IDWriteGdiInteropVtbl *)Interop_table_;
 	}
 	return &interop_object;
