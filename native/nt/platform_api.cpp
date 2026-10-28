@@ -1027,6 +1027,17 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("RoInitialize", 1, [initialize](ApiCall &call) { initialize(call, call.u32(0) == 1, true); });
 	registry.add("RoUninitialize", 0, uninitialize);
 	registry.add("RoGetActivationFactory", 3, [](ApiCall &call) {
+		// The traced failure says which class was asked for.
+		static const bool traced = std::getenv("RAVEN_TRACE_FAIL") != nullptr;
+		if (traced && call[0]) {
+			std::string name;
+			try {
+				const auto length = std::min<uint32_t>(call.load<uint32_t>(call[0] + 4), 200);
+				const auto text = call.read(call.load_pointer(call[0] + 16), length * 2);
+				for (size_t i = 0; i < length; ++i) name.push_back(text[i * 2 + 1] ? '?' : char(text[i * 2]));
+			} catch (const ApiFault &) {}
+			std::fprintf(stderr, "raven: no Windows Runtime class %s\n", name.c_str());
+		}
 		if (call[2])
 			call.store_pointer(call[2], 0);
 		call.ret(0x80040154U);
