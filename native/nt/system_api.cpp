@@ -992,6 +992,15 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	// Recovery callbacks run only when Windows Error Reporting catches a hang or crash, which never happens here.
 	registry.add("RegisterApplicationRecoveryCallback", 4, [](ApiCall &call) { call.ret(call[0] ? 0 : 0x80070057U); });
 	registry.add("UnregisterApplicationRecoveryCallback", 0, [](ApiCall &call) { call.ret(0); });
+	// Out-of-box setup finished long ago.
+	registry.add("OOBEComplete", 1, [](ApiCall &call) {
+		if (!call[0]) {
+			call.fail(87);
+			return;
+		}
+		call.store<uint32_t>(call[0], 1);
+		call.ret(1);
+	});
 
 	registry.add("GetModuleFileNameW", 3, [&](ApiCall &call) {
 		std::u16string text;
