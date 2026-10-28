@@ -1258,7 +1258,7 @@ static struct Node *parse_primary(void)
 	return node;
 }
 
-/* Commands joined by |; each side but the last keeps its text, for the command processor that runs it. */
+/* Commands joined by |; each side keeps its text, for the command processor that runs it. */
 static struct Node *parse_pipeline(void)
 {
 	while (blank(*cursor))
@@ -1279,6 +1279,9 @@ static struct Node *parse_pipeline(void)
 		release(left->source);
 		left->source = duplicate(start, size);
 		++cursor;
+		while (blank(*cursor))
+			++cursor;
+		const WCHAR *right_start = cursor;
 		struct Node *right = parse_primary();
 		if (!right) {
 			if (!incomplete)
@@ -1286,6 +1289,10 @@ static struct Node *parse_pipeline(void)
 			free_node(left);
 			return NULL;
 		}
+		DWORD right_size = (DWORD)(cursor - right_start);
+		while (right_size && blank(right_start[right_size - 1]))
+			--right_size;
+		right->source = duplicate(right_start, right_size);
 		left = pair(PIPE, left, right);
 	}
 }
@@ -1526,33 +1533,48 @@ static WCHAR *processor_line(const WCHAR *text)
 	return text_take(&line);
 }
 
-/* a | b: the left side runs in a command processor of its own, writing into the pipe, while the right side reads it here. */
+/* Starts one side of a pipe in a command processor of its own. */
+static BOOL launch_side(struct Node *side, HANDLE *process)
+{
+	WCHAR *text = prepared(side->source ? side->source : L"");
+	WCHAR *line = processor_line(text);
+	release(text);
+	const BOOL started = launch(self, line, NULL, process);
+	release(line);
+	return started;
+}
+
+/* a | b: each side runs in a command processor of its own, as cmd runs them, so what a side sets stays in it; the left writes into
+   the pipe and the right reads it. ERRORLEVEL is the right side's exit code. */
 static DWORD run_pipe(struct Node *node)
 {
 	SECURITY_ATTRIBUTES inherit = {sizeof inherit, NULL, TRUE};
-	HANDLE reader, writer, process = NULL;
+	HANDLE reader, writer, left = NULL, right = NULL;
 	if (!CreatePipe(&reader, &writer, &inherit, 0))
 		return failure(L"The pipe could not be created.\r\n");
+	/* Each child inherits only its own end, so the reader sees the end of the input when the left side ends. */
 	SetHandleInformation(reader, HANDLE_FLAG_INHERIT, 0);
-	WCHAR *text = prepared(node->left->source ? node->left->source : L"");
-	WCHAR *line = processor_line(text);
-	release(text);
-	const HANDLE saved_output = output;
+	const HANDLE saved_input = input, saved_output = output;
 	output = writer;
-	const BOOL started = launch(self, line, NULL, &process);
+	const BOOL left_started = launch_side(node->left, &left);
 	output = saved_output;
-	release(line);
 	CloseHandle(writer);
 	SetHandleInformation(reader, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
-	const HANDLE saved_input = input;
 	input = reader;
-	const DWORD status = execute(node->right);
+	const BOOL right_started = launch_side(node->right, &right);
 	input = saved_input;
 	CloseHandle(reader);
-	if (started) {
-		WaitForSingleObject(process, INFINITE);
-		CloseHandle(process);
+	DWORD status = errorlevel;
+	if (right_started) {
+		WaitForSingleObject(right, INFINITE);
+		GetExitCodeProcess(right, &status);
+		CloseHandle(right);
 	}
+	if (left_started) {
+		WaitForSingleObject(left, INFINITE);
+		CloseHandle(left);
+	}
+	errorlevel = status;
 	return status;
 }
 

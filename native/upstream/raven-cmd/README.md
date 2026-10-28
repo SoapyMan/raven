@@ -31,5 +31,5 @@ What it does:
 - programs found by their path, or in the current folder and then `PATH`, with the extensions of `PATHEXT`; a program's exit code
   becomes `ERRORLEVEL`, and a command nothing runs sets it to 9009.
 
-As on Windows, the left side of a pipe and the command of `FOR /F` run in a command processor of their own. The right side of a pipe
-runs in this one, so a variable it sets stays set.
+As on Windows, both sides of a pipe and the command of `FOR /F` run in a command processor of their own, so a variable a side of a
+pipe sets does not reach the prompt.
