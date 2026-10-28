@@ -554,7 +554,8 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 		// TokenElevationType: full for an elevated process, limited (the filtered token of an administrator) otherwise; TokenElevation.
 		case 18: data = {process_elevated() ? uint8_t(2) : uint8_t(3), 0, 0, 0}; break;
 		case 20: data = {process_elevated() ? uint8_t(1) : uint8_t(0), 0, 0, 0}; break;
-		case 29: data = {0, 0, 0, 0}; break;
+		// TokenUIAccess and TokenIsAppContainer: no process here is an accessibility tool or runs in an app container.
+		case 26: case 29: data = {0, 0, 0, 0}; break;
 		case 25: with_sid(make_sid(16, {value.integrity}), 0x60, true); break;
 		case 10: data.assign(56, 0); break;
 		default:
@@ -1214,33 +1215,35 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("GetSidSubAuthority", 2, [](ApiCall &call) { call.ret(call[0] + 8 + 4 * uint64_t(call.u32(1))); });
 	registry.add("GetSidLengthRequired", 1, [](ApiCall &call) { call.ret(8 + 4 * uint32_t(uint8_t(call.u32(0)))); });
 	// S-R-I-S-S...: the string form of a SID, in memory the program frees with LocalFree.
-	registry.add("ConvertSidToStringSidW", 2, [&context](ApiCall &call) {
-		if (!valid_sid(call, call[0]) || !call[1]) {
-			call.fail(87);
-			return;
-		}
-		const auto sid = call.read(call[0], sid_length(call, call[0]));
-		uint64_t authority = 0;
-		for (int index = 2; index < 8; ++index)
-			authority = authority << 8 | sid[size_t(index)];
-		std::string text = "S-1-" + std::to_string(authority);
-		for (size_t index = 0; index < sid[1]; ++index) {
-			uint32_t value;
-			std::memcpy(&value, sid.data() + 8 + index * 4, 4);
-			text += "-" + std::to_string(value);
-		}
-		const auto memory = context.allocator.allocate((text.size() + 1) * 2, true);
-		if (!memory) {
-			call.fail(8);
-			return;
-		}
-		std::vector<uint8_t> wide((text.size() + 1) * 2);
-		for (size_t index = 0; index < text.size(); ++index)
-			wide[index * 2] = uint8_t(text[index]);
-		call.write(memory, wide);
-		call.store_pointer(call[1], memory);
-		call.ret(1);
-	});
+	for (const bool wide : {true, false})
+		registry.add(wide ? "ConvertSidToStringSidW" : "ConvertSidToStringSidA", 2, [&context, wide](ApiCall &call) {
+			if (!valid_sid(call, call[0]) || !call[1]) {
+				call.fail(87);
+				return;
+			}
+			const auto sid = call.read(call[0], sid_length(call, call[0]));
+			uint64_t authority = 0;
+			for (int index = 2; index < 8; ++index)
+				authority = authority << 8 | sid[size_t(index)];
+			std::string text = "S-1-" + std::to_string(authority);
+			for (size_t index = 0; index < sid[1]; ++index) {
+				uint32_t value;
+				std::memcpy(&value, sid.data() + 8 + index * 4, 4);
+				text += "-" + std::to_string(value);
+			}
+			const size_t unit = wide ? 2 : 1;
+			const auto memory = context.allocator.allocate((text.size() + 1) * unit, true);
+			if (!memory) {
+				call.fail(8);
+				return;
+			}
+			std::vector<uint8_t> bytes((text.size() + 1) * unit);
+			for (size_t index = 0; index < text.size(); ++index)
+				bytes[index * unit] = uint8_t(text[index]);
+			call.write(memory, bytes);
+			call.store_pointer(call[1], memory);
+			call.ret(1);
+		});
 	// The string form of a security descriptor to a self-relative one in memory the program frees with LocalFree.
 	for (const bool wide : {true, false})
 		registry.add(wide ? "ConvertStringSecurityDescriptorToSecurityDescriptorW" : "ConvertStringSecurityDescriptorToSecurityDescriptorA", 4,

@@ -1201,7 +1201,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	// out of them; no report is ever sent, so each registration succeeds with S_OK and keeps nothing.
 	for (const auto name : {"WerRegisterRuntimeExceptionModule", "WerUnregisterRuntimeExceptionModule", "WerRegisterMemoryBlock",
 			"WerUnregisterMemoryBlock", "WerRegisterFile", "WerUnregisterFile", "WerSetFlags", "WerAddExcludedApplication",
-			"WerRemoveExcludedApplication"})
+			"WerRemoveExcludedApplication", "WerRegisterCustomMetadata", "WerUnregisterCustomMetadata"})
 		registry.add(name, 2, [](ApiCall &call) { call.ret(0); });
 	// Binding writes the addresses of a program's imports into its file ahead of time, which only spares the loader work; the loader here
 	// resolves every import when it loads the image, so an image left unbound is as good as a bound one (Windows Installer binds the
@@ -1439,6 +1439,28 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	// Session change messages are never sent: the registration succeeds and nothing arrives.
 	registry.add("WTSRegisterSessionNotification", 2, [](ApiCall &call) { call.ret(1); });
 	registry.add("WTSUnRegisterSessionNotification", 1, [](ApiCall &call) { call.ret(1); });
+	registry.add("WTSRegisterSessionNotificationEx", 3, [](ApiCall &call) { call.ret(1); });
+	registry.add("WTSUnRegisterSessionNotificationEx", 2, [](ApiCall &call) { call.ret(1); });
+	// The credential store is empty: enumerating and reading find nothing.
+	for (const auto name : {"CredEnumerateW", "CredEnumerateA"})
+		registry.add(name, 4, [](ApiCall &call) {
+			if (!call[2] || !call[3]) {
+				call.fail(87);
+				return;
+			}
+			call.store<uint32_t>(call[2], 0);
+			call.store_pointer(call[3], 0);
+			call.fail(1168);
+		});
+	for (const auto name : {"CredReadW", "CredReadA"})
+		registry.add(name, 4, [](ApiCall &call) {
+			if (!call[0] || !call[3]) {
+				call.fail(87);
+				return;
+			}
+			call.store_pointer(call[3], 0);
+			call.fail(1168);
+		});
 	// No pointer devices other than the mouse are present.
 	registry.add("RegisterPointerDeviceNotifications", 2, [](ApiCall &call) { call.ret(1); });
 	registry.add("GetPointerDevices", 2, [](ApiCall &call) {

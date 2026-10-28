@@ -478,7 +478,9 @@ bool NativeDesktop::dispatch(std::string_view name)
 		const auto handle = process.api_arguments(1)[0];
 		result = objects.pen(handle) ? objects.delete_pen(handle) : objects.region(handle) ? objects.erase(handle) : objects.brush(handle) ? objects.delete_brush(handle) : objects.font(handle) ? objects.delete_font(handle) : objects.dc(handle) ? delete_dc(handle) : delete_bitmap(handle);
 	} else if (name == "CreateSolidBrush") {
-		const auto color=uint32_t(process.api_arguments(1)[0]);
+		auto color=uint32_t(process.api_arguments(1)[0]);
+		// A palette-relative color is the color itself on a display without a palette.
+		if (color>>24==2) color&=0xffffff;
 		if (color & 0xff000000) environment.set_last_error(120);
 		else { result=objects.add(DesktopBrush{color}); if (!result) environment.set_last_error(8); }
 	} else if (name == "FrameRect") {

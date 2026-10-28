@@ -1330,3 +1330,417 @@ static void *IDWriteFontFileStream_table[7] = {
 	(void *)IDWriteFontFileStream_stub_5,
 	(void *)IDWriteFontFileStream_stub_6,
 };
+
+enum {
+	IDWriteFontCollection1_QueryInterface = 0,
+	IDWriteFontCollection1_AddRef = 1,
+	IDWriteFontCollection1_Release = 2,
+	IDWriteFontCollection1_GetFontFamilyCount = 3,
+	IDWriteFontCollection1_GetFontFamily = 4,
+	IDWriteFontCollection1_FindFamilyName = 5,
+	IDWriteFontCollection1_GetFontFromFontFace = 6,
+	IDWriteFontCollection1_GetFontSet = 7,
+	IDWriteFontCollection1_IDWriteFontCollection1_GetFontFamily = 8,
+	IDWriteFontCollection1_methods = 9
+};
+static HRESULT STDMETHODCALLTYPE IDWriteFontCollection1_stub_0(void *self) { return unimplemented("IDWriteFontCollection1", "QueryInterface"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontCollection1_stub_1(void *self) { return unimplemented("IDWriteFontCollection1", "AddRef"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontCollection1_stub_2(void *self) { return unimplemented("IDWriteFontCollection1", "Release"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontCollection1_stub_3(void *self) { return unimplemented("IDWriteFontCollection1", "GetFontFamilyCount"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontCollection1_stub_4(void *self) { return unimplemented("IDWriteFontCollection1", "GetFontFamily"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontCollection1_stub_5(void *self) { return unimplemented("IDWriteFontCollection1", "FindFamilyName"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontCollection1_stub_6(void *self) { return unimplemented("IDWriteFontCollection1", "GetFontFromFontFace"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontCollection1_stub_7(void *self) { return unimplemented("IDWriteFontCollection1", "GetFontSet"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontCollection1_stub_8(void *self) { return unimplemented("IDWriteFontCollection1", "IDWriteFontCollection1_GetFontFamily"); }
+static void *IDWriteFontCollection1_table[9] = {
+	(void *)IDWriteFontCollection1_stub_0,
+	(void *)IDWriteFontCollection1_stub_1,
+	(void *)IDWriteFontCollection1_stub_2,
+	(void *)IDWriteFontCollection1_stub_3,
+	(void *)IDWriteFontCollection1_stub_4,
+	(void *)IDWriteFontCollection1_stub_5,
+	(void *)IDWriteFontCollection1_stub_6,
+	(void *)IDWriteFontCollection1_stub_7,
+	(void *)IDWriteFontCollection1_stub_8,
+};
+
+enum {
+	IDWriteFontFamily1_QueryInterface = 0,
+	IDWriteFontFamily1_AddRef = 1,
+	IDWriteFontFamily1_Release = 2,
+	IDWriteFontFamily1_GetFontCollection = 3,
+	IDWriteFontFamily1_GetFontCount = 4,
+	IDWriteFontFamily1_GetFont = 5,
+	IDWriteFontFamily1_GetFamilyNames = 6,
+	IDWriteFontFamily1_GetFirstMatchingFont = 7,
+	IDWriteFontFamily1_GetMatchingFonts = 8,
+	IDWriteFontFamily1_GetFontLocality = 9,
+	IDWriteFontFamily1_IDWriteFontFamily1_GetFont = 10,
+	IDWriteFontFamily1_GetFontFaceReference = 11,
+	IDWriteFontFamily1_methods = 12
+};
+static HRESULT STDMETHODCALLTYPE IDWriteFontFamily1_stub_0(void *self) { return unimplemented("IDWriteFontFamily1", "QueryInterface"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFamily1_stub_1(void *self) { return unimplemented("IDWriteFontFamily1", "AddRef"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFamily1_stub_2(void *self) { return unimplemented("IDWriteFontFamily1", "Release"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFamily1_stub_3(void *self) { return unimplemented("IDWriteFontFamily1", "GetFontCollection"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFamily1_stub_4(void *self) { return unimplemented("IDWriteFontFamily1", "GetFontCount"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFamily1_stub_5(void *self) { return unimplemented("IDWriteFontFamily1", "GetFont"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFamily1_stub_6(void *self) { return unimplemented("IDWriteFontFamily1", "GetFamilyNames"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFamily1_stub_7(void *self) { return unimplemented("IDWriteFontFamily1", "GetFirstMatchingFont"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFamily1_stub_8(void *self) { return unimplemented("IDWriteFontFamily1", "GetMatchingFonts"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFamily1_stub_9(void *self) { return unimplemented("IDWriteFontFamily1", "GetFontLocality"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFamily1_stub_10(void *self) { return unimplemented("IDWriteFontFamily1", "IDWriteFontFamily1_GetFont"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFamily1_stub_11(void *self) { return unimplemented("IDWriteFontFamily1", "GetFontFaceReference"); }
+static void *IDWriteFontFamily1_table[12] = {
+	(void *)IDWriteFontFamily1_stub_0,
+	(void *)IDWriteFontFamily1_stub_1,
+	(void *)IDWriteFontFamily1_stub_2,
+	(void *)IDWriteFontFamily1_stub_3,
+	(void *)IDWriteFontFamily1_stub_4,
+	(void *)IDWriteFontFamily1_stub_5,
+	(void *)IDWriteFontFamily1_stub_6,
+	(void *)IDWriteFontFamily1_stub_7,
+	(void *)IDWriteFontFamily1_stub_8,
+	(void *)IDWriteFontFamily1_stub_9,
+	(void *)IDWriteFontFamily1_stub_10,
+	(void *)IDWriteFontFamily1_stub_11,
+};
+
+enum {
+	IDWriteFontSet_QueryInterface = 0,
+	IDWriteFontSet_AddRef = 1,
+	IDWriteFontSet_Release = 2,
+	IDWriteFontSet_GetFontCount = 3,
+	IDWriteFontSet_GetFontFaceReference = 4,
+	IDWriteFontSet_FindFontFaceReference = 5,
+	IDWriteFontSet_FindFontFace = 6,
+	IDWriteFontSet_GetPropertyValues__ = 7,
+	IDWriteFontSet_GetPropertyValues_ = 8,
+	IDWriteFontSet_GetPropertyValues = 9,
+	IDWriteFontSet_GetPropertyOccurrenceCount = 10,
+	IDWriteFontSet_GetMatchingFonts_ = 11,
+	IDWriteFontSet_GetMatchingFonts = 12,
+	IDWriteFontSet_methods = 13
+};
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet_stub_0(void *self) { return unimplemented("IDWriteFontSet", "QueryInterface"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet_stub_1(void *self) { return unimplemented("IDWriteFontSet", "AddRef"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet_stub_2(void *self) { return unimplemented("IDWriteFontSet", "Release"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet_stub_3(void *self) { return unimplemented("IDWriteFontSet", "GetFontCount"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet_stub_4(void *self) { return unimplemented("IDWriteFontSet", "GetFontFaceReference"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet_stub_5(void *self) { return unimplemented("IDWriteFontSet", "FindFontFaceReference"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet_stub_6(void *self) { return unimplemented("IDWriteFontSet", "FindFontFace"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet_stub_7(void *self) { return unimplemented("IDWriteFontSet", "GetPropertyValues__"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet_stub_8(void *self) { return unimplemented("IDWriteFontSet", "GetPropertyValues_"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet_stub_9(void *self) { return unimplemented("IDWriteFontSet", "GetPropertyValues"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet_stub_10(void *self) { return unimplemented("IDWriteFontSet", "GetPropertyOccurrenceCount"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet_stub_11(void *self) { return unimplemented("IDWriteFontSet", "GetMatchingFonts_"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet_stub_12(void *self) { return unimplemented("IDWriteFontSet", "GetMatchingFonts"); }
+static void *IDWriteFontSet_table[13] = {
+	(void *)IDWriteFontSet_stub_0,
+	(void *)IDWriteFontSet_stub_1,
+	(void *)IDWriteFontSet_stub_2,
+	(void *)IDWriteFontSet_stub_3,
+	(void *)IDWriteFontSet_stub_4,
+	(void *)IDWriteFontSet_stub_5,
+	(void *)IDWriteFontSet_stub_6,
+	(void *)IDWriteFontSet_stub_7,
+	(void *)IDWriteFontSet_stub_8,
+	(void *)IDWriteFontSet_stub_9,
+	(void *)IDWriteFontSet_stub_10,
+	(void *)IDWriteFontSet_stub_11,
+	(void *)IDWriteFontSet_stub_12,
+};
+
+enum {
+	IDWriteFontFaceReference_QueryInterface = 0,
+	IDWriteFontFaceReference_AddRef = 1,
+	IDWriteFontFaceReference_Release = 2,
+	IDWriteFontFaceReference_CreateFontFace = 3,
+	IDWriteFontFaceReference_CreateFontFaceWithSimulations = 4,
+	IDWriteFontFaceReference_Equals = 5,
+	IDWriteFontFaceReference_GetFontFaceIndex = 6,
+	IDWriteFontFaceReference_GetSimulations = 7,
+	IDWriteFontFaceReference_GetFontFile = 8,
+	IDWriteFontFaceReference_GetLocalFileSize = 9,
+	IDWriteFontFaceReference_GetFileSize = 10,
+	IDWriteFontFaceReference_GetFileTime = 11,
+	IDWriteFontFaceReference_GetLocality = 12,
+	IDWriteFontFaceReference_EnqueueFontDownloadRequest = 13,
+	IDWriteFontFaceReference_EnqueueCharacterDownloadRequest = 14,
+	IDWriteFontFaceReference_EnqueueGlyphDownloadRequest = 15,
+	IDWriteFontFaceReference_EnqueueFileFragmentDownloadRequest = 16,
+	IDWriteFontFaceReference_methods = 17
+};
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_0(void *self) { return unimplemented("IDWriteFontFaceReference", "QueryInterface"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_1(void *self) { return unimplemented("IDWriteFontFaceReference", "AddRef"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_2(void *self) { return unimplemented("IDWriteFontFaceReference", "Release"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_3(void *self) { return unimplemented("IDWriteFontFaceReference", "CreateFontFace"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_4(void *self) { return unimplemented("IDWriteFontFaceReference", "CreateFontFaceWithSimulations"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_5(void *self) { return unimplemented("IDWriteFontFaceReference", "Equals"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_6(void *self) { return unimplemented("IDWriteFontFaceReference", "GetFontFaceIndex"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_7(void *self) { return unimplemented("IDWriteFontFaceReference", "GetSimulations"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_8(void *self) { return unimplemented("IDWriteFontFaceReference", "GetFontFile"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_9(void *self) { return unimplemented("IDWriteFontFaceReference", "GetLocalFileSize"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_10(void *self) { return unimplemented("IDWriteFontFaceReference", "GetFileSize"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_11(void *self) { return unimplemented("IDWriteFontFaceReference", "GetFileTime"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_12(void *self) { return unimplemented("IDWriteFontFaceReference", "GetLocality"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_13(void *self) { return unimplemented("IDWriteFontFaceReference", "EnqueueFontDownloadRequest"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_14(void *self) { return unimplemented("IDWriteFontFaceReference", "EnqueueCharacterDownloadRequest"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_15(void *self) { return unimplemented("IDWriteFontFaceReference", "EnqueueGlyphDownloadRequest"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontFaceReference_stub_16(void *self) { return unimplemented("IDWriteFontFaceReference", "EnqueueFileFragmentDownloadRequest"); }
+static void *IDWriteFontFaceReference_table[17] = {
+	(void *)IDWriteFontFaceReference_stub_0,
+	(void *)IDWriteFontFaceReference_stub_1,
+	(void *)IDWriteFontFaceReference_stub_2,
+	(void *)IDWriteFontFaceReference_stub_3,
+	(void *)IDWriteFontFaceReference_stub_4,
+	(void *)IDWriteFontFaceReference_stub_5,
+	(void *)IDWriteFontFaceReference_stub_6,
+	(void *)IDWriteFontFaceReference_stub_7,
+	(void *)IDWriteFontFaceReference_stub_8,
+	(void *)IDWriteFontFaceReference_stub_9,
+	(void *)IDWriteFontFaceReference_stub_10,
+	(void *)IDWriteFontFaceReference_stub_11,
+	(void *)IDWriteFontFaceReference_stub_12,
+	(void *)IDWriteFontFaceReference_stub_13,
+	(void *)IDWriteFontFaceReference_stub_14,
+	(void *)IDWriteFontFaceReference_stub_15,
+	(void *)IDWriteFontFaceReference_stub_16,
+};
+
+enum {
+	IDWriteStringList_QueryInterface = 0,
+	IDWriteStringList_AddRef = 1,
+	IDWriteStringList_Release = 2,
+	IDWriteStringList_GetCount = 3,
+	IDWriteStringList_GetLocaleNameLength = 4,
+	IDWriteStringList_GetLocaleName = 5,
+	IDWriteStringList_GetStringLength = 6,
+	IDWriteStringList_GetString = 7,
+	IDWriteStringList_methods = 8
+};
+static HRESULT STDMETHODCALLTYPE IDWriteStringList_stub_0(void *self) { return unimplemented("IDWriteStringList", "QueryInterface"); }
+static HRESULT STDMETHODCALLTYPE IDWriteStringList_stub_1(void *self) { return unimplemented("IDWriteStringList", "AddRef"); }
+static HRESULT STDMETHODCALLTYPE IDWriteStringList_stub_2(void *self) { return unimplemented("IDWriteStringList", "Release"); }
+static HRESULT STDMETHODCALLTYPE IDWriteStringList_stub_3(void *self) { return unimplemented("IDWriteStringList", "GetCount"); }
+static HRESULT STDMETHODCALLTYPE IDWriteStringList_stub_4(void *self) { return unimplemented("IDWriteStringList", "GetLocaleNameLength"); }
+static HRESULT STDMETHODCALLTYPE IDWriteStringList_stub_5(void *self) { return unimplemented("IDWriteStringList", "GetLocaleName"); }
+static HRESULT STDMETHODCALLTYPE IDWriteStringList_stub_6(void *self) { return unimplemented("IDWriteStringList", "GetStringLength"); }
+static HRESULT STDMETHODCALLTYPE IDWriteStringList_stub_7(void *self) { return unimplemented("IDWriteStringList", "GetString"); }
+static void *IDWriteStringList_table[8] = {
+	(void *)IDWriteStringList_stub_0,
+	(void *)IDWriteStringList_stub_1,
+	(void *)IDWriteStringList_stub_2,
+	(void *)IDWriteStringList_stub_3,
+	(void *)IDWriteStringList_stub_4,
+	(void *)IDWriteStringList_stub_5,
+	(void *)IDWriteStringList_stub_6,
+	(void *)IDWriteStringList_stub_7,
+};
+
+enum {
+	IDWriteFont3_QueryInterface = 0,
+	IDWriteFont3_AddRef = 1,
+	IDWriteFont3_Release = 2,
+	IDWriteFont3_GetFontFamily = 3,
+	IDWriteFont3_GetWeight = 4,
+	IDWriteFont3_GetStretch = 5,
+	IDWriteFont3_GetStyle = 6,
+	IDWriteFont3_IsSymbolFont = 7,
+	IDWriteFont3_GetFaceNames = 8,
+	IDWriteFont3_GetInformationalStrings = 9,
+	IDWriteFont3_GetSimulations = 10,
+	IDWriteFont3_GetMetrics = 11,
+	IDWriteFont3_HasCharacter = 12,
+	IDWriteFont3_CreateFontFace = 13,
+	IDWriteFont3_IDWriteFont1_GetMetrics = 14,
+	IDWriteFont3_GetPanose = 15,
+	IDWriteFont3_GetUnicodeRanges = 16,
+	IDWriteFont3_IsMonospacedFont = 17,
+	IDWriteFont3_IsColorFont = 18,
+	IDWriteFont3_IDWriteFont3_CreateFontFace = 19,
+	IDWriteFont3_Equals = 20,
+	IDWriteFont3_GetFontFaceReference = 21,
+	IDWriteFont3_IDWriteFont3_HasCharacter = 22,
+	IDWriteFont3_GetLocality = 23,
+	IDWriteFont3_methods = 24
+};
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_0(void *self) { return unimplemented("IDWriteFont3", "QueryInterface"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_1(void *self) { return unimplemented("IDWriteFont3", "AddRef"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_2(void *self) { return unimplemented("IDWriteFont3", "Release"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_3(void *self) { return unimplemented("IDWriteFont3", "GetFontFamily"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_4(void *self) { return unimplemented("IDWriteFont3", "GetWeight"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_5(void *self) { return unimplemented("IDWriteFont3", "GetStretch"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_6(void *self) { return unimplemented("IDWriteFont3", "GetStyle"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_7(void *self) { return unimplemented("IDWriteFont3", "IsSymbolFont"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_8(void *self) { return unimplemented("IDWriteFont3", "GetFaceNames"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_9(void *self) { return unimplemented("IDWriteFont3", "GetInformationalStrings"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_10(void *self) { return unimplemented("IDWriteFont3", "GetSimulations"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_11(void *self) { return unimplemented("IDWriteFont3", "GetMetrics"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_12(void *self) { return unimplemented("IDWriteFont3", "HasCharacter"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_13(void *self) { return unimplemented("IDWriteFont3", "CreateFontFace"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_14(void *self) { return unimplemented("IDWriteFont3", "IDWriteFont1_GetMetrics"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_15(void *self) { return unimplemented("IDWriteFont3", "GetPanose"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_16(void *self) { return unimplemented("IDWriteFont3", "GetUnicodeRanges"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_17(void *self) { return unimplemented("IDWriteFont3", "IsMonospacedFont"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_18(void *self) { return unimplemented("IDWriteFont3", "IsColorFont"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_19(void *self) { return unimplemented("IDWriteFont3", "IDWriteFont3_CreateFontFace"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_20(void *self) { return unimplemented("IDWriteFont3", "Equals"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_21(void *self) { return unimplemented("IDWriteFont3", "GetFontFaceReference"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_22(void *self) { return unimplemented("IDWriteFont3", "IDWriteFont3_HasCharacter"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFont3_stub_23(void *self) { return unimplemented("IDWriteFont3", "GetLocality"); }
+static void *IDWriteFont3_table[24] = {
+	(void *)IDWriteFont3_stub_0,
+	(void *)IDWriteFont3_stub_1,
+	(void *)IDWriteFont3_stub_2,
+	(void *)IDWriteFont3_stub_3,
+	(void *)IDWriteFont3_stub_4,
+	(void *)IDWriteFont3_stub_5,
+	(void *)IDWriteFont3_stub_6,
+	(void *)IDWriteFont3_stub_7,
+	(void *)IDWriteFont3_stub_8,
+	(void *)IDWriteFont3_stub_9,
+	(void *)IDWriteFont3_stub_10,
+	(void *)IDWriteFont3_stub_11,
+	(void *)IDWriteFont3_stub_12,
+	(void *)IDWriteFont3_stub_13,
+	(void *)IDWriteFont3_stub_14,
+	(void *)IDWriteFont3_stub_15,
+	(void *)IDWriteFont3_stub_16,
+	(void *)IDWriteFont3_stub_17,
+	(void *)IDWriteFont3_stub_18,
+	(void *)IDWriteFont3_stub_19,
+	(void *)IDWriteFont3_stub_20,
+	(void *)IDWriteFont3_stub_21,
+	(void *)IDWriteFont3_stub_22,
+	(void *)IDWriteFont3_stub_23,
+};
+
+enum {
+	IDWriteFontList1_QueryInterface = 0,
+	IDWriteFontList1_AddRef = 1,
+	IDWriteFontList1_Release = 2,
+	IDWriteFontList1_GetFontCollection = 3,
+	IDWriteFontList1_GetFontCount = 4,
+	IDWriteFontList1_GetFont = 5,
+	IDWriteFontList1_GetFontLocality = 6,
+	IDWriteFontList1_IDWriteFontList1_GetFont = 7,
+	IDWriteFontList1_GetFontFaceReference = 8,
+	IDWriteFontList1_methods = 9
+};
+static HRESULT STDMETHODCALLTYPE IDWriteFontList1_stub_0(void *self) { return unimplemented("IDWriteFontList1", "QueryInterface"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontList1_stub_1(void *self) { return unimplemented("IDWriteFontList1", "AddRef"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontList1_stub_2(void *self) { return unimplemented("IDWriteFontList1", "Release"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontList1_stub_3(void *self) { return unimplemented("IDWriteFontList1", "GetFontCollection"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontList1_stub_4(void *self) { return unimplemented("IDWriteFontList1", "GetFontCount"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontList1_stub_5(void *self) { return unimplemented("IDWriteFontList1", "GetFont"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontList1_stub_6(void *self) { return unimplemented("IDWriteFontList1", "GetFontLocality"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontList1_stub_7(void *self) { return unimplemented("IDWriteFontList1", "IDWriteFontList1_GetFont"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontList1_stub_8(void *self) { return unimplemented("IDWriteFontList1", "GetFontFaceReference"); }
+static void *IDWriteFontList1_table[9] = {
+	(void *)IDWriteFontList1_stub_0,
+	(void *)IDWriteFontList1_stub_1,
+	(void *)IDWriteFontList1_stub_2,
+	(void *)IDWriteFontList1_stub_3,
+	(void *)IDWriteFontList1_stub_4,
+	(void *)IDWriteFontList1_stub_5,
+	(void *)IDWriteFontList1_stub_6,
+	(void *)IDWriteFontList1_stub_7,
+	(void *)IDWriteFontList1_stub_8,
+};
+
+enum {
+	IDWriteFontSet3_QueryInterface = 0,
+	IDWriteFontSet3_AddRef = 1,
+	IDWriteFontSet3_Release = 2,
+	IDWriteFontSet3_GetFontCount = 3,
+	IDWriteFontSet3_GetFontFaceReference = 4,
+	IDWriteFontSet3_FindFontFaceReference = 5,
+	IDWriteFontSet3_FindFontFace = 6,
+	IDWriteFontSet3_GetPropertyValues__ = 7,
+	IDWriteFontSet3_GetPropertyValues_ = 8,
+	IDWriteFontSet3_GetPropertyValues = 9,
+	IDWriteFontSet3_GetPropertyOccurrenceCount = 10,
+	IDWriteFontSet3_GetMatchingFonts_ = 11,
+	IDWriteFontSet3_GetMatchingFonts = 12,
+	IDWriteFontSet3_IDWriteFontSet1_GetMatchingFonts = 13,
+	IDWriteFontSet3_GetFirstFontResources = 14,
+	IDWriteFontSet3_GetFilteredFonts__ = 15,
+	IDWriteFontSet3_GetFilteredFonts_ = 16,
+	IDWriteFontSet3_GetFilteredFonts = 17,
+	IDWriteFontSet3_GetFilteredFontIndices_ = 18,
+	IDWriteFontSet3_GetFilteredFontIndices = 19,
+	IDWriteFontSet3_GetFontAxisRanges_ = 20,
+	IDWriteFontSet3_GetFontAxisRanges = 21,
+	IDWriteFontSet3_IDWriteFontSet1_GetFontFaceReference = 22,
+	IDWriteFontSet3_CreateFontResource = 23,
+	IDWriteFontSet3_CreateFontFace = 24,
+	IDWriteFontSet3_GetFontLocality = 25,
+	IDWriteFontSet3_GetExpirationEvent = 26,
+	IDWriteFontSet3_GetFontSourceType = 27,
+	IDWriteFontSet3_GetFontSourceNameLength = 28,
+	IDWriteFontSet3_GetFontSourceName = 29,
+	IDWriteFontSet3_methods = 30
+};
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_0(void *self) { return unimplemented("IDWriteFontSet3", "QueryInterface"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_1(void *self) { return unimplemented("IDWriteFontSet3", "AddRef"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_2(void *self) { return unimplemented("IDWriteFontSet3", "Release"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_3(void *self) { return unimplemented("IDWriteFontSet3", "GetFontCount"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_4(void *self) { return unimplemented("IDWriteFontSet3", "GetFontFaceReference"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_5(void *self) { return unimplemented("IDWriteFontSet3", "FindFontFaceReference"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_6(void *self) { return unimplemented("IDWriteFontSet3", "FindFontFace"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_7(void *self) { return unimplemented("IDWriteFontSet3", "GetPropertyValues__"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_8(void *self) { return unimplemented("IDWriteFontSet3", "GetPropertyValues_"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_9(void *self) { return unimplemented("IDWriteFontSet3", "GetPropertyValues"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_10(void *self) { return unimplemented("IDWriteFontSet3", "GetPropertyOccurrenceCount"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_11(void *self) { return unimplemented("IDWriteFontSet3", "GetMatchingFonts_"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_12(void *self) { return unimplemented("IDWriteFontSet3", "GetMatchingFonts"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_13(void *self) { return unimplemented("IDWriteFontSet3", "IDWriteFontSet1_GetMatchingFonts"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_14(void *self) { return unimplemented("IDWriteFontSet3", "GetFirstFontResources"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_15(void *self) { return unimplemented("IDWriteFontSet3", "GetFilteredFonts__"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_16(void *self) { return unimplemented("IDWriteFontSet3", "GetFilteredFonts_"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_17(void *self) { return unimplemented("IDWriteFontSet3", "GetFilteredFonts"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_18(void *self) { return unimplemented("IDWriteFontSet3", "GetFilteredFontIndices_"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_19(void *self) { return unimplemented("IDWriteFontSet3", "GetFilteredFontIndices"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_20(void *self) { return unimplemented("IDWriteFontSet3", "GetFontAxisRanges_"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_21(void *self) { return unimplemented("IDWriteFontSet3", "GetFontAxisRanges"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_22(void *self) { return unimplemented("IDWriteFontSet3", "IDWriteFontSet1_GetFontFaceReference"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_23(void *self) { return unimplemented("IDWriteFontSet3", "CreateFontResource"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_24(void *self) { return unimplemented("IDWriteFontSet3", "CreateFontFace"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_25(void *self) { return unimplemented("IDWriteFontSet3", "GetFontLocality"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_26(void *self) { return unimplemented("IDWriteFontSet3", "GetExpirationEvent"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_27(void *self) { return unimplemented("IDWriteFontSet3", "GetFontSourceType"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_28(void *self) { return unimplemented("IDWriteFontSet3", "GetFontSourceNameLength"); }
+static HRESULT STDMETHODCALLTYPE IDWriteFontSet3_stub_29(void *self) { return unimplemented("IDWriteFontSet3", "GetFontSourceName"); }
+static void *IDWriteFontSet3_table[30] = {
+	(void *)IDWriteFontSet3_stub_0,
+	(void *)IDWriteFontSet3_stub_1,
+	(void *)IDWriteFontSet3_stub_2,
+	(void *)IDWriteFontSet3_stub_3,
+	(void *)IDWriteFontSet3_stub_4,
+	(void *)IDWriteFontSet3_stub_5,
+	(void *)IDWriteFontSet3_stub_6,
+	(void *)IDWriteFontSet3_stub_7,
+	(void *)IDWriteFontSet3_stub_8,
+	(void *)IDWriteFontSet3_stub_9,
+	(void *)IDWriteFontSet3_stub_10,
+	(void *)IDWriteFontSet3_stub_11,
+	(void *)IDWriteFontSet3_stub_12,
+	(void *)IDWriteFontSet3_stub_13,
+	(void *)IDWriteFontSet3_stub_14,
+	(void *)IDWriteFontSet3_stub_15,
+	(void *)IDWriteFontSet3_stub_16,
+	(void *)IDWriteFontSet3_stub_17,
+	(void *)IDWriteFontSet3_stub_18,
+	(void *)IDWriteFontSet3_stub_19,
+	(void *)IDWriteFontSet3_stub_20,
+	(void *)IDWriteFontSet3_stub_21,
+	(void *)IDWriteFontSet3_stub_22,
+	(void *)IDWriteFontSet3_stub_23,
+	(void *)IDWriteFontSet3_stub_24,
+	(void *)IDWriteFontSet3_stub_25,
+	(void *)IDWriteFontSet3_stub_26,
+	(void *)IDWriteFontSet3_stub_27,
+	(void *)IDWriteFontSet3_stub_28,
+	(void *)IDWriteFontSet3_stub_29,
+};

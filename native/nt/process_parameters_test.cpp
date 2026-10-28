@@ -74,7 +74,8 @@ int main(int argc,char **argv)
 			check(rejected && !number(process,environment.peb()+0x20,8),"invalid parameters published a process block");
 		}
 		const auto proxy=modules.resolve({"kernel32.dll","GetCommandLineW",0,false,0});
-		process.add_api_trap(proxy);
+		const auto &kernel=*modules.all().at("kernel32.dll");
+		process.add_api_trap(raven::api_trap_address(kernel,"kernel32.dll","GetCommandLineW",uint32_t(proxy-kernel.loaded.base())));
 		check(process.call(proxy,{},std::chrono::seconds(2)).stop==raven::NativeStop::api,"command line test did not stop at its API");
 		bool rejected=false;
 		try { environment.prepare_parameters({u"image",u"command"}); } catch (const std::runtime_error &) { rejected=true; }

@@ -1,5 +1,6 @@
 #include "api.h"
 #include "gdi.h"
+#include "nt/kernel_context.h"
 #include "nt/text.h"
 
 #include <algorithm>
@@ -48,6 +49,80 @@ std::u16string widen(const ApiCall &call, uint64_t address, int32_t count, bool 
 	}
 	const auto bytes = call.read(address, size_t(count));
 	return from_ansi(std::string(bytes.begin(), bytes.end()), 1252);
+}
+
+// The families GDI enumerates: the usual Windows faces the bundled fonts stand for, then every family installed in the prefix.
+std::vector<InstalledFamily> enumerable_families()
+{
+	static const char16_t *const usual[] = {u"Arial", u"Courier New", u"Times New Roman", u"MS Shell Dlg", u"MS Sans Serif", u"Tahoma",
+		u"Segoe UI", u"Verdana", u"Lucida Console", u"Consolas", u"Microsoft Sans Serif"};
+	std::vector<InstalledFamily> families;
+	for (const auto *name : usual) {
+		InstalledFamily family{name};
+		const std::u16string_view view(name);
+		family.fixed = view == u"Courier New" || view == u"Lucida Console" || view == u"Consolas";
+		family.unicode_ranges[0] = 3;
+		family.code_pages[0] = 1;
+		families.push_back(family);
+	}
+	for (auto &installed : installed_font_families())
+		if (std::none_of(families.begin(), families.end(), [&](const InstalledFamily &family) { return equal_fold(family.name, installed.name); }))
+			families.push_back(std::move(installed));
+	return families;
+}
+
+// The LOGFONT of an enumerated family and the NEWTEXTMETRICEX that follows the ENUMLOGFONTEX at metrics: the ANSI forms keep characters
+// in bytes, so their fields after tmLastChar sit four bytes earlier. Sizes are those of a 12-pixel em.
+void describe_family(std::vector<uint8_t> &record, size_t metrics, const InstalledFamily &family, bool ansi)
+{
+	const auto put = [&](size_t at, int32_t value) { std::memcpy(record.data() + at, &value, 4); };
+	const int32_t weight = int32_t(family.weight);
+	put(0, -12);
+	put(16, weight);
+	record[20] = family.italic;
+	record[23] = 0;
+	record[27] = family.fixed ? 0x31 : 0x22;
+	put(metrics, 16);
+	put(metrics + 4, 13);
+	put(metrics + 8, 3);
+	put(metrics + 12, 4);
+	put(metrics + 20, 7);
+	put(metrics + 24, family.fixed ? 7 : 16);
+	put(metrics + 28, weight);
+	put(metrics + 36, 96);
+	put(metrics + 40, 96);
+	size_t at = metrics + 44;
+	if (ansi) {
+		record[at] = 0x20;
+		record[at + 1] = 0xff;
+		record[at + 2] = 0x1f;
+		record[at + 3] = 0x20;
+		at += 4;
+	} else {
+		const uint16_t characters[] = {0x20, 0xfffc, 0x1f, 0x20};
+		std::memcpy(record.data() + at, characters, sizeof characters);
+		at += 8;
+	}
+	record[at] = family.italic;
+	// TMPF_TRUETYPE | TMPF_VECTOR, and the bit Windows sets for a variable pitch, under the family kind.
+	record[at + 3] = uint8_t((family.fixed ? 0x06 : 0x07) | (family.fixed ? 0x30 : 0x20));
+	record[at + 4] = 0;
+	at += 8;
+	put(at, (family.weight >= 600 ? 0x20 : 0) | (family.italic ? 0x01 : 0) | (family.weight < 600 && !family.italic ? 0x40 : 0));
+	put(at + 4, 2048);
+	put(at + 8, 2355);
+	put(at + 12, 900);
+	for (size_t i = 0; i < 4; ++i)
+		put(at + 16 + i * 4, int32_t(family.unicode_ranges[i]));
+	put(at + 32, int32_t(family.code_pages[0]));
+	put(at + 36, int32_t(family.code_pages[1]));
+}
+
+std::u16string_view style_of(const InstalledFamily &family)
+{
+	if (family.weight >= 600)
+		return family.italic ? u"Bold Italic" : u"Bold";
+	return family.italic ? u"Italic" : u"Regular";
 }
 
 }
@@ -353,15 +428,14 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 						character = char16_t(character + 32);
 				return text;
 			};
-			static const char16_t *const families[] = {u"Arial", u"Courier New", u"Times New Roman", u"MS Sans Serif", u"Tahoma", u"Segoe UI",
-				u"Verdana", u"Lucida Console", u"Consolas", u"Microsoft Sans Serif"};
 			if (lower(face) == u"ms shell dlg")
 				face = u"Microsoft Sans Serif";
 			else if (lower(face) == u"ms shell dlg 2")
 				face = u"Tahoma";
 			else {
-				const auto found = std::find_if(std::begin(families), std::end(families), [&](const char16_t *family) { return lower(family) == lower(face); });
-				face = found == std::end(families) ? u"Arial" : *found;
+				const auto families = enumerable_families();
+				const auto found = std::find_if(families.begin(), families.end(), [&](const InstalledFamily &family) { return lower(family.name) == lower(face); });
+				face = found == families.end() ? u"Arial" : found->name;
 			}
 			if (!call[2]) {
 				call.ret(face.size() + 1);
@@ -705,12 +779,11 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			call.ret(add_font(definition));
 		});
 	});
-	// The bundled families stand for the common Windows faces; callers see the usual names.
+	// The bundled families stand for the common Windows faces, and the fonts installed in the prefix follow under their own names.
 	registry.add("EnumFontFamiliesExW", 5, [=, this](ApiCall &call) {
 		guarded(call, 0, [&] {
 			require_dc(call, 0);
-			static const char16_t *families[] = {u"Arial", u"Courier New", u"Times New Roman", u"MS Shell Dlg", u"MS Sans Serif", u"Tahoma",
-				u"Segoe UI", u"Verdana", u"Lucida Console", u"Consolas", u"Microsoft Sans Serif"};
+			const auto families = enumerable_families();
 			std::u16string wanted;
 			if (call[1]) {
 				const auto bytes = call.read(call[1] + 28, 64);
@@ -740,28 +813,22 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			const auto scratch_size = uint64_t(4096);
 			const auto scratch = process.map_memory(scratch_size, PROT_READ | PROT_WRITE);
 			try {
-				for (const auto *family : families) {
-					if (!wanted.empty() && lower(family) != lower(wanted))
+				for (const auto &family : families) {
+					if (!wanted.empty() && lower(family.name) != lower(wanted))
 						continue;
 					// ENUMLOGFONTEXW (LOGFONTW, full name, style, script) followed by NEWTEXTMETRICEXW.
 					std::vector<uint8_t> record(512, 0);
-					int32_t height = -12;
-					std::memcpy(record.data(), &height, 4);
-					const int32_t weight = 400;
-					std::memcpy(record.data() + 16, &weight, 4);
-					record[23] = 0;
-					record[27] = std::u16string_view(family) == u"Courier New" || std::u16string_view(family) == u"Lucida Console" || std::u16string_view(family) == u"Consolas" ? 0x31 : 0x22;
-					for (size_t i = 0; i < std::char_traits<char16_t>::length(family) && i < 31; ++i) {
-						record[28 + i * 2] = uint8_t(family[i]);
-						record[29 + i * 2] = uint8_t(family[i] >> 8);
-						record[92 + i * 2] = uint8_t(family[i]);
-						record[93 + i * 2] = uint8_t(family[i] >> 8);
-					}
-					const char16_t style[] = u"Regular", script[] = u"Western";
-					for (size_t i = 0; i < 7; ++i) {
-						record[92 + 128 + i * 2] = uint8_t(style[i]);
-						record[92 + 192 + i * 2] = uint8_t(script[i]);
-					}
+					describe_family(record, 348, family, false);
+					const auto put_text = [&](size_t at, std::u16string_view text, size_t limit) {
+						for (size_t i = 0; i < std::min(text.size(), limit); ++i) {
+							record[at + i * 2] = uint8_t(text[i]);
+							record[at + i * 2 + 1] = uint8_t(text[i] >> 8);
+						}
+					};
+					put_text(28, family.name, 31);
+					put_text(92, family.name, 63);
+					put_text(92 + 128, style_of(family), 31);
+					put_text(92 + 192, u"Western", 31);
 					call.write(scratch, record);
 					const uint64_t arguments[] = {scratch, scratch + 348, 4, call[3]};
 					const auto outcome = invoke(call[2], arguments);
@@ -820,8 +887,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 	registry.add("EnumFontFamiliesExA", 5, [=, this](ApiCall &call) {
 		guarded(call, 0, [&] {
 			require_dc(call, 0);
-			static const char *families[] = {"Arial", "Courier New", "Times New Roman", "MS Shell Dlg", "MS Sans Serif", "Tahoma",
-				"Segoe UI", "Verdana", "Lucida Console", "Consolas", "Microsoft Sans Serif"};
+			const auto families = enumerable_families();
 			std::string wanted;
 			if (call[1]) {
 				const auto bytes = call.read(call[1] + 28, 32);
@@ -841,18 +907,17 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			uint64_t result = 1;
 			const auto scratch = process.map_memory(4096, PROT_READ | PROT_WRITE);
 			try {
-				for (const auto *family : families) {
-					if (!wanted.empty() && lower(family) != lower(wanted))
+				for (const auto &family : families) {
+					const auto name = to_ansi(family.name, 1252);
+					if (!wanted.empty() && lower(name) != lower(wanted))
 						continue;
+					// ENUMLOGFONTEXA (LOGFONTA, full name, style, script) followed by NEWTEXTMETRICEXA.
 					std::vector<uint8_t> record(512, 0);
-					const int32_t height = -12, weight = 400;
-					std::memcpy(record.data(), &height, 4);
-					std::memcpy(record.data() + 16, &weight, 4);
-					const std::string_view name(family);
-					record[27] = name == "Courier New" || name == "Lucida Console" || name == "Consolas" ? 0x31 : 0x22;
-					std::memcpy(record.data() + 28, family, std::min<size_t>(name.size(), 31));
-					std::memcpy(record.data() + 60, family, std::min<size_t>(name.size(), 63));
-					std::memcpy(record.data() + 124, "Regular", 7);
+					describe_family(record, 256, family, true);
+					const auto style = to_ansi(style_of(family), 1252);
+					std::memcpy(record.data() + 28, name.data(), std::min<size_t>(name.size(), 31));
+					std::memcpy(record.data() + 60, name.data(), std::min<size_t>(name.size(), 63));
+					std::memcpy(record.data() + 124, style.data(), std::min<size_t>(style.size(), 31));
 					std::memcpy(record.data() + 156, "Western", 7);
 					call.write(scratch, record);
 					const uint64_t arguments[] = {scratch, scratch + 256, 4, call[3]};

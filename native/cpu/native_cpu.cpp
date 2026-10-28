@@ -1633,7 +1633,11 @@ void NativeProcess::add_api_trap(uint64_t address, uint32_t callee_cleanup)
 		return at - page < state->trap_page.size() ? state->trap_page[at - page] : read_memory(at, 1)[0];
 	};
 	if (!state->covers(address, 1, PROT_EXEC) || byte_at(address) != 0xcc)
-		throw std::runtime_error("native API trap must be an executable INT3");
+	{
+		char text[96];
+		std::snprintf(text, sizeof text, "native API trap must be an executable INT3: %llx", static_cast<unsigned long long>(address));
+		throw std::runtime_error(text);
+	}
 	if (state->mode == NativeMode::x86 && (address >= state->limit() || callee_cleanup % 4))
 		throw std::runtime_error("native x86 API trap requires a 32-bit address and dword-aligned cleanup");
 	state->api_traps[address] = callee_cleanup;

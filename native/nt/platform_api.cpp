@@ -1,3 +1,4 @@
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include "elevation.h"
@@ -542,6 +543,18 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(s_ok);
 	});
+	// No activation is ever handed to a filter, so registering one succeeds and it is never consulted.
+	registry.add("CoRegisterActivationFilter", 1, [](ApiCall &call) { call.ret(call[0] ? s_ok : 0x80070057U); });
+	// The multithreaded apartment stays alive while a usage cookie is out; the cookie names nothing beyond itself.
+	registry.add("CoIncrementMTAUsage", 1, [](ApiCall &call) {
+		if (!call[0]) {
+			call.ret(0x80070057U);
+			return;
+		}
+		call.store_pointer(call[0], 1);
+		call.ret(s_ok);
+	});
+	registry.add("CoDecrementMTAUsage", 1, [](ApiCall &call) { call.ret(call[0] ? s_ok : 0x80070057U); });
 	// The lock keeps an object alive for clients in other processes. Nothing here hands an object outside the process, so its own references
 	// are all that keep it, and locking or unlocking leaves it as it is.
 	registry.add("CoLockObjectExternal", 3, [](ApiCall &call) { call.ret(call[0] ? s_ok : 0x80070057U); });
@@ -739,6 +752,8 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	});
 	registry.add("ReleaseStgMedium", 1, [](ApiCall &) {});
 	registry.add("OleFlushClipboard", 0, [](ApiCall &call) { call.ret(s_ok); });
+	// No data object is ever put on the clipboard, so none is the current one.
+	registry.add("OleIsCurrentClipboard", 1, [](ApiCall &call) { call.ret(1); });
 	registry.add("OleGetClipboard", 1, [](ApiCall &call) {
 		if (call[0]) call.store_pointer(call[0], 0);
 		call.ret(e_notimpl);
@@ -1012,6 +1027,17 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("RoInitialize", 1, [initialize](ApiCall &call) { initialize(call, call.u32(0) == 1, true); });
 	registry.add("RoUninitialize", 0, uninitialize);
 	registry.add("RoGetActivationFactory", 3, [](ApiCall &call) {
+		// The traced failure says which class was asked for.
+		static const bool traced = std::getenv("RAVEN_TRACE_FAIL") != nullptr;
+		if (traced && call[0]) {
+			std::string name;
+			try {
+				const auto length = std::min<uint32_t>(call.load<uint32_t>(call[0] + 4), 200);
+				const auto text = call.read(call.load_pointer(call[0] + 16), length * 2);
+				for (size_t i = 0; i < length; ++i) name.push_back(text[i * 2 + 1] ? '?' : char(text[i * 2]));
+			} catch (const ApiFault &) {}
+			std::fprintf(stderr, "raven: no Windows Runtime class %s\n", name.c_str());
+		}
 		if (call[2])
 			call.store_pointer(call[2], 0);
 		call.ret(0x80040154U);
@@ -1028,6 +1054,37 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(0);
 	});
 	registry.add("UnregisterTraceGuids", 1, [](ApiCall &call) { call.ret(0); });
+	// No session listens to any provider.
+	registry.add("EventProviderEnabled", 3, [](ApiCall &call) { call.ret(0); });
+	// Each thread carries an activity ID, all zeros until set; a created one is a fresh random GUID.
+	auto activities = std::make_shared<std::map<uint64_t, std::array<uint8_t, 16>>>();
+	registry.add("EventActivityIdControl", 2, [activities, &context](ApiCall &call) {
+		const auto code = call.u32(0);
+		if (code < 1 || code > 5 || !call[1]) {
+			call.ret(87);
+			return;
+		}
+		auto &current = (*activities)[context.environment.teb()];
+		std::array<uint8_t, 16> given{}, fresh{};
+		if (code == 2 || code == 4) {
+			const auto bytes = call.read(call[1], 16);
+			std::copy(bytes.begin(), bytes.end(), given.begin());
+		}
+		if (code == 3 || code == 5) {
+			if (::getrandom(fresh.data(), fresh.size(), 0) != ssize_t(fresh.size())) {
+				call.ret(31);
+				return;
+			}
+			fresh[6] = uint8_t((fresh[6] & 0x0f) | 0x40);
+			fresh[8] = uint8_t((fresh[8] & 0x3f) | 0x80);
+		}
+		const auto previous = current;
+		if (code == 2 || code == 4) current = given;
+		if (code == 5) current = fresh;
+		if (code == 1 || code == 4 || code == 5) call.write(call[1], std::vector<uint8_t>(previous.begin(), previous.end()));
+		if (code == 3) call.write(call[1], std::vector<uint8_t>(fresh.begin(), fresh.end()));
+		call.ret(0);
+	});
 	registry.add("EventRegister", 4, [](ApiCall &call) {
 		if (call[3])
 			call.store<uint64_t>(call[3], 1);
@@ -1208,6 +1265,17 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(uint64_t(previous));
 	});
 	registry.add("GetThreadDpiAwarenessContext", 0, [dpi_context](ApiCall &call) { call.ret(uint64_t(*dpi_context)); });
+	// Windows of another scale are never hosted, so the hosting behavior is only remembered: 0 is DPI_HOSTING_BEHAVIOR_DEFAULT.
+	auto hosting = std::make_shared<int32_t>(0);
+	registry.add("SetThreadDpiHostingBehavior", 1, [hosting](ApiCall &call) {
+		const auto value = int32_t(call.u32(0));
+		if (value < 0 || value > 1) {
+			call.ret(uint64_t(-1));
+			return;
+		}
+		call.ret(uint64_t(int64_t(std::exchange(*hosting, value))));
+	});
+	registry.add("GetThreadDpiHostingBehavior", 0, [hosting](ApiCall &call) { call.ret(uint64_t(int64_t(*hosting))); });
 	// advapi32 security helpers that need no token or policy database.
 	registry.add("AllocateAndInitializeSid", 11, [&context](ApiCall &call) {
 		const uint8_t count = uint8_t(call[1]);

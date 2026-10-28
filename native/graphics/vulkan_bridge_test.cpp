@@ -166,8 +166,7 @@ int main(int argc, char **argv)
 		raven::NativeProcess process(images, argv[1], std::chrono::seconds(2));
 		raven::VulkanBridge bridge(process, modules);
 		for (const auto &symbol : modules.all().at("vulkan-1.dll")->exports)
-			process.add_api_trap(modules.resolve({"vulkan-1.dll", symbol.names.front(), 0, false, 0}) +
-				raven::fast_stub_trap_offset("vulkan-1.dll", symbol.names.front()));
+			process.add_api_trap(raven::api_trap_address(*modules.all().at("vulkan-1.dll"), "vulkan-1.dll", symbol.names.front(), symbol.address));
 		const auto memory = process.map_memory(4096, PROT_READ | PROT_WRITE);
 		const auto rejected = [&](const std::string &name, std::span<const uint64_t> arguments) {
 			const auto address = modules.resolve({"vulkan-1.dll", name, 0, false, 0});

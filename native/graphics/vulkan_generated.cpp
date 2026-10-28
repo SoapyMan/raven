@@ -87,8 +87,9 @@ void VulkanBridge::destroy_generic_objects(uint64_t device_token)
 
 std::span<const std::string_view> vulkan_hand_names()
 {
-	static constexpr std::array<std::string_view, 6> names{"vkCmdPushDescriptorSetWithTemplate", "vkCmdPushDescriptorSetWithTemplateKHR",
-		"vkCreateWin32SurfaceKHR", "vkGetPhysicalDeviceWin32PresentationSupportKHR",
+	static constexpr std::array<std::string_view, 9> names{"vkCmdPushDescriptorSetWithTemplate", "vkCmdPushDescriptorSetWithTemplateKHR",
+		"vkCreateWin32SurfaceKHR", "vkGetMemoryWin32HandleKHR", "vkGetPhysicalDeviceWin32PresentationSupportKHR", "vkGetSemaphoreWin32HandleKHR",
+		"vkImportSemaphoreWin32HandleKHR",
 		"vkUpdateDescriptorSetWithTemplate", "vkUpdateDescriptorSetWithTemplateKHR"};
 	// The swapchain commands below wrap the generated ones; they are dispatched here first and export under their own names.
 	return names;
@@ -144,6 +145,19 @@ bool VulkanBridge::dispatch_hand(std::string_view name)
 			store<uint64_t>(a[3],token);
 		}
 		process.return_api(status);
+		return true;
+	}
+	// Memory and semaphores are not exchanged as Windows handles: the host devices offer file descriptors, which no handle stands for
+	// yet. Translation layers ask for the handles of every shared resource whether or not the extensions were enabled, so they get a
+	// clean failure.
+	if (name == "vkGetMemoryWin32HandleKHR" || name == "vkGetSemaphoreWin32HandleKHR" || name == "vkImportSemaphoreWin32HandleKHR") {
+		const bool import = name == "vkImportSemaphoreWin32HandleKHR";
+		const auto a = process.api_arguments(import ? 2 : 3);
+		Marshal marshal(*this, process);
+		marshal.context(H::VkDevice, a[0]);
+		if (!import)
+			marshal.check_writable(a[2], 8);
+		process.return_api(static_cast<uint32_t>(import ? VK_ERROR_INVALID_EXTERNAL_HANDLE : VK_ERROR_OUT_OF_HOST_MEMORY));
 		return true;
 	}
 	if (name == "vkGetPhysicalDeviceWin32PresentationSupportKHR") {

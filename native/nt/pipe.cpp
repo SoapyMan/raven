@@ -675,6 +675,25 @@ void register_pipe_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("GetNamedPipeClientProcessId", 2, peer_process);
 	registry.add("GetNamedPipeServerProcessId", 2, peer_process);
+	// Every client of a Raven pipe runs as the same user, so the server thread takes the identity of its own logon at the impersonation
+	// level a client grants unless it asks otherwise.
+	registry.add("ImpersonateNamedPipeClient", 1, [&context, pipe_of](ApiCall &call) {
+		const auto pipe = pipe_of(call[0]);
+		if (!pipe || !pipe->server) {
+			call.fail(6);
+			return;
+		}
+		ensure_pipe_connected(*pipe);
+		if (!pipe->connected) {
+			call.fail(1368);
+			return;
+		}
+		auto token = std::make_shared<AccessToken>(*context.process_token);
+		token->set_type(2);
+		token->set_impersonation_level(2);
+		context.threads.current().impersonation = std::move(token);
+		call.ret(1);
+	});
 	// A transaction writes a request and reads the answer in one call.
 	const auto transact = [&context](ApiCall &call, const std::shared_ptr<PipeObject> &pipe, uint64_t request, uint32_t request_size, uint64_t answer, uint32_t answer_size, uint64_t counted) {
 		ensure_pipe_connected(*pipe);

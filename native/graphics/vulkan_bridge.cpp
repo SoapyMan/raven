@@ -323,7 +323,14 @@ bool VulkanBridge::dispatch(std::string_view name)
 		if (!devices.contains(arguments[0]))
 			throw std::runtime_error("invalid Vulkan device handle");
 		const auto symbol = string(arguments[1]);
-		if (is_device_function(symbol) && vkGetDeviceProcAddr(devices.at(arguments[0]).handle, symbol.c_str()))
+		const auto &module = *modules.all().at("vulkan-1.dll");
+		const bool exported = std::any_of(module.exports.begin(), module.exports.end(), [&](const auto &entry) {
+			return std::find(entry.names.begin(), entry.names.end(), symbol) != entry.names.end();
+		});
+		// The Windows handle commands have no host counterpart; they are offered wherever the library exports them.
+		const bool win32_handles = symbol == "vkGetMemoryWin32HandleKHR" || symbol == "vkGetSemaphoreWin32HandleKHR" ||
+			symbol == "vkImportSemaphoreWin32HandleKHR";
+		if (exported && ((is_device_function(symbol) && vkGetDeviceProcAddr(devices.at(arguments[0]).handle, symbol.c_str())) || win32_handles))
 			result = modules.resolve({"vulkan-1.dll", symbol, 0, false, 0});
 		if (std::getenv("RAVEN_TRACE_API") && !result)
 			std::fprintf(stderr, "vulkan: unavailable device function %s\n", symbol.c_str());

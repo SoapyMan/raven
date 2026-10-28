@@ -1973,7 +1973,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                             -o ${snapshot_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/thread_snapshot_client.c -lkernel32
                         DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/thread_snapshot_client.c VERBATIM)
                     add_custom_target(thread_snapshot_fixture${width} ALL DEPENDS ${snapshot_client})
-                    add_test(NAME native_thread_snapshot_x${width} COMMAND raven --run-process --execution=native ${snapshot_client})
+                    # Started with arguments, as by hand, so that the snapshot must name it by its program and not by those.
+                    add_test(NAME native_thread_snapshot_x${width} COMMAND raven --run-process --execution=native ${snapshot_client} -- an argument)
                     set_tests_properties(native_thread_snapshot_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
                         ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/thread-snapshot-prefix${width})
                 endif()
@@ -3757,6 +3758,26 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                 add_custom_target(string_pe32_fixture ALL DEPENDS ${STRING_FIXTURES}/x86/pointer.exe)
                 add_test(NAME native_x86_string_pointer_cli COMMAND raven --run-process --execution=native ${STRING_FIXTURES}/x86/pointer.exe)
                 set_tests_properties(native_x86_string_pointer_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                    ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/x86-prefix)
+            endif()
+            set(STOCK_ICON_FIXTURES ${CMAKE_CURRENT_BINARY_DIR}/stock-icon-fixtures)
+            add_custom_command(OUTPUT ${STOCK_ICON_FIXTURES}/client.exe
+                COMMAND ${CMAKE_COMMAND} -E make_directory ${STOCK_ICON_FIXTURES}
+                COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector -Wl,--entry,raven_entry
+                    -o ${STOCK_ICON_FIXTURES}/client.exe ${LOADER_SOURCES}/stock_icon_client.c -lshell32 -luser32 -lgdi32
+                DEPENDS ${LOADER_SOURCES}/stock_icon_client.c VERBATIM)
+            add_custom_target(stock_icon_pe_fixture ALL DEPENDS ${STOCK_ICON_FIXTURES}/client.exe)
+            add_test(NAME native_stock_icon_cli COMMAND raven --run-process --execution=native ${STOCK_ICON_FIXTURES}/client.exe)
+            set_tests_properties(native_stock_icon_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+            if(RAVEN_MINGW32)
+                add_custom_command(OUTPUT ${STOCK_ICON_FIXTURES}/x86/client.exe
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${STOCK_ICON_FIXTURES}/x86
+                    COMMAND ${RAVEN_MINGW32} -O2 -nostdlib -fno-stack-protector -Wl,--entry,_raven_entry
+                        -o ${STOCK_ICON_FIXTURES}/x86/client.exe ${LOADER_SOURCES}/stock_icon_client.c -lshell32 -luser32 -lgdi32
+                    DEPENDS ${LOADER_SOURCES}/stock_icon_client.c VERBATIM)
+                add_custom_target(stock_icon_pe32_fixture ALL DEPENDS ${STOCK_ICON_FIXTURES}/x86/client.exe)
+                add_test(NAME native_x86_stock_icon_cli COMMAND raven --run-process --execution=native ${STOCK_ICON_FIXTURES}/x86/client.exe)
+                set_tests_properties(native_x86_stock_icon_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
                     ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/x86-prefix)
             endif()
             set(RESOURCE_FIXTURES ${CMAKE_CURRENT_BINARY_DIR}/resource-fixtures)

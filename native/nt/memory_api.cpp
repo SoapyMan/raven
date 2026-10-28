@@ -297,6 +297,20 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 		call.write(call[0], bytes);
 	});
 	registry.add("HeapSetInformation", 4, [](ApiCall &call) { call.ret(1); });
+	// Only HeapCompatibilityInformation is answered: every heap is a low-fragmentation heap (2).
+	registry.add("HeapQueryInformation", 5, [](ApiCall &call) {
+		if (call.u32(1) != 0) {
+			call.fail(87);
+			return;
+		}
+		if (call[4]) call.store_pointer(call[4], 4);
+		if (call.u32(3) < 4 || !call[2]) {
+			call.fail(24);
+			return;
+		}
+		call.store<uint32_t>(call[2], 2);
+		call.ret(1);
+	});
 	registry.add("HeapValidate", 3, [](ApiCall &call) { call.ret(1); });
 	registry.add("HeapCompact", 2, [](ApiCall &call) { call.ret(0x10000); });
 

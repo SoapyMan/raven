@@ -2739,6 +2739,14 @@ static constexpr std::string_view normaliz_exports[]{
 static constexpr std::string_view slc_exports[]{
 	"SLGetWindowsInformation","SLGetWindowsInformationDWORD",
 };
+static constexpr std::string_view sppc_exports[]{
+	"SLClose","SLConsumeRight","SLDepositMigrationBlob","SLDepositOfflineConfirmationId","SLGenerateOfflineInstallationId","SLGetApplicationInformation",
+	"SLGetApplicationPolicy","SLGetAuthenticationResult","SLGetInstalledProductKeyIds","SLGetLicense","SLGetLicenseFileId","SLGetLicenseInformation",
+	"SLGetLicensingStatusInformation","SLGetPKeyId","SLGetPKeyInformation","SLGetPolicyInformation","SLGetPolicyInformationDWORD","SLGetProductSkuInformation",
+	"SLGetSLIDList","SLGetServiceInformation","SLInstallLicense","SLInstallProofOfPurchase","SLLoadApplicationPolicies","SLOpen",
+	"SLPersistApplicationPolicies","SLPersistRTSPayloadOverride","SLReArm","SLRegisterPlugin","SLSetAuthenticationData","SLUninstallLicense",
+	"SLUninstallProofOfPurchase","SLUnloadApplicationPolicies",
+};
 static constexpr std::string_view rstrtmgr_exports[]{
 	"RmAddFilter","RmCancelCurrentTask","RmEndSession","RmGetFilterList","RmGetList","RmJoinSession",
 	"RmRegisterResources","RmRemoveFilter","RmReserveHeap","RmRestart","RmShutdown","RmStartSession",
@@ -2819,6 +2827,7 @@ static constexpr std::pair<std::string_view, std::span<const std::string_view>> 
 	{"oledlg.dll", oledlg_exports},
 	{"normaliz.dll", normaliz_exports},
 	{"slc.dll", slc_exports},
+	{"sppc.dll", sppc_exports},
 	{"rstrtmgr.dll", rstrtmgr_exports},
 	{"d3dcompiler_47.dll", d3dcompiler_47_exports},
 };

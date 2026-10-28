@@ -670,7 +670,11 @@ void NativeWindows::raw_mouse_input(int64_t dx,int64_t dy,uint32_t button_flags,
 
 void NativeWindows::post(uint64_t window,uint32_t message,uint64_t wparam,uint64_t lparam)
 {
-	if (window==0xffff) throw uint32_t(120);
+	// A broadcast goes to every top-level window, each in its own thread's queue.
+	if (window==0xffff) {
+		for (const auto handle : top_level_windows()) post(handle,message,wparam,lparam);
+		return;
+	}
 	if (window && !objects.window(window)) throw uint32_t(1400);
 	if (messages.size()>=10000) throw uint32_t(1816);
 	queue({window,wparam,lparam,message,message_time(),cursor_x,cursor_y});
@@ -1160,7 +1164,8 @@ uint64_t NativeWindows::retrieve(std::span<const uint64_t> args,bool blocking)
 		}
 		if (!blocking) { queue_status(me,seen,true); return 0; }
 		if (std::chrono::steady_clock::now()>=deadline) throw NativeResult{NativeStop::timeout,0,0,0};
-		if (std::getenv("RAVEN_DUMP_WINDOWS") && !dumped && std::chrono::steady_clock::now()-started>std::chrono::seconds(9)) { dumped=true; dump_windows(); }
+		// RAVEN_DUMP_WINDOWS lists the windows once, after nine seconds or after as many seconds as its value names.
+		if (const char *dump=std::getenv("RAVEN_DUMP_WINDOWS"); dump && !dumped && std::chrono::steady_clock::now()-started>std::chrono::seconds(std::max(9,std::atoi(dump)))) { dumped=true; dump_windows(); }
 		caret_idle();
 		scroll_idle();
 		flush_dirty();

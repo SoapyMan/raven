@@ -209,6 +209,25 @@ static DWORD cached_render(DWORD font, DWORD glyph, INT32 em16, const INT32 *mat
 	return size;
 }
 
+/* A refused interface goes to the trace by its GUID, so a program that needs one more interface shows which. */
+static HRESULT no_interface(REFIID iid)
+{
+	static const char digits[] = "0123456789abcdef";
+	char text[64] = "dwrite: no interface ";
+	size_t at = 21, index;
+	const BYTE *bytes = (const BYTE *)iid;
+	static const BYTE order[16] = {3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15};
+	for (index = 0; index < 16; ++index) {
+		if (index == 4 || index == 6 || index == 8 || index == 10)
+			text[at++] = '-';
+		text[at++] = digits[bytes[order[index]] >> 4];
+		text[at++] = digits[bytes[order[index]] & 15];
+	}
+	text[at] = 0;
+	RavenTrace(text);
+	return E_NOINTERFACE;
+}
+
 static HRESULT unimplemented(const char *interface_name, const char *method)
 {
 	char text[160];
@@ -364,6 +383,31 @@ static const WCHAR *aliases[][2] = {
 	{L"Palatino Linotype", L"DejaVu Serif"}, {L"Symbol", L"DejaVu Sans"}, {L"MS Gothic", L"DejaVu Sans Mono"},
 };
 
+/* The free families that stand for one another when the host lacks one, so an alias still lands on a font of the same kind. */
+static const WCHAR *stand_ins[][2] = {
+	{L"Noto Sans", L"Liberation Sans"}, {L"Liberation Sans", L"DejaVu Sans"}, {L"DejaVu Sans", L"Liberation Sans"},
+	{L"Liberation Serif", L"DejaVu Serif"}, {L"DejaVu Serif", L"Liberation Serif"},
+	{L"Liberation Mono", L"DejaVu Sans Mono"}, {L"DejaVu Sans Mono", L"Liberation Mono"},
+};
+
+/* The family an alias names, or the first stand-in for it the host has. */
+static FamilyEntry *alias_target(const WCHAR *name)
+{
+	int hop;
+	for (hop = 0; hop < 3 && name; ++hop) {
+		FamilyEntry *found = find_family(name);
+		size_t index;
+		const WCHAR *next = NULL;
+		if (found)
+			return found;
+		for (index = 0; index < sizeof(stand_ins) / sizeof(stand_ins[0]); ++index)
+			if (wequal_fold(stand_ins[index][0], name))
+				next = stand_ins[index][1];
+		name = next;
+	}
+	return NULL;
+}
+
 static BOOL CALLBACK build_system(PINIT_ONCE once, PVOID parameter, PVOID *context)
 {
 	DWORD size = RavenFontScan(NULL, 0), at = 0;
@@ -451,10 +495,10 @@ static BOOL CALLBACK build_system(PINIT_ONCE once, PVOID parameter, PVOID *conte
 			}
 	}
 	for (index = 0; index < sizeof(aliases) / sizeof(aliases[0]); ++index) {
-		if (find_family(aliases[index][1]) && !find_family(aliases[index][0])) {
+		if (alias_target(aliases[index][1]) && !find_family(aliases[index][0])) {
 			/* Adding a family can move the list, so the target is looked up again afterwards. */
 			FamilyEntry *alias = add_family(aliases[index][0]);
-			FamilyEntry *target = find_family(aliases[index][1]);
+			FamilyEntry *target = alias_target(aliases[index][1]);
 			UINT32 entry;
 			if (alias && target)
 				for (entry = 0; entry < target->count; ++entry)
@@ -593,7 +637,7 @@ static HRESULT STDMETHODCALLTYPE strings_query(IDWriteLocalizedStrings *self, RE
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE strings_add_ref(IDWriteLocalizedStrings *self) { return (ULONG)InterlockedIncrement(&((Strings *)self)->refs); }
 static ULONG STDMETHODCALLTYPE strings_release(IDWriteLocalizedStrings *self)
@@ -697,7 +741,7 @@ static HRESULT STDMETHODCALLTYPE stream_query(IDWriteFontFileStream *self, REFII
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE stream_add_ref(IDWriteFontFileStream *self) { return (ULONG)InterlockedIncrement(&((Stream *)self)->refs); }
 static ULONG STDMETHODCALLTYPE stream_release(IDWriteFontFileStream *self)
@@ -774,7 +818,7 @@ static HRESULT STDMETHODCALLTYPE loader_query(IDWriteFontFileLoader *self, REFII
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE loader_add_ref(IDWriteFontFileLoader *self) { return 2; }
 static ULONG STDMETHODCALLTYPE loader_release(IDWriteFontFileLoader *self) { return 1; }
@@ -885,7 +929,7 @@ static HRESULT STDMETHODCALLTYPE file_query(IDWriteFontFile *self, REFIID iid, v
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE file_add_ref(IDWriteFontFile *self) { return (ULONG)InterlockedIncrement(&((FontFile *)self)->refs); }
 static ULONG STDMETHODCALLTYPE file_release(IDWriteFontFile *self)
@@ -1064,7 +1108,7 @@ static HRESULT STDMETHODCALLTYPE face_query(IDWriteFontFace *self, REFIID iid, v
 	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFontFace) || same_guid(iid, &IID_IDWriteFontFace1))
 		*out = face;
 	else
-		return E_NOINTERFACE;
+		return no_interface(iid);
 	InterlockedIncrement(&face->refs);
 	return S_OK;
 }
@@ -1418,6 +1462,8 @@ static Collection system_collection;
 static IDWriteFontCollection *get_collection(void);
 static IDWriteFont *make_font(FontEntry *entry, FamilyEntry *family);
 static IDWriteFontFamily *make_family(FamilyEntry *family);
+static IDWriteFontFaceReference *make_reference(FontEntry *entry);
+static IDWriteFontSet *get_system_set(void);
 
 #define FONT_OF(self) ((Font *)(self))
 
@@ -1425,13 +1471,14 @@ static HRESULT STDMETHODCALLTYPE font_query(IDWriteFont *self, REFIID iid, void 
 {
 	if (!out)
 		return E_POINTER;
-	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFont) || same_guid(iid, &IID_IDWriteFont1)) {
+	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFont) || same_guid(iid, &IID_IDWriteFont1) || same_guid(iid, &IID_IDWriteFont2) ||
+		same_guid(iid, &IID_IDWriteFont3)) {
 		InterlockedIncrement(&FONT_OF(self)->refs);
 		*out = self;
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE font_add_ref(IDWriteFont *self) { return (ULONG)InterlockedIncrement(&FONT_OF(self)->refs); }
 static ULONG STDMETHODCALLTYPE font_release(IDWriteFont *self)
@@ -1550,14 +1597,31 @@ static HRESULT STDMETHODCALLTYPE font1_ranges(IDWriteFont1 *self, UINT32 max, DW
 }
 static WINBOOL STDMETHODCALLTYPE font1_mono(IDWriteFont1 *self) { return (FONT_OF(self)->entry->flags & 2) != 0; }
 
-static void *Font1_table_[IDWriteFont1_methods];
+/* IDWriteFont2 and IDWriteFont3: the fonts are local files without color glyph tables. */
+static WINBOOL STDMETHODCALLTYPE font2_color(IDWriteFont *self) { return FALSE; }
+static WINBOOL STDMETHODCALLTYPE font3_equals(IDWriteFont *self, IDWriteFont *other);
+static HRESULT STDMETHODCALLTYPE font3_reference(IDWriteFont *self, IDWriteFontFaceReference **reference)
+{
+	if (!reference)
+		return E_POINTER;
+	*reference = make_reference(FONT_OF(self)->entry);
+	return *reference ? S_OK : E_OUTOFMEMORY;
+}
+static WINBOOL STDMETHODCALLTYPE font3_has_character(IDWriteFont *self, UINT32 value)
+{
+	WINBOOL exists = FALSE;
+	return SUCCEEDED(font_has_character(self, value, &exists)) && exists;
+}
+static DWRITE_LOCALITY STDMETHODCALLTYPE font3_locality(IDWriteFont *self) { return DWRITE_LOCALITY_LOCAL; }
+
+static void *Font1_table_[IDWriteFont3_methods];
 static const IDWriteFont1Vtbl *font_vtbl;
 
 static IDWriteFont *make_font(FontEntry *entry, FamilyEntry *family)
 {
 	Font *font;
 	if (!font_vtbl) {
-		memcpy(Font1_table_, IDWriteFont1_table, sizeof(Font1_table_));
+		memcpy(Font1_table_, IDWriteFont3_table, sizeof(Font1_table_));
 		Font1_table_[IDWriteFont_QueryInterface] = (void *)font_query;
 		Font1_table_[IDWriteFont_AddRef] = (void *)font_add_ref;
 		Font1_table_[IDWriteFont_Release] = (void *)font_release;
@@ -1576,6 +1640,11 @@ static IDWriteFont *make_font(FontEntry *entry, FamilyEntry *family)
 		Font1_table_[IDWriteFont1_GetPanose] = (void *)font1_panose;
 		Font1_table_[IDWriteFont1_GetUnicodeRanges] = (void *)font1_ranges;
 		Font1_table_[IDWriteFont1_IsMonospacedFont] = (void *)font1_mono;
+		Font1_table_[IDWriteFont3_IsColorFont] = (void *)font2_color;
+		Font1_table_[IDWriteFont3_Equals] = (void *)font3_equals;
+		Font1_table_[IDWriteFont3_GetFontFaceReference] = (void *)font3_reference;
+		Font1_table_[IDWriteFont3_IDWriteFont3_HasCharacter] = (void *)font3_has_character;
+		Font1_table_[IDWriteFont3_GetLocality] = (void *)font3_locality;
 		font_vtbl = (const IDWriteFont1Vtbl *)Font1_table_;
 	}
 	font = ALLOC(sizeof(Font));
@@ -1612,19 +1681,25 @@ static FontEntry *best_match(FamilyEntry *family, DWRITE_FONT_WEIGHT weight, DWR
 	return best;
 }
 
+static WINBOOL STDMETHODCALLTYPE font3_equals(IDWriteFont *self, IDWriteFont *other)
+{
+	return other && FONT_OF(other)->vtbl == font_vtbl && FONT_OF(other)->entry == FONT_OF(self)->entry;
+}
+
 #define FAMILY_OF(self) ((Family *)(self))
 
 static HRESULT STDMETHODCALLTYPE family_query(IDWriteFontFamily *self, REFIID iid, void **out)
 {
 	if (!out)
 		return E_POINTER;
-	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFontFamily) || same_guid(iid, &IID_IDWriteFontList)) {
+	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFontFamily) || same_guid(iid, &IID_IDWriteFontList) ||
+		same_guid(iid, &IID_IDWriteFontFamily1)) {
 		InterlockedIncrement(&FAMILY_OF(self)->refs);
 		*out = self;
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE family_add_ref(IDWriteFontFamily *self) { return (ULONG)InterlockedIncrement(&FAMILY_OF(self)->refs); }
 static ULONG STDMETHODCALLTYPE family_release(IDWriteFontFamily *self)
@@ -1672,14 +1747,28 @@ static HRESULT STDMETHODCALLTYPE family_matching(IDWriteFontFamily *self, DWRITE
 	return S_OK;
 }
 
-static void *Family_table_[IDWriteFontFamily_methods];
+/* IDWriteFontFamily1: every font is local. */
+static DWRITE_LOCALITY STDMETHODCALLTYPE family1_locality(IDWriteFontFamily *self, UINT32 index) { return DWRITE_LOCALITY_LOCAL; }
+static HRESULT STDMETHODCALLTYPE family1_reference(IDWriteFontFamily *self, UINT32 index, IDWriteFontFaceReference **reference)
+{
+	Family *family = FAMILY_OF(self);
+	if (!reference)
+		return E_POINTER;
+	*reference = NULL;
+	if (index >= family->family->count)
+		return E_INVALIDARG;
+	*reference = make_reference(family->family->entries[index]);
+	return *reference ? S_OK : E_OUTOFMEMORY;
+}
+
+static void *Family_table_[IDWriteFontFamily1_methods];
 static const IDWriteFontFamilyVtbl *family_vtbl;
 
 static IDWriteFontFamily *make_family(FamilyEntry *entry)
 {
 	Family *family;
 	if (!family_vtbl) {
-		memcpy(Family_table_, IDWriteFontFamily_table, sizeof(Family_table_));
+		memcpy(Family_table_, IDWriteFontFamily1_table, sizeof(Family_table_));
 		Family_table_[IDWriteFontFamily_QueryInterface] = (void *)family_query;
 		Family_table_[IDWriteFontFamily_AddRef] = (void *)family_add_ref;
 		Family_table_[IDWriteFontFamily_Release] = (void *)family_release;
@@ -1689,6 +1778,9 @@ static IDWriteFontFamily *make_family(FamilyEntry *entry)
 		Family_table_[IDWriteFontFamily_GetFamilyNames] = (void *)family_names;
 		Family_table_[IDWriteFontFamily_GetFirstMatchingFont] = (void *)family_first_match;
 		Family_table_[IDWriteFontFamily_GetMatchingFonts] = (void *)family_matching;
+		Family_table_[IDWriteFontFamily1_GetFontLocality] = (void *)family1_locality;
+		Family_table_[IDWriteFontFamily1_IDWriteFontFamily1_GetFont] = (void *)family_font;
+		Family_table_[IDWriteFontFamily1_GetFontFaceReference] = (void *)family1_reference;
 		family_vtbl = (const IDWriteFontFamilyVtbl *)Family_table_;
 	}
 	family = ALLOC(sizeof(Family));
@@ -1705,12 +1797,12 @@ static HRESULT STDMETHODCALLTYPE collection_query(IDWriteFontCollection *self, R
 {
 	if (!out)
 		return E_POINTER;
-	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFontCollection)) {
+	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFontCollection) || same_guid(iid, &IID_IDWriteFontCollection1)) {
 		*out = self;
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE collection_add_ref(IDWriteFontCollection *self) { return 2; }
 static ULONG STDMETHODCALLTYPE collection_release(IDWriteFontCollection *self) { return 1; }
@@ -1759,12 +1851,20 @@ static HRESULT STDMETHODCALLTYPE collection_from_face(IDWriteFontCollection *sel
 	return DWRITE_E_NOFONT;
 }
 
-static void *Collection_table_[IDWriteFontCollection_methods];
+static HRESULT STDMETHODCALLTYPE collection_set(IDWriteFontCollection *self, IDWriteFontSet **set)
+{
+	if (!set)
+		return E_POINTER;
+	*set = get_system_set();
+	return *set ? S_OK : E_OUTOFMEMORY;
+}
+
+static void *Collection_table_[IDWriteFontCollection1_methods];
 
 static IDWriteFontCollection *get_collection(void)
 {
 	if (!system_collection.vtbl) {
-		memcpy(Collection_table_, IDWriteFontCollection_table, sizeof(Collection_table_));
+		memcpy(Collection_table_, IDWriteFontCollection1_table, sizeof(Collection_table_));
 		Collection_table_[IDWriteFontCollection_QueryInterface] = (void *)collection_query;
 		Collection_table_[IDWriteFontCollection_AddRef] = (void *)collection_add_ref;
 		Collection_table_[IDWriteFontCollection_Release] = (void *)collection_release;
@@ -1772,9 +1872,598 @@ static IDWriteFontCollection *get_collection(void)
 		Collection_table_[IDWriteFontCollection_GetFontFamily] = (void *)collection_family;
 		Collection_table_[IDWriteFontCollection_FindFamilyName] = (void *)collection_find;
 		Collection_table_[IDWriteFontCollection_GetFontFromFontFace] = (void *)collection_from_face;
+		Collection_table_[IDWriteFontCollection1_GetFontSet] = (void *)collection_set;
+		Collection_table_[IDWriteFontCollection1_IDWriteFontCollection1_GetFontFamily] = (void *)collection_family;
 		system_collection.vtbl = (const IDWriteFontCollectionVtbl *)Collection_table_;
 	}
 	return (IDWriteFontCollection *)&system_collection;
+}
+
+/* ---- font sets ---- */
+/* A set is a list of system fonts, each with the family it is listed under: a family that stands in for a missing one lists the
+   fonts of the family it stands in for under its own name. The system set holds every font of the system collection, in family order. */
+typedef struct {
+	FontEntry *entry;
+	FamilyEntry *family;
+} SetFont;
+
+typedef struct {
+	const IDWriteFontSetVtbl *vtbl;
+	LONG refs;
+	SetFont *fonts;
+	UINT32 count;
+} FontSet;
+
+typedef struct {
+	const IDWriteFontFaceReferenceVtbl *vtbl;
+	LONG refs;
+	FontEntry *entry;
+} Reference;
+
+typedef struct {
+	const IDWriteStringListVtbl *vtbl;
+	LONG refs;
+	WCHAR **values;
+	UINT32 count;
+} StringList;
+
+static FamilyEntry *family_of_entry(const FontEntry *entry)
+{
+	UINT32 position, index;
+	for (position = 0; position < family_count; ++position)
+		for (index = 0; index < families[position].count; ++index)
+			if (families[position].entries[index] == entry)
+				return &families[position];
+	return NULL;
+}
+
+/* ---- string lists ---- */
+static HRESULT STDMETHODCALLTYPE list_query(IDWriteStringList *self, REFIID iid, void **out)
+{
+	if (!out)
+		return E_POINTER;
+	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteStringList)) {
+		InterlockedIncrement(&((StringList *)self)->refs);
+		*out = self;
+		return S_OK;
+	}
+	*out = NULL;
+	return no_interface(iid);
+}
+static ULONG STDMETHODCALLTYPE list_add_ref(IDWriteStringList *self) { return (ULONG)InterlockedIncrement(&((StringList *)self)->refs); }
+static ULONG STDMETHODCALLTYPE list_release(IDWriteStringList *self)
+{
+	StringList *list = (StringList *)self;
+	LONG left = InterlockedDecrement(&list->refs);
+	UINT32 index;
+	if (!left) {
+		for (index = 0; index < list->count; ++index)
+			FREE(list->values[index]);
+		if (list->values)
+			FREE(list->values);
+		FREE(list);
+	}
+	return (ULONG)left;
+}
+static UINT32 STDMETHODCALLTYPE list_count(IDWriteStringList *self) { return ((StringList *)self)->count; }
+static HRESULT STDMETHODCALLTYPE list_locale_length(IDWriteStringList *self, UINT32 index, UINT32 *length)
+{
+	if (index >= ((StringList *)self)->count)
+		return E_INVALIDARG;
+	*length = 5;
+	return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE list_locale(IDWriteStringList *self, UINT32 index, WCHAR *name, UINT32 size)
+{
+	if (index >= ((StringList *)self)->count)
+		return E_INVALIDARG;
+	if (size < 6)
+		return E_NOT_SUFFICIENT_BUFFER;
+	memcpy(name, L"en-us", 6 * sizeof(WCHAR));
+	return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE list_length(IDWriteStringList *self, UINT32 index, UINT32 *length)
+{
+	if (index >= ((StringList *)self)->count)
+		return E_INVALIDARG;
+	*length = (UINT32)wlen(((StringList *)self)->values[index]);
+	return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE list_string(IDWriteStringList *self, UINT32 index, WCHAR *buffer, UINT32 size)
+{
+	StringList *list = (StringList *)self;
+	size_t length;
+	if (index >= list->count)
+		return E_INVALIDARG;
+	length = wlen(list->values[index]);
+	if (size < length + 1)
+		return E_NOT_SUFFICIENT_BUFFER;
+	memcpy(buffer, list->values[index], (length + 1) * sizeof(WCHAR));
+	return S_OK;
+}
+
+static void *List_table_[IDWriteStringList_methods];
+
+static StringList *make_list(void)
+{
+	StringList *list;
+	if (!List_table_[0]) {
+		memcpy(List_table_, IDWriteStringList_table, sizeof(List_table_));
+		List_table_[IDWriteStringList_QueryInterface] = (void *)list_query;
+		List_table_[IDWriteStringList_AddRef] = (void *)list_add_ref;
+		List_table_[IDWriteStringList_Release] = (void *)list_release;
+		List_table_[IDWriteStringList_GetCount] = (void *)list_count;
+		List_table_[IDWriteStringList_GetLocaleNameLength] = (void *)list_locale_length;
+		List_table_[IDWriteStringList_GetLocaleName] = (void *)list_locale;
+		List_table_[IDWriteStringList_GetStringLength] = (void *)list_length;
+		List_table_[IDWriteStringList_GetString] = (void *)list_string;
+	}
+	list = ALLOC(sizeof(StringList));
+	if (!list)
+		return NULL;
+	list->vtbl = (const IDWriteStringListVtbl *)List_table_;
+	list->refs = 1;
+	return list;
+}
+
+/* ---- font face references ---- */
+static HRESULT STDMETHODCALLTYPE reference_query(IDWriteFontFaceReference *self, REFIID iid, void **out)
+{
+	if (!out)
+		return E_POINTER;
+	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFontFaceReference)) {
+		InterlockedIncrement(&((Reference *)self)->refs);
+		*out = self;
+		return S_OK;
+	}
+	*out = NULL;
+	return no_interface(iid);
+}
+static ULONG STDMETHODCALLTYPE reference_add_ref(IDWriteFontFaceReference *self) { return (ULONG)InterlockedIncrement(&((Reference *)self)->refs); }
+static ULONG STDMETHODCALLTYPE reference_release(IDWriteFontFaceReference *self)
+{
+	LONG left = InterlockedDecrement(&((Reference *)self)->refs);
+	if (!left)
+		FREE(self);
+	return (ULONG)left;
+}
+static HRESULT STDMETHODCALLTYPE reference_face(IDWriteFontFaceReference *self, IDWriteFontFace3 **face)
+{
+	FontEntry *entry = ((Reference *)self)->entry;
+	IDWriteFont *font = make_font(entry, family_of_entry(entry));
+	HRESULT result;
+	if (!face)
+		return E_POINTER;
+	*face = NULL;
+	if (!font)
+		return E_OUTOFMEMORY;
+	result = IDWriteFont_CreateFontFace(font, (IDWriteFontFace **)face);
+	IDWriteFont_Release(font);
+	return result;
+}
+static HRESULT STDMETHODCALLTYPE reference_face_simulated(IDWriteFontFaceReference *self, DWRITE_FONT_SIMULATIONS simulations, IDWriteFontFace3 **face)
+{
+	return reference_face(self, face);
+}
+static WINBOOL STDMETHODCALLTYPE reference_equals(IDWriteFontFaceReference *self, IDWriteFontFaceReference *other)
+{
+	return other && ((Reference *)other)->vtbl == ((Reference *)self)->vtbl && ((Reference *)other)->entry == ((Reference *)self)->entry;
+}
+static UINT32 STDMETHODCALLTYPE reference_index(IDWriteFontFaceReference *self) { return ((Reference *)self)->entry->index; }
+static DWRITE_FONT_SIMULATIONS STDMETHODCALLTYPE reference_simulations(IDWriteFontFaceReference *self) { return DWRITE_FONT_SIMULATIONS_NONE; }
+static HRESULT STDMETHODCALLTYPE reference_file(IDWriteFontFaceReference *self, IDWriteFontFile **file)
+{
+	FontEntry *entry = ((Reference *)self)->entry;
+	if (!file)
+		return E_POINTER;
+	*file = NULL;
+	if (entry->file) {
+		IDWriteFontFile_AddRef(entry->file);
+		*file = entry->file;
+		return S_OK;
+	}
+	if (!entry->path)
+		return E_FAIL;
+	*file = make_file(entry->path, (UINT32)((wlen(entry->path) + 1) * sizeof(WCHAR)), get_system_loader());
+	return *file ? S_OK : E_OUTOFMEMORY;
+}
+static UINT64 STDMETHODCALLTYPE reference_file_size(IDWriteFontFaceReference *self)
+{
+	WIN32_FILE_ATTRIBUTE_DATA attributes;
+	FontEntry *entry = ((Reference *)self)->entry;
+	if (!entry->path || !GetFileAttributesExW(entry->path, GetFileExInfoStandard, &attributes))
+		return 0;
+	return ((UINT64)attributes.nFileSizeHigh << 32) | attributes.nFileSizeLow;
+}
+static HRESULT STDMETHODCALLTYPE reference_file_time(IDWriteFontFaceReference *self, FILETIME *time)
+{
+	WIN32_FILE_ATTRIBUTE_DATA attributes;
+	FontEntry *entry = ((Reference *)self)->entry;
+	if (!time)
+		return E_POINTER;
+	memset(time, 0, sizeof(*time));
+	if (entry->path && GetFileAttributesExW(entry->path, GetFileExInfoStandard, &attributes))
+		*time = attributes.ftLastWriteTime;
+	return S_OK;
+}
+static DWRITE_LOCALITY STDMETHODCALLTYPE reference_locality(IDWriteFontFaceReference *self) { return DWRITE_LOCALITY_LOCAL; }
+/* Every font is already local, so a download request has nothing to fetch. */
+static HRESULT STDMETHODCALLTYPE reference_download(IDWriteFontFaceReference *self) { return S_OK; }
+static HRESULT STDMETHODCALLTYPE reference_download_characters(IDWriteFontFaceReference *self, const WCHAR *characters, UINT32 count) { return S_OK; }
+static HRESULT STDMETHODCALLTYPE reference_download_glyphs(IDWriteFontFaceReference *self, const UINT16 *glyphs, UINT32 count) { return S_OK; }
+static HRESULT STDMETHODCALLTYPE reference_download_fragment(IDWriteFontFaceReference *self, UINT64 offset, UINT64 size) { return S_OK; }
+
+static void *Reference_table_[IDWriteFontFaceReference_methods];
+
+static IDWriteFontFaceReference *make_reference(FontEntry *entry)
+{
+	Reference *reference;
+	if (!Reference_table_[0]) {
+		memcpy(Reference_table_, IDWriteFontFaceReference_table, sizeof(Reference_table_));
+		Reference_table_[IDWriteFontFaceReference_QueryInterface] = (void *)reference_query;
+		Reference_table_[IDWriteFontFaceReference_AddRef] = (void *)reference_add_ref;
+		Reference_table_[IDWriteFontFaceReference_Release] = (void *)reference_release;
+		Reference_table_[IDWriteFontFaceReference_CreateFontFace] = (void *)reference_face;
+		Reference_table_[IDWriteFontFaceReference_CreateFontFaceWithSimulations] = (void *)reference_face_simulated;
+		Reference_table_[IDWriteFontFaceReference_Equals] = (void *)reference_equals;
+		Reference_table_[IDWriteFontFaceReference_GetFontFaceIndex] = (void *)reference_index;
+		Reference_table_[IDWriteFontFaceReference_GetSimulations] = (void *)reference_simulations;
+		Reference_table_[IDWriteFontFaceReference_GetFontFile] = (void *)reference_file;
+		Reference_table_[IDWriteFontFaceReference_GetLocalFileSize] = (void *)reference_file_size;
+		Reference_table_[IDWriteFontFaceReference_GetFileSize] = (void *)reference_file_size;
+		Reference_table_[IDWriteFontFaceReference_GetFileTime] = (void *)reference_file_time;
+		Reference_table_[IDWriteFontFaceReference_GetLocality] = (void *)reference_locality;
+		Reference_table_[IDWriteFontFaceReference_EnqueueFontDownloadRequest] = (void *)reference_download;
+		Reference_table_[IDWriteFontFaceReference_EnqueueCharacterDownloadRequest] = (void *)reference_download_characters;
+		Reference_table_[IDWriteFontFaceReference_EnqueueGlyphDownloadRequest] = (void *)reference_download_glyphs;
+		Reference_table_[IDWriteFontFaceReference_EnqueueFileFragmentDownloadRequest] = (void *)reference_download_fragment;
+	}
+	reference = ALLOC(sizeof(Reference));
+	if (!reference)
+		return NULL;
+	reference->vtbl = (const IDWriteFontFaceReferenceVtbl *)Reference_table_;
+	reference->refs = 1;
+	reference->entry = entry;
+	return (IDWriteFontFaceReference *)reference;
+}
+
+/* ---- the sets ---- */
+/* The text of one property of a font, written into the buffer when it is a number; NULL when the font has no such property. */
+static const WCHAR *property_text(const SetFont *font, DWRITE_FONT_PROPERTY_ID id, WCHAR buffer[16])
+{
+	const FontEntry *entry = font->entry;
+	DWORD number;
+	int at = 15;
+	switch (id) {
+	case DWRITE_FONT_PROPERTY_ID_WEIGHT_STRETCH_STYLE_FAMILY_NAME:
+	case DWRITE_FONT_PROPERTY_ID_TYPOGRAPHIC_FAMILY_NAME:
+	case DWRITE_FONT_PROPERTY_ID_WIN32_FAMILY_NAME:
+		return font->family ? font->family->name : entry->family;
+	case DWRITE_FONT_PROPERTY_ID_WEIGHT_STRETCH_STYLE_FACE_NAME:
+		return entry->face ? entry->face : L"Regular";
+	case DWRITE_FONT_PROPERTY_ID_FULL_NAME:
+		return entry->full;
+	case DWRITE_FONT_PROPERTY_ID_POSTSCRIPT_NAME:
+		return entry->postscript;
+	case DWRITE_FONT_PROPERTY_ID_WEIGHT:
+		number = entry->weight;
+		break;
+	case DWRITE_FONT_PROPERTY_ID_STRETCH:
+		number = entry->stretch;
+		break;
+	case DWRITE_FONT_PROPERTY_ID_STYLE:
+		number = entry->style;
+		break;
+	default:
+		return NULL;
+	}
+	buffer[at] = 0;
+	do {
+		buffer[--at] = (WCHAR)(L'0' + number % 10);
+		number /= 10;
+	} while (number && at);
+	return buffer + at;
+}
+
+static BOOL font_has_property(const SetFont *font, const DWRITE_FONT_PROPERTY *property)
+{
+	WCHAR buffer[16];
+	const WCHAR *text = property_text(font, property->propertyId, buffer);
+	return text && property->propertyValue && wequal_fold(text, property->propertyValue);
+}
+
+static IDWriteFontSet *make_set(const SetFont *fonts, UINT32 count);
+
+static HRESULT STDMETHODCALLTYPE set_query(IDWriteFontSet *self, REFIID iid, void **out)
+{
+	if (!out)
+		return E_POINTER;
+	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFontSet) || same_guid(iid, &IID_IDWriteFontSet1) || same_guid(iid, &IID_IDWriteFontSet2) ||
+		same_guid(iid, &IID_IDWriteFontSet3)) {
+		InterlockedIncrement(&((FontSet *)self)->refs);
+		*out = self;
+		return S_OK;
+	}
+	*out = NULL;
+	return no_interface(iid);
+}
+static ULONG STDMETHODCALLTYPE set_add_ref(IDWriteFontSet *self) { return (ULONG)InterlockedIncrement(&((FontSet *)self)->refs); }
+static ULONG STDMETHODCALLTYPE set_release(IDWriteFontSet *self)
+{
+	FontSet *set = (FontSet *)self;
+	LONG left = InterlockedDecrement(&set->refs);
+	if (!left) {
+		if (set->fonts)
+			FREE(set->fonts);
+		FREE(set);
+	}
+	return (ULONG)left;
+}
+static UINT32 STDMETHODCALLTYPE set_count(IDWriteFontSet *self) { return ((FontSet *)self)->count; }
+static HRESULT STDMETHODCALLTYPE set_reference(IDWriteFontSet *self, UINT32 index, IDWriteFontFaceReference **reference)
+{
+	FontSet *set = (FontSet *)self;
+	if (!reference)
+		return E_POINTER;
+	*reference = NULL;
+	if (index >= set->count)
+		return E_INVALIDARG;
+	*reference = make_reference(set->fonts[index].entry);
+	return *reference ? S_OK : E_OUTOFMEMORY;
+}
+static HRESULT STDMETHODCALLTYPE set_find_reference(IDWriteFontSet *self, IDWriteFontFaceReference *reference, UINT32 *index, WINBOOL *exists)
+{
+	FontSet *set = (FontSet *)self;
+	UINT32 position;
+	*index = UINT32_MAX;
+	*exists = FALSE;
+	if (!reference || ((Reference *)reference)->vtbl != (const IDWriteFontFaceReferenceVtbl *)Reference_table_)
+		return S_OK;
+	for (position = 0; position < set->count; ++position)
+		if (set->fonts[position].entry == ((Reference *)reference)->entry) {
+			*index = position;
+			*exists = TRUE;
+			break;
+		}
+	return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE set_find_face(IDWriteFontSet *self, IDWriteFontFace *face, UINT32 *index, WINBOOL *exists)
+{
+	FontSet *set = (FontSet *)self;
+	Face *source = (Face *)face;
+	UINT32 position;
+	*index = UINT32_MAX;
+	*exists = FALSE;
+	if (!face)
+		return E_INVALIDARG;
+	for (position = 0; position < set->count; ++position) {
+		FontEntry *entry = set->fonts[position].entry;
+		if (entry->data ? entry->data == source->data :
+			source->data->path && entry->index == source->data->index && wequal_fold(entry->path, source->data->path)) {
+			*index = position;
+			*exists = TRUE;
+			break;
+		}
+	}
+	return S_OK;
+}
+/* The distinct values of a property over the set, in the order the fonts come. */
+static HRESULT STDMETHODCALLTYPE set_values(IDWriteFontSet *self, DWRITE_FONT_PROPERTY_ID id, IDWriteStringList **values)
+{
+	FontSet *set = (FontSet *)self;
+	StringList *list;
+	UINT32 position, seen;
+	if (!values)
+		return E_POINTER;
+	*values = NULL;
+	list = make_list();
+	if (!list)
+		return E_OUTOFMEMORY;
+	list->values = ALLOC((set->count ? set->count : 1) * sizeof(WCHAR *));
+	if (!list->values) {
+		list_release((IDWriteStringList *)list);
+		return E_OUTOFMEMORY;
+	}
+	for (position = 0; position < set->count; ++position) {
+		WCHAR buffer[16];
+		const WCHAR *text = property_text(&set->fonts[position], id, buffer);
+		if (!text || !text[0])
+			continue;
+		for (seen = 0; seen < list->count && !wequal_fold(list->values[seen], text); ++seen)
+			;
+		if (seen == list->count && (list->values[list->count] = wdup(text)))
+			++list->count;
+	}
+	*values = (IDWriteStringList *)list;
+	return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE set_values_locale(IDWriteFontSet *self, DWRITE_FONT_PROPERTY_ID id, const WCHAR *locales, IDWriteStringList **values)
+{
+	return set_values(self, id, values);
+}
+static HRESULT STDMETHODCALLTYPE set_font_values(IDWriteFontSet *self, UINT32 index, DWRITE_FONT_PROPERTY_ID id, WINBOOL *exists, IDWriteLocalizedStrings **values)
+{
+	FontSet *set = (FontSet *)self;
+	WCHAR buffer[16];
+	const WCHAR *text;
+	if (!exists || !values)
+		return E_POINTER;
+	*exists = FALSE;
+	*values = NULL;
+	if (index >= set->count)
+		return E_INVALIDARG;
+	text = property_text(&set->fonts[index], id, buffer);
+	if (!text || !text[0])
+		return S_OK;
+	*values = make_strings(text);
+	if (!*values)
+		return E_OUTOFMEMORY;
+	*exists = TRUE;
+	return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE set_occurrences(IDWriteFontSet *self, const DWRITE_FONT_PROPERTY *property, UINT32 *count)
+{
+	FontSet *set = (FontSet *)self;
+	UINT32 position;
+	if (!property || !count)
+		return E_INVALIDARG;
+	*count = 0;
+	for (position = 0; position < set->count; ++position)
+		if (font_has_property(&set->fonts[position], property))
+			++*count;
+	return S_OK;
+}
+/* The fonts of a family, nearest to the wanted weight, width and slant first. */
+static HRESULT STDMETHODCALLTYPE set_matching_family(IDWriteFontSet *self, const WCHAR *name, DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STRETCH stretch,
+	DWRITE_FONT_STYLE style, IDWriteFontSet **out)
+{
+	FontSet *set = (FontSet *)self;
+	SetFont *found;
+	UINT32 position, count = 0, sorted;
+	if (!name || !out)
+		return E_INVALIDARG;
+	*out = NULL;
+	found = ALLOC((set->count ? set->count : 1) * sizeof(SetFont));
+	if (!found)
+		return E_OUTOFMEMORY;
+	for (position = 0; position < set->count; ++position) {
+		WCHAR buffer[16];
+		const WCHAR *family = property_text(&set->fonts[position], DWRITE_FONT_PROPERTY_ID_WIN32_FAMILY_NAME, buffer);
+		if (family && wequal_fold(family, name))
+			found[count++] = set->fonts[position];
+	}
+	for (sorted = 1; sorted < count; ++sorted) {
+		SetFont font = found[sorted];
+		unsigned distance = match_distance(font.entry, weight, stretch, style);
+		UINT32 at = sorted;
+		while (at && match_distance(found[at - 1].entry, weight, stretch, style) > distance) {
+			found[at] = found[at - 1];
+			--at;
+		}
+		found[at] = font;
+	}
+	*out = make_set(found, count);
+	FREE(found);
+	return *out ? S_OK : E_OUTOFMEMORY;
+}
+static HRESULT STDMETHODCALLTYPE set_matching(IDWriteFontSet *self, const DWRITE_FONT_PROPERTY *properties, UINT32 property_count, IDWriteFontSet **out)
+{
+	FontSet *set = (FontSet *)self;
+	SetFont *found;
+	UINT32 position, property, count = 0;
+	if (!out || (!properties && property_count))
+		return E_INVALIDARG;
+	*out = NULL;
+	found = ALLOC((set->count ? set->count : 1) * sizeof(SetFont));
+	if (!found)
+		return E_OUTOFMEMORY;
+	for (position = 0; position < set->count; ++position) {
+		for (property = 0; property < property_count && font_has_property(&set->fonts[position], &properties[property]); ++property)
+			;
+		if (property == property_count)
+			found[count++] = set->fonts[position];
+	}
+	*out = make_set(found, count);
+	FREE(found);
+	return *out ? S_OK : E_OUTOFMEMORY;
+}
+
+/* IDWriteFontSet1 to IDWriteFontSet3: the fonts are installed for the machine and stay valid while the program runs. */
+static DWRITE_LOCALITY STDMETHODCALLTYPE set1_locality(IDWriteFontSet *self, UINT32 index) { return DWRITE_LOCALITY_LOCAL; }
+static HANDLE STDMETHODCALLTYPE set2_expiration(IDWriteFontSet *self)
+{
+	static HANDLE never;
+	if (!never) {
+		HANDLE made = CreateEventW(NULL, TRUE, FALSE, NULL);
+		if (made && InterlockedCompareExchangePointer(&never, made, NULL))
+			CloseHandle(made);
+	}
+	return never;
+}
+static DWRITE_FONT_SOURCE_TYPE STDMETHODCALLTYPE set3_source_type(IDWriteFontSet *self, UINT32 index)
+{
+	return index < ((FontSet *)self)->count ? DWRITE_FONT_SOURCE_TYPE_PER_MACHINE : DWRITE_FONT_SOURCE_TYPE_UNKNOWN;
+}
+static UINT32 STDMETHODCALLTYPE set3_source_name_length(IDWriteFontSet *self, UINT32 index) { return 0; }
+static HRESULT STDMETHODCALLTYPE set3_source_name(IDWriteFontSet *self, UINT32 index, WCHAR *buffer, UINT32 size)
+{
+	if (!buffer || !size)
+		return E_NOT_SUFFICIENT_BUFFER;
+	buffer[0] = 0;
+	return S_OK;
+}
+
+static void *Set_table_[IDWriteFontSet3_methods];
+
+static IDWriteFontSet *make_set(const SetFont *fonts, UINT32 count)
+{
+	FontSet *set;
+	if (!Set_table_[0]) {
+		memcpy(Set_table_, IDWriteFontSet3_table, sizeof(Set_table_));
+		Set_table_[IDWriteFontSet_QueryInterface] = (void *)set_query;
+		Set_table_[IDWriteFontSet_AddRef] = (void *)set_add_ref;
+		Set_table_[IDWriteFontSet_Release] = (void *)set_release;
+		Set_table_[IDWriteFontSet_GetFontCount] = (void *)set_count;
+		Set_table_[IDWriteFontSet_GetFontFaceReference] = (void *)set_reference;
+		Set_table_[IDWriteFontSet_FindFontFaceReference] = (void *)set_find_reference;
+		Set_table_[IDWriteFontSet_FindFontFace] = (void *)set_find_face;
+		Set_table_[IDWriteFontSet_GetPropertyValues__] = (void *)set_values;
+		Set_table_[IDWriteFontSet_GetPropertyValues_] = (void *)set_values_locale;
+		Set_table_[IDWriteFontSet_GetPropertyValues] = (void *)set_font_values;
+		Set_table_[IDWriteFontSet_GetPropertyOccurrenceCount] = (void *)set_occurrences;
+		Set_table_[IDWriteFontSet_GetMatchingFonts_] = (void *)set_matching_family;
+		Set_table_[IDWriteFontSet_GetMatchingFonts] = (void *)set_matching;
+		Set_table_[IDWriteFontSet3_GetFontLocality] = (void *)set1_locality;
+		Set_table_[IDWriteFontSet3_GetExpirationEvent] = (void *)set2_expiration;
+		Set_table_[IDWriteFontSet3_GetFontSourceType] = (void *)set3_source_type;
+		Set_table_[IDWriteFontSet3_GetFontSourceNameLength] = (void *)set3_source_name_length;
+		Set_table_[IDWriteFontSet3_GetFontSourceName] = (void *)set3_source_name;
+	}
+	set = ALLOC(sizeof(FontSet));
+	if (!set)
+		return NULL;
+	set->vtbl = (const IDWriteFontSetVtbl *)Set_table_;
+	set->refs = 1;
+	set->fonts = ALLOC((count ? count : 1) * sizeof(SetFont));
+	if (!set->fonts) {
+		FREE(set);
+		return NULL;
+	}
+	if (count)
+		memcpy(set->fonts, fonts, count * sizeof(SetFont));
+	set->count = count;
+	return (IDWriteFontSet *)set;
+}
+
+static IDWriteFontSet *system_set;
+
+/* The system set is made once and never released; a caller's Release only takes back its own reference. */
+static IDWriteFontSet *get_system_set(void)
+{
+	if (!system_set) {
+		SetFont *fonts;
+		UINT32 position, index, count = 0, total = 0;
+		IDWriteFontSet *made;
+		ensure_system();
+		for (position = 0; position < family_count; ++position)
+			total += families[position].count;
+		fonts = ALLOC((total ? total : 1) * sizeof(SetFont));
+		if (!fonts)
+			return NULL;
+		for (position = 0; position < family_count; ++position)
+			for (index = 0; index < families[position].count; ++index) {
+				fonts[count].entry = families[position].entries[index];
+				fonts[count++].family = &families[position];
+			}
+		made = make_set(fonts, count);
+		FREE(fonts);
+		if (made && InterlockedCompareExchangePointer((void **)&system_set, made, NULL))
+			set_release(made);
+		if (!system_set)
+			return NULL;
+	}
+	set_add_ref(system_set);
+	return system_set;
 }
 
 /* ---- collections a program builds from its own loader ---- */
@@ -1811,7 +2500,7 @@ static HRESULT STDMETHODCALLTYPE custom_query(IDWriteFontCollection *self, REFII
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE custom_add_ref(IDWriteFontCollection *self) { return 2; }
 static ULONG STDMETHODCALLTYPE custom_release(IDWriteFontCollection *self) { return 1; }
@@ -1856,6 +2545,21 @@ static HRESULT STDMETHODCALLTYPE custom_from_face(IDWriteFontCollection *self, I
 }
 
 static void *Custom_table_[IDWriteFontCollection_methods];
+
+static const IDWriteFontCollectionVtbl *custom_vtbl(void)
+{
+	if (!Custom_table_[0]) {
+		memcpy(Custom_table_, IDWriteFontCollection_table, sizeof(Custom_table_));
+		Custom_table_[IDWriteFontCollection_QueryInterface] = (void *)custom_query;
+		Custom_table_[IDWriteFontCollection_AddRef] = (void *)custom_add_ref;
+		Custom_table_[IDWriteFontCollection_Release] = (void *)custom_release;
+		Custom_table_[IDWriteFontCollection_GetFontFamilyCount] = (void *)custom_family_count;
+		Custom_table_[IDWriteFontCollection_GetFontFamily] = (void *)custom_family;
+		Custom_table_[IDWriteFontCollection_FindFamilyName] = (void *)custom_find;
+		Custom_table_[IDWriteFontCollection_GetFontFromFontFace] = (void *)custom_from_face;
+	}
+	return (const IDWriteFontCollectionVtbl *)Custom_table_;
+}
 
 /* Files the entry under the family of its name, which is made when the collection does not hold it yet. */
 static void custom_add_entry(CustomCollection *collection, FontEntry *entry)
@@ -1984,17 +2688,7 @@ static HRESULT STDMETHODCALLTYPE factory_custom_collection(IDWriteFactory2 *self
 		IDWriteFontFileEnumerator_Release(enumerator);
 		return E_OUTOFMEMORY;
 	}
-	if (!Custom_table_[0]) {
-		memcpy(Custom_table_, IDWriteFontCollection_table, sizeof(Custom_table_));
-		Custom_table_[IDWriteFontCollection_QueryInterface] = (void *)custom_query;
-		Custom_table_[IDWriteFontCollection_AddRef] = (void *)custom_add_ref;
-		Custom_table_[IDWriteFontCollection_Release] = (void *)custom_release;
-		Custom_table_[IDWriteFontCollection_GetFontFamilyCount] = (void *)custom_family_count;
-		Custom_table_[IDWriteFontCollection_GetFontFamily] = (void *)custom_family;
-		Custom_table_[IDWriteFontCollection_FindFamilyName] = (void *)custom_find;
-		Custom_table_[IDWriteFontCollection_GetFontFromFontFace] = (void *)custom_from_face;
-	}
-	collection->vtbl = (const IDWriteFontCollectionVtbl *)Custom_table_;
+	collection->vtbl = custom_vtbl();
 	collection->loader = loader;
 	IDWriteFontCollectionLoader_AddRef(loader);
 	collection->key_size = key_size;
@@ -2049,7 +2743,7 @@ static HRESULT STDMETHODCALLTYPE params_query(IDWriteRenderingParams *self, REFI
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE params_add_ref(IDWriteRenderingParams *self) { return (ULONG)InterlockedIncrement(&PARAMS_OF(self)->refs); }
 static ULONG STDMETHODCALLTYPE params_release(IDWriteRenderingParams *self)
@@ -2130,7 +2824,7 @@ static HRESULT STDMETHODCALLTYPE analysis_query(IDWriteGlyphRunAnalysis *self, R
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE analysis_add_ref(IDWriteGlyphRunAnalysis *self) { return (ULONG)InterlockedIncrement(&ANALYSIS_OF(self)->refs); }
 static ULONG STDMETHODCALLTYPE analysis_release(IDWriteGlyphRunAnalysis *self)
@@ -2346,12 +3040,12 @@ static HRESULT STDMETHODCALLTYPE interop_query(IDWriteGdiInterop *self, REFIID i
 {
 	if (!out)
 		return E_POINTER;
-	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteGdiInterop)) {
+	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteGdiInterop) || same_guid(iid, &IID_IDWriteGdiInterop1)) {
 		*out = self;
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE interop_add_ref(IDWriteGdiInterop *self) { return 2; }
 static ULONG STDMETHODCALLTYPE interop_release(IDWriteGdiInterop *self) { return 1; }
@@ -2406,13 +3100,96 @@ static HRESULT STDMETHODCALLTYPE interop_face_to_logfont(IDWriteGdiInterop *self
 	return result;
 }
 
-static void *Interop_table_[IDWriteGdiInterop_methods];
+/* IDWriteGdiInterop1: the font a LOGFONT names in a given collection, and the scripts and code pages a font claims. */
+static HRESULT STDMETHODCALLTYPE interop_create_font_in(IDWriteGdiInterop *self, const LOGFONTW *logfont, IDWriteFontCollection *collection,
+	IDWriteFont **font)
+{
+	IDWriteFontFamily *family = NULL;
+	UINT32 index = 0;
+	WINBOOL exists = FALSE;
+	HRESULT result;
+	if (!logfont || !font)
+		return E_INVALIDARG;
+	*font = NULL;
+	if (!collection)
+		return interop_create_font(self, logfont, font);
+	result = IDWriteFontCollection_FindFamilyName(collection, logfont->lfFaceName, &index, &exists);
+	if (FAILED(result))
+		return result;
+	if (!exists)
+		return DWRITE_E_NOFONT;
+	result = IDWriteFontCollection_GetFontFamily(collection, index, &family);
+	if (FAILED(result))
+		return result;
+	result = IDWriteFontFamily_GetFirstMatchingFont(family, (DWRITE_FONT_WEIGHT)(logfont->lfWeight ? logfont->lfWeight : 400),
+		DWRITE_FONT_STRETCH_NORMAL, logfont->lfItalic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL, font);
+	IDWriteFontFamily_Release(family);
+	return result;
+}
+
+static UINT32 big_endian32(const BYTE *bytes) { return ((UINT32)bytes[0] << 24) | ((UINT32)bytes[1] << 16) | ((UINT32)bytes[2] << 8) | bytes[3]; }
+
+/* The two GetFontSignature slots take a font or a font face; either object answers here, whichever order the slots come in. */
+static HRESULT STDMETHODCALLTYPE interop_signature(IDWriteGdiInterop *self, IUnknown *object, FONTSIGNATURE *signature)
+{
+	IDWriteFont *font = NULL;
+	IDWriteFontFace *face = NULL;
+	const void *table = NULL;
+	UINT32 size = 0;
+	void *context = NULL;
+	WINBOOL exists = FALSE;
+	HRESULT result;
+	if (!object || !signature)
+		return E_INVALIDARG;
+	memset(signature, 0, sizeof(*signature));
+	if (SUCCEEDED(IUnknown_QueryInterface(object, &IID_IDWriteFont, (void **)&font))) {
+		result = IDWriteFont_CreateFontFace(font, &face);
+		IDWriteFont_Release(font);
+		if (FAILED(result))
+			return result;
+	} else if (FAILED(IUnknown_QueryInterface(object, &IID_IDWriteFontFace, (void **)&face))) {
+		return E_INVALIDARG;
+	}
+	result = IDWriteFontFace_TryGetFontTable(face, DWRITE_MAKE_OPENTYPE_TAG('O', 'S', '/', '2'), &table, &size, &context, &exists);
+	if (SUCCEEDED(result) && exists && size >= 58) {
+		const BYTE *bytes = table;
+		UINT32 index;
+		for (index = 0; index < 4; ++index)
+			signature->fsUsb[index] = big_endian32(bytes + 42 + index * 4);
+		if (size >= 86 && ((bytes[0] << 8) | bytes[1]) >= 1) {
+			signature->fsCsb[0] = big_endian32(bytes + 78);
+			signature->fsCsb[1] = big_endian32(bytes + 82);
+		}
+	}
+	if (exists)
+		IDWriteFontFace_ReleaseFontTable(face, context);
+	IDWriteFontFace_Release(face);
+	/* A font that claims no script still draws Latin text. */
+	if (!signature->fsCsb[0] && !signature->fsCsb[1]) {
+		signature->fsUsb[0] |= 3;
+		signature->fsCsb[0] = 1;
+	}
+	return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE interop_matching_fonts(IDWriteGdiInterop *self, const LOGFONTW *logfont, IUnknown *set, IUnknown **subset)
+{
+	if (subset)
+		*subset = NULL;
+	return unimplemented("IDWriteGdiInterop1", "GetMatchingFontsByLOGFONT");
+}
+
+/* The IDWriteGdiInterop1 slots after those of IDWriteGdiInterop. */
+enum { Interop1_CreateFontFromLOGFONT = 8, Interop1_GetFontSignature_face = 9, Interop1_GetFontSignature = 10,
+	Interop1_GetMatchingFontsByLOGFONT = 11, Interop1_methods = 12 };
+
+static void *Interop_table_[Interop1_methods];
 static IDWriteGdiInterop interop_object;
 
 static IDWriteGdiInterop *get_interop(void)
 {
 	if (!interop_object.lpVtbl) {
-		memcpy(Interop_table_, IDWriteGdiInterop_table, sizeof(Interop_table_));
+		memcpy(Interop_table_, IDWriteGdiInterop_table, IDWriteGdiInterop_methods * sizeof(void *));
 		Interop_table_[IDWriteGdiInterop_QueryInterface] = (void *)interop_query;
 		Interop_table_[IDWriteGdiInterop_AddRef] = (void *)interop_add_ref;
 		Interop_table_[IDWriteGdiInterop_Release] = (void *)interop_release;
@@ -2420,6 +3197,10 @@ static IDWriteGdiInterop *get_interop(void)
 		Interop_table_[IDWriteGdiInterop_ConvertFontToLOGFONT] = (void *)interop_font_to_logfont;
 		Interop_table_[IDWriteGdiInterop_ConvertFontFaceToLOGFONT] = (void *)interop_face_to_logfont;
 		Interop_table_[IDWriteGdiInterop_CreateBitmapRenderTarget] = (void *)interop_create_target;
+		Interop_table_[Interop1_CreateFontFromLOGFONT] = (void *)interop_create_font_in;
+		Interop_table_[Interop1_GetFontSignature_face] = (void *)interop_signature;
+		Interop_table_[Interop1_GetFontSignature] = (void *)interop_signature;
+		Interop_table_[Interop1_GetMatchingFontsByLOGFONT] = (void *)interop_matching_fonts;
 		interop_object.lpVtbl = (IDWriteGdiInteropVtbl *)Interop_table_;
 	}
 	return &interop_object;
@@ -2459,7 +3240,7 @@ static HRESULT STDMETHODCALLTYPE fallback_query(IDWriteFontFallback *self, REFII
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE fallback_add_ref(IDWriteFontFallback *self) { return 2; }
 static ULONG STDMETHODCALLTYPE fallback_release(IDWriteFontFallback *self) { return 1; }
@@ -2529,6 +3310,288 @@ static IDWriteFontFallback *get_fallback(void)
 	return &fallback_object;
 }
 
+/* A fallback a program builds: its own mappings of character ranges to families come first, the system fallback answers the rest. */
+typedef struct {
+	DWRITE_UNICODE_RANGE *ranges;
+	UINT32 range_count;
+	WCHAR **names;
+	UINT32 name_count;
+	IDWriteFontCollection *collection;
+	FLOAT scale;
+} FallbackMapping;
+
+typedef struct {
+	const IDWriteFontFallbackVtbl *vtbl;
+	LONG refs;
+	FallbackMapping *mappings;
+	UINT32 count;
+} BuiltFallback;
+
+typedef struct {
+	const IDWriteFontFallbackBuilderVtbl *vtbl;
+	LONG refs;
+	FallbackMapping *mappings;
+	UINT32 count;
+} FallbackBuilder;
+
+static BOOL mapping_covers(const FallbackMapping *mapping, UINT32 codepoint)
+{
+	UINT32 index;
+	for (index = 0; index < mapping->range_count; ++index)
+		if (codepoint >= mapping->ranges[index].first && codepoint <= mapping->ranges[index].last)
+			return TRUE;
+	return FALSE;
+}
+
+/* The font of the named family in the mapping's collection that holds the character, or NULL. */
+static IDWriteFont *mapping_font(const FallbackMapping *mapping, const WCHAR *name, UINT32 codepoint, DWRITE_FONT_WEIGHT weight,
+	DWRITE_FONT_STYLE style, DWRITE_FONT_STRETCH stretch)
+{
+	IDWriteFontCollection *collection = mapping->collection ? mapping->collection : get_collection();
+	IDWriteFontFamily *family = NULL;
+	IDWriteFont *font = NULL;
+	UINT32 index = 0;
+	WINBOOL exists = FALSE;
+	if (FAILED(IDWriteFontCollection_FindFamilyName(collection, name, &index, &exists)) || !exists)
+		return NULL;
+	if (FAILED(IDWriteFontCollection_GetFontFamily(collection, index, &family)))
+		return NULL;
+	if (SUCCEEDED(IDWriteFontFamily_GetFirstMatchingFont(family, weight, stretch, style, &font))) {
+		exists = FALSE;
+		if (FAILED(IDWriteFont_HasCharacter(font, codepoint, &exists)) || !exists) {
+			IDWriteFont_Release(font);
+			font = NULL;
+		}
+	}
+	IDWriteFontFamily_Release(family);
+	return font;
+}
+
+static void mapping_clear(FallbackMapping *mapping)
+{
+	UINT32 name;
+	if (mapping->ranges)
+		FREE(mapping->ranges);
+	for (name = 0; name < mapping->name_count; ++name)
+		FREE(mapping->names[name]);
+	if (mapping->names)
+		FREE(mapping->names);
+	if (mapping->collection)
+		IDWriteFontCollection_Release(mapping->collection);
+	memset(mapping, 0, sizeof(*mapping));
+}
+
+static void mappings_free(FallbackMapping *mappings, UINT32 count)
+{
+	UINT32 index;
+	for (index = 0; index < count; ++index)
+		mapping_clear(&mappings[index]);
+	if (mappings)
+		FREE(mappings);
+}
+
+static HRESULT STDMETHODCALLTYPE built_query(IDWriteFontFallback *self, REFIID iid, void **out)
+{
+	if (!out)
+		return E_POINTER;
+	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFontFallback)) {
+		InterlockedIncrement(&((BuiltFallback *)self)->refs);
+		*out = self;
+		return S_OK;
+	}
+	*out = NULL;
+	return no_interface(iid);
+}
+static ULONG STDMETHODCALLTYPE built_add_ref(IDWriteFontFallback *self) { return (ULONG)InterlockedIncrement(&((BuiltFallback *)self)->refs); }
+static ULONG STDMETHODCALLTYPE built_release(IDWriteFontFallback *self)
+{
+	BuiltFallback *fallback = (BuiltFallback *)self;
+	LONG left = InterlockedDecrement(&fallback->refs);
+	if (!left) {
+		mappings_free(fallback->mappings, fallback->count);
+		FREE(fallback);
+	}
+	return (ULONG)left;
+}
+static HRESULT STDMETHODCALLTYPE built_map(IDWriteFontFallback *self, IDWriteTextAnalysisSource *source, UINT32 position, UINT32 length, IDWriteFontCollection *collection,
+	const WCHAR *base_name, DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STYLE style, DWRITE_FONT_STRETCH stretch, UINT32 *mapped_length, IDWriteFont **mapped_font, FLOAT *scale)
+{
+	BuiltFallback *fallback = (BuiltFallback *)self;
+	const WCHAR *text = NULL;
+	UINT32 available = 0, units, codepoint, index, name;
+	if (!source || !mapped_length || !mapped_font || !scale)
+		return E_INVALIDARG;
+	if (SUCCEEDED(IDWriteTextAnalysisSource_GetTextAtPosition(source, position, &text, &available)) && text && available) {
+		if (available > length)
+			available = length;
+		codepoint = next_codepoint(text, available, &units);
+		for (index = 0; index < fallback->count; ++index) {
+			const FallbackMapping *mapping = &fallback->mappings[index];
+			if (!mapping_covers(mapping, codepoint))
+				continue;
+			for (name = 0; name < mapping->name_count; ++name) {
+				IDWriteFont *font = mapping_font(mapping, mapping->names[name], codepoint, weight, style, stretch);
+				UINT32 covered = units;
+				if (!font)
+					continue;
+				/* The run goes on while the next characters stay in the mapping and in the font. */
+				while (covered < available) {
+					UINT32 step, next = next_codepoint(text + covered, available - covered, &step);
+					WINBOOL holds = FALSE;
+					if (!mapping_covers(mapping, next) || FAILED(IDWriteFont_HasCharacter(font, next, &holds)) || !holds)
+						break;
+					covered += step;
+				}
+				*mapped_length = covered;
+				*mapped_font = font;
+				*scale = mapping->scale;
+				return S_OK;
+			}
+		}
+	}
+	return fallback_map(get_fallback(), source, position, length, collection, base_name, weight, style, stretch, mapped_length, mapped_font, scale);
+}
+
+static void *Built_table_[IDWriteFontFallback_methods];
+
+static HRESULT STDMETHODCALLTYPE builder_query(IDWriteFontFallbackBuilder *self, REFIID iid, void **out)
+{
+	if (!out)
+		return E_POINTER;
+	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFontFallbackBuilder)) {
+		InterlockedIncrement(&((FallbackBuilder *)self)->refs);
+		*out = self;
+		return S_OK;
+	}
+	*out = NULL;
+	return no_interface(iid);
+}
+static ULONG STDMETHODCALLTYPE builder_add_ref(IDWriteFontFallbackBuilder *self) { return (ULONG)InterlockedIncrement(&((FallbackBuilder *)self)->refs); }
+static ULONG STDMETHODCALLTYPE builder_release(IDWriteFontFallbackBuilder *self)
+{
+	FallbackBuilder *builder = (FallbackBuilder *)self;
+	LONG left = InterlockedDecrement(&builder->refs);
+	if (!left) {
+		mappings_free(builder->mappings, builder->count);
+		FREE(builder);
+	}
+	return (ULONG)left;
+}
+static HRESULT STDMETHODCALLTYPE builder_add_mapping(IDWriteFontFallbackBuilder *self, const DWRITE_UNICODE_RANGE *ranges, UINT32 range_count,
+	const WCHAR **names, UINT32 name_count, IDWriteFontCollection *collection, const WCHAR *locale, const WCHAR *base_name, FLOAT scale)
+{
+	FallbackBuilder *builder = (FallbackBuilder *)self;
+	FallbackMapping *grown, *mapping;
+	UINT32 index;
+	if (!ranges || !range_count || !names || !name_count || scale <= 0.0f)
+		return E_INVALIDARG;
+	grown = builder->mappings ? HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, builder->mappings, (builder->count + 1) * sizeof(FallbackMapping))
+		: ALLOC(sizeof(FallbackMapping));
+	if (!grown)
+		return E_OUTOFMEMORY;
+	builder->mappings = grown;
+	mapping = &grown[builder->count];
+	mapping->ranges = ALLOC(range_count * sizeof(DWRITE_UNICODE_RANGE));
+	mapping->names = ALLOC(name_count * sizeof(WCHAR *));
+	if (!mapping->ranges || !mapping->names) {
+		mapping_clear(mapping);
+		return E_OUTOFMEMORY;
+	}
+	memcpy(mapping->ranges, ranges, range_count * sizeof(DWRITE_UNICODE_RANGE));
+	mapping->range_count = range_count;
+	for (index = 0; index < name_count; ++index)
+		if (names[index] && (mapping->names[mapping->name_count] = wdup(names[index])))
+			++mapping->name_count;
+	mapping->collection = collection;
+	if (collection)
+		IDWriteFontCollection_AddRef(collection);
+	mapping->scale = scale;
+	++builder->count;
+	return S_OK;
+}
+/* The system fallback is what a built fallback falls back to anyway; another built one hands over its mappings. */
+static HRESULT STDMETHODCALLTYPE builder_add_mappings(IDWriteFontFallbackBuilder *self, IDWriteFontFallback *fallback)
+{
+	BuiltFallback *source = (BuiltFallback *)fallback;
+	UINT32 index;
+	HRESULT result = S_OK;
+	if (!fallback)
+		return E_INVALIDARG;
+	if (fallback == get_fallback() || source->vtbl != (const IDWriteFontFallbackVtbl *)Built_table_)
+		return S_OK;
+	for (index = 0; index < source->count && SUCCEEDED(result); ++index) {
+		const FallbackMapping *mapping = &source->mappings[index];
+		result = builder_add_mapping(self, mapping->ranges, mapping->range_count, (const WCHAR **)mapping->names, mapping->name_count,
+			mapping->collection, NULL, NULL, mapping->scale);
+	}
+	return result;
+}
+static HRESULT STDMETHODCALLTYPE builder_create(IDWriteFontFallbackBuilder *self, IDWriteFontFallback **out)
+{
+	FallbackBuilder *builder = (FallbackBuilder *)self;
+	BuiltFallback *fallback;
+	IDWriteFontFallbackBuilder *copy = NULL;
+	if (!out)
+		return E_POINTER;
+	*out = NULL;
+	if (!Built_table_[0]) {
+		memcpy(Built_table_, IDWriteFontFallback_table, sizeof(Built_table_));
+		Built_table_[IDWriteFontFallback_QueryInterface] = (void *)built_query;
+		Built_table_[IDWriteFontFallback_AddRef] = (void *)built_add_ref;
+		Built_table_[IDWriteFontFallback_Release] = (void *)built_release;
+		Built_table_[IDWriteFontFallback_MapCharacters] = (void *)built_map;
+	}
+	fallback = ALLOC(sizeof(BuiltFallback));
+	if (!fallback)
+		return E_OUTOFMEMORY;
+	fallback->vtbl = (const IDWriteFontFallbackVtbl *)Built_table_;
+	fallback->refs = 1;
+	/* The fallback keeps its own copy, so the builder can go on adding mappings for another one. */
+	if (builder->count) {
+		FallbackBuilder scratch = {builder->vtbl, 1, NULL, 0};
+		UINT32 index;
+		copy = (IDWriteFontFallbackBuilder *)&scratch;
+		for (index = 0; index < builder->count; ++index) {
+			const FallbackMapping *mapping = &builder->mappings[index];
+			if (FAILED(builder_add_mapping(copy, mapping->ranges, mapping->range_count, (const WCHAR **)mapping->names, mapping->name_count,
+				mapping->collection, NULL, NULL, mapping->scale))) {
+				mappings_free(scratch.mappings, scratch.count);
+				FREE(fallback);
+				return E_OUTOFMEMORY;
+			}
+		}
+		fallback->mappings = scratch.mappings;
+		fallback->count = scratch.count;
+	}
+	*out = (IDWriteFontFallback *)fallback;
+	return S_OK;
+}
+
+static void *Builder_table_[6];
+
+static HRESULT STDMETHODCALLTYPE factory2_fallback_builder(IDWriteFactory2 *self, IDWriteFontFallbackBuilder **out)
+{
+	FallbackBuilder *builder;
+	if (!out)
+		return E_POINTER;
+	*out = NULL;
+	if (!Builder_table_[0]) {
+		Builder_table_[0] = (void *)builder_query;
+		Builder_table_[1] = (void *)builder_add_ref;
+		Builder_table_[2] = (void *)builder_release;
+		Builder_table_[3] = (void *)builder_add_mapping;
+		Builder_table_[4] = (void *)builder_add_mappings;
+		Builder_table_[5] = (void *)builder_create;
+	}
+	builder = ALLOC(sizeof(FallbackBuilder));
+	if (!builder)
+		return E_OUTOFMEMORY;
+	builder->vtbl = (const IDWriteFontFallbackBuilderVtbl *)Builder_table_;
+	builder->refs = 1;
+	*out = (IDWriteFontFallbackBuilder *)builder;
+	return S_OK;
+}
+
 #include "text.inc"
 #include "analyzer.inc"
 
@@ -2551,13 +3614,28 @@ static HRESULT STDMETHODCALLTYPE factory_query(IDWriteFactory2 *self, REFIID iid
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE factory_add_ref(IDWriteFactory2 *self) { return (ULONG)InterlockedIncrement(&factory_object.refs); }
 static ULONG STDMETHODCALLTYPE factory_release(IDWriteFactory2 *self) { return (ULONG)InterlockedDecrement(&factory_object.refs); }
 static HRESULT STDMETHODCALLTYPE factory_system_collection(IDWriteFactory2 *self, IDWriteFontCollection **collection, WINBOOL update)
 {
 	*collection = get_collection();
+	return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE factory3_system_set(IDWriteFactory2 *self, IDWriteFontSet **set)
+{
+	if (!set)
+		return E_POINTER;
+	*set = get_system_set();
+	return *set ? S_OK : E_OUTOFMEMORY;
+}
+/* Every font is local, so the collection with downloadable fonts is the system collection too. */
+static HRESULT STDMETHODCALLTYPE factory3_system_collection(IDWriteFactory2 *self, WINBOOL downloadable, IDWriteFontCollection1 **collection, WINBOOL update)
+{
+	if (!collection)
+		return E_POINTER;
+	*collection = (IDWriteFontCollection1 *)get_collection();
 	return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE factory_register_loader(IDWriteFactory2 *self, IDWriteFontFileLoader *loader) { return S_OK; }
@@ -2628,10 +3706,16 @@ static HRESULT STDMETHODCALLTYPE factory_glyph_analysis(IDWriteFactory2 *self, c
 {
 	return create_analysis(run, transform, mode, origin_x, origin_y, analysis);
 }
+/* No end-user defined characters are installed; the collection of them is there and holds no family. */
 static HRESULT STDMETHODCALLTYPE factory1_eudc(IDWriteFactory2 *self, IDWriteFontCollection **collection, WINBOOL update)
 {
-	*collection = NULL;
-	return DWRITE_E_NOFONT;
+	static CustomCollection empty;
+	if (!collection)
+		return E_POINTER;
+	if (!empty.vtbl)
+		empty.vtbl = custom_vtbl();
+	*collection = (IDWriteFontCollection *)&empty;
+	return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE factory1_custom_params(IDWriteFactory2 *self, FLOAT gamma, FLOAT contrast, FLOAT grayscale, FLOAT cleartype, DWRITE_PIXEL_GEOMETRY geometry,
 	DWRITE_RENDERING_MODE mode, IDWriteRenderingParams1 **params)
@@ -2678,7 +3762,7 @@ static HRESULT STDMETHODCALLTYPE substitution_query(IDWriteNumberSubstitution *s
 		return S_OK;
 	}
 	*out = NULL;
-	return E_NOINTERFACE;
+	return no_interface(iid);
 }
 static ULONG STDMETHODCALLTYPE substitution_add_ref(IDWriteNumberSubstitution *self) { return (ULONG)InterlockedIncrement(&((Substitution *)self)->refs); }
 static ULONG STDMETHODCALLTYPE substitution_release(IDWriteNumberSubstitution *self)
@@ -2742,6 +3826,9 @@ static HRESULT create_factory(REFIID iid, IUnknown **out)
 		Factory_table_[IDWriteFactory1_GetEudcFontCollection] = (void *)factory1_eudc;
 		Factory_table_[IDWriteFactory1_IDWriteFactory1_CreateCustomRenderingParams] = (void *)factory1_custom_params;
 		Factory_table_[IDWriteFactory2_GetSystemFontFallback] = (void *)factory2_fallback;
+		Factory_table_[IDWriteFactory2_CreateFontFallbackBuilder] = (void *)factory2_fallback_builder;
+		Factory_table_[IDWriteFactory3_GetSystemFontSet] = (void *)factory3_system_set;
+		Factory_table_[IDWriteFactory3_IDWriteFactory3_GetSystemFontCollection] = (void *)factory3_system_collection;
 		Factory_table_[IDWriteFactory2_TranslateColorGlyphRun] = (void *)factory2_color_run;
 		Factory_table_[IDWriteFactory2_IDWriteFactory2_CreateCustomRenderingParams] = (void *)factory2_custom_params;
 		Factory_table_[IDWriteFactory2_IDWriteFactory2_CreateGlyphRunAnalysis] = (void *)factory2_glyph_analysis;

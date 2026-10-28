@@ -52,7 +52,9 @@ int main(int argc,char **argv)
 		raven::NativeProcess process(images,argv[1],std::chrono::seconds(5));
 		raven::NativeEnvironment environment(process,entry.loaded.base(),1,1);
 		environment.prepare_parameters({u"client.exe",u"command"});
-		const auto proxy=modules.resolve({"kernel32.dll","GetStartupInfoW",0,false,0});process.add_api_trap(proxy);
+		const auto proxy=modules.resolve({"kernel32.dll","GetStartupInfoW",0,false,0});
+		const auto &kernel=*modules.all().at("kernel32.dll");
+		process.add_api_trap(raven::api_trap_address(kernel,"kernel32.dll","GetStartupInfoW",uint32_t(proxy-kernel.loaded.base())));
 		const auto invoke=[&](const char *name,uint64_t output) {
 			const uint64_t args[]={output};check(process.call(proxy,args,std::chrono::seconds(2)).stop==raven::NativeStop::api,"startup proxy did not stop");
 			check(environment.dispatch(name),"startup handler did not dispatch");return process.resume(std::chrono::seconds(2));
