@@ -1442,6 +1442,8 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	// Session change messages are never sent: the registration succeeds and nothing arrives.
 	registry.add("WTSRegisterSessionNotification", 2, [](ApiCall &call) { call.ret(1); });
 	registry.add("WTSUnRegisterSessionNotification", 1, [](ApiCall &call) { call.ret(1); });
+	registry.add("WTSRegisterSessionNotificationEx", 3, [](ApiCall &call) { call.ret(1); });
+	registry.add("WTSUnRegisterSessionNotificationEx", 2, [](ApiCall &call) { call.ret(1); });
 	// The credential store is empty: enumerating and reading find nothing.
 	for (const auto name : {"CredEnumerateW", "CredEnumerateA"})
 		registry.add(name, 4, [](ApiCall &call) {
