@@ -1,3 +1,4 @@
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include "elevation.h"
@@ -1040,6 +1041,37 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(0);
 	});
 	registry.add("UnregisterTraceGuids", 1, [](ApiCall &call) { call.ret(0); });
+	// No session listens to any provider.
+	registry.add("EventProviderEnabled", 3, [](ApiCall &call) { call.ret(0); });
+	// Each thread carries an activity ID, all zeros until set; a created one is a fresh random GUID.
+	auto activities = std::make_shared<std::map<uint64_t, std::array<uint8_t, 16>>>();
+	registry.add("EventActivityIdControl", 2, [activities, &context](ApiCall &call) {
+		const auto code = call.u32(0);
+		if (code < 1 || code > 5 || !call[1]) {
+			call.ret(87);
+			return;
+		}
+		auto &current = (*activities)[context.environment.teb()];
+		std::array<uint8_t, 16> given{}, fresh{};
+		if (code == 2 || code == 4) {
+			const auto bytes = call.read(call[1], 16);
+			std::copy(bytes.begin(), bytes.end(), given.begin());
+		}
+		if (code == 3 || code == 5) {
+			if (::getrandom(fresh.data(), fresh.size(), 0) != ssize_t(fresh.size())) {
+				call.ret(31);
+				return;
+			}
+			fresh[6] = uint8_t((fresh[6] & 0x0f) | 0x40);
+			fresh[8] = uint8_t((fresh[8] & 0x3f) | 0x80);
+		}
+		const auto previous = current;
+		if (code == 2 || code == 4) current = given;
+		if (code == 5) current = fresh;
+		if (code == 1 || code == 4 || code == 5) call.write(call[1], std::vector<uint8_t>(previous.begin(), previous.end()));
+		if (code == 3) call.write(call[1], std::vector<uint8_t>(fresh.begin(), fresh.end()));
+		call.ret(0);
+	});
 	registry.add("EventRegister", 4, [](ApiCall &call) {
 		if (call[3])
 			call.store<uint64_t>(call[3], 1);
