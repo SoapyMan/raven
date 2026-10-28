@@ -4506,22 +4506,31 @@ static void set_context(void **table)
 	table[ID2D1DeviceContext5_PushLayer_86_slot] = (void *)target_PushLayer1;
 }
 
+/* A render target's table: set_target fills every slot of a device context, so it holds them all, past those of its own interface. */
+static void **make_target_table(void *const *stubs, size_t count)
+{
+	void **table = ALLOC(ID2D1DeviceContext5_methods * sizeof(void *));
+	memcpy(table, ID2D1DeviceContext5_table, ID2D1DeviceContext5_methods * sizeof(void *));
+	memcpy(table, stubs, count * sizeof(void *));
+	return table;
+}
+
 static void build_tables(void)
 {
 	build_geometry_tables();
 	build_resource_tables();
-	hwnd_table = make_table(ID2D1HwndRenderTarget_table, ID2D1HwndRenderTarget_methods);
+	hwnd_table = make_target_table(ID2D1HwndRenderTarget_table, ID2D1HwndRenderTarget_methods);
 	set_target(hwnd_table);
 	hwnd_table[ID2D1HwndRenderTarget_CheckWindowState_slot] = (void *)hwnd_CheckWindowState;
 	hwnd_table[ID2D1HwndRenderTarget_Resize_slot] = (void *)hwnd_Resize;
 	hwnd_table[ID2D1HwndRenderTarget_GetHwnd_slot] = (void *)hwnd_GetHwnd;
-	dcrt_table = make_table(ID2D1DCRenderTarget_table, ID2D1DCRenderTarget_methods);
+	dcrt_table = make_target_table(ID2D1DCRenderTarget_table, ID2D1DCRenderTarget_methods);
 	set_target(dcrt_table);
 	dcrt_table[ID2D1DCRenderTarget_BindDC_slot] = (void *)dcrt_BindDC;
-	bitmaprt_table = make_table(ID2D1BitmapRenderTarget_table, ID2D1BitmapRenderTarget_methods);
+	bitmaprt_table = make_target_table(ID2D1BitmapRenderTarget_table, ID2D1BitmapRenderTarget_methods);
 	set_target(bitmaprt_table);
 	bitmaprt_table[ID2D1BitmapRenderTarget_GetBitmap_slot] = (void *)bitmaprt_GetBitmap;
-	rt_table = make_table(ID2D1DCRenderTarget_table, ID2D1DCRenderTarget_methods);
+	rt_table = make_target_table(ID2D1DCRenderTarget_table, ID2D1DCRenderTarget_methods);
 	set_target(rt_table);
 	context_table = make_table(ID2D1DeviceContext5_table, ID2D1DeviceContext5_methods);
 	set_context(context_table);
