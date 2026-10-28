@@ -100,6 +100,17 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context);
 void register_crypt32_api(ApiRegistry &registry, KernelContext &context);
 void register_bcrypt_api(ApiRegistry &registry, KernelContext &context);
 void register_font_service(ApiRegistry &registry, KernelContext &context);
+// An installed font family as GDI enumerates it: the face closest to regular, and the scripts and code pages its OS/2 table claims.
+struct InstalledFamily {
+	std::u16string name;
+	uint32_t weight = 400;
+	bool italic = false;
+	bool fixed = false;
+	uint32_t unicode_ranges[4]{};
+	uint32_t code_pages[2]{};
+};
+// The families of the fonts installed in the prefix, in name order; none without FreeType.
+std::vector<InstalledFamily> installed_font_families();
 void register_canvas_service(ApiRegistry &registry, KernelContext &context);
 // Starts the program an application name or command line names, looked up the way Windows does; null with the Windows error otherwise.
 std::shared_ptr<class ProcessObject> start_program(KernelContext &context, const std::u16string &application, const std::u16string &line,

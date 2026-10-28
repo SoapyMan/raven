@@ -1,4 +1,6 @@
 #include "kernel_context.h"
+#include "prefix.h"
+#include "text.h"
 
 #ifdef RAVEN_FREETYPE
 #include <ft2build.h>
@@ -11,6 +13,7 @@
 #endif
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -35,6 +38,8 @@ struct HostFont {
 std::mutex font_mutex;
 FT_Library library = nullptr;
 std::map<uint32_t, std::unique_ptr<HostFont>> fonts;
+// Every scanned face, kept for GDI's family enumeration.
+std::vector<InstalledFamily> scanned_faces;
 uint32_t next_font = 1;
 
 FT_Library freetype()
@@ -57,8 +62,9 @@ void put_text(std::vector<uint8_t> &bytes, const char *text)
 	bytes.push_back(0);
 }
 
-// The system fonts the host has, as records the guest reads: sizes, weight, style, width, flags, then path, family, face, full and
-// PostScript names.
+// The system fonts, as records the guest reads: sizes, weight, style, width, flags, then path, family, face, full and PostScript names.
+// They are the fonts installed in the Windows Fonts folder of the prefix, which links the host's fonts and keeps the ones programs
+// install; without a prefix, the host's own font folders.
 std::vector<uint8_t> scan_fonts()
 {
 	static std::vector<uint8_t> cache;
@@ -69,7 +75,13 @@ std::vector<uint8_t> scan_fonts()
 	if (!freetype())
 		return cache;
 	std::error_code error;
-	for (const char *root : {"/usr/share/fonts", "/usr/local/share/fonts"}) {
+	std::vector<std::filesystem::path> roots{"/usr/share/fonts", "/usr/local/share/fonts"};
+	try {
+		const auto installed = NativePrefix::from_environment().root() / "drive_c" / "windows" / "Fonts";
+		if (std::filesystem::is_directory(installed, error))
+			roots = {installed};
+	} catch (const std::exception &) {}
+	for (const auto &root : roots) {
 		if (!std::filesystem::exists(root, error))
 			continue;
 		for (std::filesystem::recursive_directory_iterator walk(root, std::filesystem::directory_options::follow_directory_symlink, error), end; walk != end; walk.increment(error)) {
@@ -100,6 +112,21 @@ std::vector<uint8_t> scan_fonts()
 					}
 					const uint32_t style = (face->style_flags & FT_STYLE_FLAG_ITALIC) ? 2 : 0;
 					const uint32_t flags = (FT_IS_FIXED_WIDTH(face) ? 2U : 0U);
+					InstalledFamily found{from_utf8(face->family_name), weight, style != 0, (flags & 2) != 0};
+					if (const auto *os2 = static_cast<TT_OS2 *>(FT_Get_Sfnt_Table(face, FT_SFNT_OS2))) {
+						found.unicode_ranges[0] = uint32_t(os2->ulUnicodeRange1);
+						found.unicode_ranges[1] = uint32_t(os2->ulUnicodeRange2);
+						found.unicode_ranges[2] = uint32_t(os2->ulUnicodeRange3);
+						found.unicode_ranges[3] = uint32_t(os2->ulUnicodeRange4);
+						found.code_pages[0] = uint32_t(os2->ulCodePageRange1);
+						found.code_pages[1] = uint32_t(os2->ulCodePageRange2);
+					}
+					// A font that claims no script still draws Latin text.
+					if (!found.code_pages[0] && !found.code_pages[1]) {
+						found.unicode_ranges[0] |= 3;
+						found.code_pages[0] = 1;
+					}
+					scanned_faces.push_back(std::move(found));
 					std::vector<uint8_t> record;
 					put32(record, 0);
 					put32(record, uint32_t(index));
@@ -123,6 +150,34 @@ std::vector<uint8_t> scan_fonts()
 	}
 	return cache;
 }
+
+}
+
+std::vector<InstalledFamily> installed_font_families()
+{
+	std::lock_guard lock(font_mutex);
+	scan_fonts();
+	// One entry per family: the upright face whose weight is nearest to regular.
+	std::map<std::u16string, InstalledFamily> chosen;
+	const auto distance = [](const InstalledFamily &face) { return (face.italic ? 1000 : 0) + std::abs(int(face.weight) - 400); };
+	for (const auto &face : scanned_faces) {
+		if (face.name.empty())
+			continue;
+		auto key = face.name;
+		for (auto &c : key)
+			if (c >= u'A' && c <= u'Z')
+				c = char16_t(c + 32);
+		const auto found = chosen.find(key);
+		if (found == chosen.end() || distance(face) < distance(found->second))
+			chosen[key] = face;
+	}
+	std::vector<InstalledFamily> families;
+	for (auto &[key, face] : chosen)
+		families.push_back(std::move(face));
+	return families;
+}
+
+namespace {
 
 HostFont *font_of(uint32_t handle)
 {
@@ -436,6 +491,11 @@ void register_font_service(ApiRegistry &registry, KernelContext &)
 
 void register_font_service(ApiRegistry &, KernelContext &)
 {
+}
+
+std::vector<InstalledFamily> installed_font_families()
+{
+	return {};
 }
 
 #endif
