@@ -1725,6 +1725,53 @@ static D2D1_SIZE_F *STDMETHODCALLTYPE layer_GetSize(void *iface, D2D1_SIZE_F *si
 static void **layer_table;
 static const GUID *const layer_iids[] = {&IID_ID2D1Resource, &IID_ID2D1Layer};
 
+/* ---- meshes: the triangles a tessellation sink writes, each a closed figure of one path that a target fills ---- */
+struct mesh {
+	struct object base;
+	struct path path;
+};
+
+struct tessellation {
+	struct object base;
+	struct mesh *mesh;
+};
+
+static void mesh_destroy(struct object *base) { path_free(&((struct mesh *)base)->path); }
+static void tessellation_destroy(struct object *base) { object_Release(((struct tessellation *)base)->mesh); }
+
+static void STDMETHODCALLTYPE tessellation_AddTriangles(void *iface, const D2D1_TRIANGLE *triangles, UINT32 count)
+{
+	struct mesh *mesh = ((struct tessellation *)iface)->mesh;
+	UINT32 index;
+	for (index = 0; index < count; ++index) {
+		path_move(&mesh->path, triangles[index].point1);
+		path_line(&mesh->path, triangles[index].point2);
+		path_line(&mesh->path, triangles[index].point3);
+		path_close(&mesh->path);
+	}
+}
+
+static HRESULT STDMETHODCALLTYPE tessellation_Close(void *iface) { return S_OK; }
+
+static void *tessellation_table[] = {(void *)object_QueryInterface, (void *)object_AddRef, (void *)object_Release, (void *)tessellation_AddTriangles,
+	(void *)tessellation_Close};
+static const GUID *const tessellation_iids[] = {&IID_ID2D1TessellationSink};
+
+static HRESULT STDMETHODCALLTYPE mesh_Open(void *iface, ID2D1TessellationSink **out)
+{
+	struct tessellation *sink = ALLOC(sizeof(*sink));
+	if (!sink)
+		return E_OUTOFMEMORY;
+	object_init(&sink->base, tessellation_table, tessellation_destroy, tessellation_iids, 1, NULL);
+	sink->mesh = iface;
+	object_AddRef(iface);
+	*out = (ID2D1TessellationSink *)sink;
+	return S_OK;
+}
+
+static void *mesh_table[] = {(void *)object_QueryInterface, (void *)object_AddRef, (void *)object_Release, (void *)object_GetFactory, (void *)mesh_Open};
+static const GUID *const mesh_iids[] = {&IID_ID2D1Resource, &IID_ID2D1Mesh};
+
 struct state_block {
 	struct object base;
 	D2D1_DRAWING_STATE_DESCRIPTION1 description;
@@ -3030,6 +3077,24 @@ static HRESULT STDMETHODCALLTYPE target_CreateLayer(void *iface, const D2D1_SIZE
 		layer->size = *size;
 	*out = (ID2D1Layer *)layer;
 	return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE target_CreateMesh(void *iface, ID2D1Mesh **out)
+{
+	struct mesh *mesh = ALLOC(sizeof(*mesh));
+	if (!mesh)
+		return E_OUTOFMEMORY;
+	object_init(&mesh->base, mesh_table, mesh_destroy, mesh_iids, 2, target_of(iface)->factory);
+	/* Triangles that share an edge, whichever way each turns, fill their union. */
+	mesh->path.fill = D2D1_FILL_MODE_WINDING;
+	*out = (ID2D1Mesh *)mesh;
+	return S_OK;
+}
+
+static void STDMETHODCALLTYPE target_FillMesh(void *iface, ID2D1Mesh *mesh, ID2D1Brush *brush)
+{
+	if (mesh)
+		draw_path(target_of(iface), &((struct mesh *)mesh)->path, brush, FALSE, 0, NULL);
 }
 
 static struct target *make_target(IUnknown *factory, int kind, const D2D1_RENDER_TARGET_PROPERTIES *properties);
@@ -4430,6 +4495,8 @@ static void set_target(void **table)
 	table[ID2D1DeviceContext5_CreateRadialGradientBrush_slot] = (void *)target_CreateRadialGradientBrush;
 	table[ID2D1DeviceContext5_CreateCompatibleRenderTarget_slot] = (void *)target_CreateCompatibleRenderTarget;
 	table[ID2D1DeviceContext5_CreateLayer_slot] = (void *)target_CreateLayer;
+	table[ID2D1DeviceContext5_CreateMesh_slot] = (void *)target_CreateMesh;
+	table[ID2D1DeviceContext5_FillMesh_slot] = (void *)target_FillMesh;
 	table[ID2D1DeviceContext5_DrawLine_slot] = (void *)target_DrawLine;
 	table[ID2D1DeviceContext5_DrawRectangle_slot] = (void *)target_DrawRectangle;
 	table[ID2D1DeviceContext5_FillRectangle_slot] = (void *)target_FillRectangle;
