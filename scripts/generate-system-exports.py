@@ -18,7 +18,7 @@ import sys
 LIBRARIES = """advapi32 bcrypt comctl32 comdlg32 crypt32 dbghelp dwmapi gdi32 imm32 kernel32 ole32 oleaut32 psapi
 sensapi setupapi shell32 shlwapi user32 uxtheme version wininet winmm wintrust ws2_32 wsock32
 bcryptprimitives cfgmgr32 dhcpcsvc dnsapi hid imagehlp iphlpapi ntdll ktmw32 msimg32 mswsock ncrypt netapi32 opengl32 glu32 powrprof pdh runtimeobject winspool ravenhost secur32 shcore userenv wevtapi winhttp wtsapi32
-atlthunk oleacc odbccp32 usp10 sfc dsound combase wer uiautomationcore lz32 loadperf mpr shfolder wldap32 oledlg normaliz slc rstrtmgr d3dcompiler_47""".split()
+atlthunk oleacc odbccp32 usp10 sfc dsound combase wer uiautomationcore lz32 loadperf mpr shfolder wldap32 oledlg normaliz slc sppc rstrtmgr d3dcompiler_47""".split()
 # Real exports whose names begin with an underscore, which the generic filter drops.
 # The interlocked functions are compiler intrinsics in the import libraries, yet kernel32 exports them and programs import them by name.
 # The address waits live in kernelbase on Windows and in no kernel32 import library; Raven publishes them from kernel32 as its 32-bit side does.
@@ -70,7 +70,18 @@ NAMES_ONLY["combase"] = sorted(COMBASE_WORDS)
 # slc.dll, the software licensing client, has no import library in mingw-w64: the documented queries of Windows policy values.
 SLC_WORDS = {"SLGetWindowsInformation": 4, "SLGetWindowsInformationDWORD": 2}
 NAMES_ONLY["slc"] = sorted(SLC_WORDS)
-NAMES_ONLY_WORDS = {**COMBASE_WORDS, **SLC_WORDS, "AtlThunk_AllocateData": 0, "AtlThunk_DataToCode": 1, "AtlThunk_FreeData": 1, "AtlThunk_InitData": 3, "RavenFontClose": 1, "RavenFontGlyphs": 4, "RavenFontInfo": 2, "RavenFontMetrics": 3, "RavenFontName": 4, "RavenFontOpen": 3,
+# sppc.dll, the Software Protection Platform client, has no import library in mingw-w64 either: the documented functions over the
+# licenses and policies it keeps.
+SPPC_WORDS = {"SLClose": 1, "SLConsumeRight": 5, "SLGetApplicationInformation": 6, "SLGetApplicationPolicy": 5,
+              "SLGetAuthenticationResult": 2, "SLGetInstalledProductKeyIds": 4, "SLGetLicense": 4, "SLGetLicenseFileId": 4,
+              "SLGetLicenseInformation": 6, "SLGetLicensingStatusInformation": 6, "SLGetPKeyInformation": 6, "SLGetPolicyInformation": 5,
+              "SLGetPolicyInformationDWORD": 3, "SLGetProductSkuInformation": 6, "SLGetSLIDList": 6, "SLGetServiceInformation": 5,
+              "SLInstallLicense": 4, "SLInstallProofOfPurchase": 6, "SLLoadApplicationPolicies": 4, "SLOpen": 1,
+              "SLPersistApplicationPolicies": 3, "SLUninstallLicense": 2, "SLUninstallProofOfPurchase": 2, "SLUnloadApplicationPolicies": 2}
+# Programs look for SLDepositMigrationBlob as the sign of a current platform. Windows documents neither it nor its arguments, so it has
+# no argument words.
+NAMES_ONLY["sppc"] = sorted([*SPPC_WORDS, "SLDepositMigrationBlob"])
+NAMES_ONLY_WORDS = {**COMBASE_WORDS, **SLC_WORDS, **SPPC_WORDS, "AtlThunk_AllocateData": 0, "AtlThunk_DataToCode": 1, "AtlThunk_FreeData": 1, "AtlThunk_InitData": 3, "RavenFontClose": 1, "RavenFontGlyphs": 4, "RavenFontInfo": 2, "RavenFontMetrics": 3, "RavenFontName": 4, "RavenFontOpen": 3,
                     "RavenFontOutline": 4, "RavenFontRender": 10, "RavenFontScan": 2, "RavenFontTable": 5, "RavenTrace": 1,
                     "RavenCanvasCreate": 2, "RavenCanvasDestroy": 1, "RavenCanvasDraw": 4, "RavenCanvasPixels": 8, "RavenCanvasSize": 2, "RavenPathCombine": 8, "RavenPathWiden": 7}
 
@@ -91,7 +102,7 @@ def exports(library):
 def stdcall_words(library):
     """Argument words by function name from the decorated symbols of the 32-bit import library (_Name@bytes)."""
     if library in NAMES_ONLY:
-        return {name: NAMES_ONLY_WORDS[name] for name in NAMES_ONLY[library]}
+        return {name: NAMES_ONLY_WORDS[name] for name in NAMES_ONLY[library] if name in NAMES_ONLY_WORDS}
     archive = DIRECTORY32 / f"lib{library}.a"
     output = subprocess.run(["i686-w64-mingw32-nm", "-g", "--defined-only", str(archive)], check=True, capture_output=True,
                             text=True).stdout if archive.exists() else ""

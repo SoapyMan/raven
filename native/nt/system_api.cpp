@@ -459,6 +459,51 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	const auto policy_value = [](ApiCall &call) { call.ret(call[0] ? 0xc004f012U : 0x80070057U); };
 	registry.add("SLGetWindowsInformation", 4, policy_value);
 	registry.add("SLGetWindowsInformationDWORD", 2, policy_value);
+	// The Software Protection Platform keeps no licenses, product keys or policies here, and nothing is installed into it: lists are
+	// empty, lookups find nothing, rights are not granted and installing is refused. A session handle names nothing beyond itself.
+	registry.add("SLOpen", 1, [&context](ApiCall &call) {
+		const auto handle = call[0] ? context.allocator.allocate(8, true) : 0;
+		if (!handle) {
+			call.ret(call[0] ? 0x8007000eU : 0x80070057U);
+			return;
+		}
+		call.store_pointer(call[0], handle);
+		call.ret(0);
+	});
+	registry.add("SLClose", 1, [](ApiCall &call) { call.ret(call[0] ? 0 : 0x80070057U); });
+	// Empty lists: SLGetSLIDList, SLGetLicensingStatusInformation and SLGetInstalledProductKeyIds give a count of zero and no array.
+	const auto empty_list = [](size_t count, size_t array) {
+		return [count, array](ApiCall &call) {
+			if (!call[0] || !call[count] || !call[array]) {
+				call.ret(0x80070057U);
+				return;
+			}
+			call.store<uint32_t>(call[count], 0);
+			call.store_pointer(call[array], 0);
+			call.ret(0);
+		};
+	};
+	registry.add("SLGetSLIDList", 6, empty_list(4, 5));
+	registry.add("SLGetLicensingStatusInformation", 6, empty_list(4, 5));
+	registry.add("SLGetInstalledProductKeyIds", 4, empty_list(2, 3));
+	const auto answer = [](uint32_t result) { return [result](ApiCall &call) { call.ret(call[0] ? result : 0x80070057U); }; };
+	const std::pair<const char *, int> lookups[] = {{"SLGetApplicationInformation", 6}, {"SLGetProductSkuInformation", 6},
+		{"SLGetPKeyInformation", 6}, {"SLGetLicenseInformation", 6}, {"SLGetServiceInformation", 5}, {"SLGetPolicyInformation", 5},
+		{"SLGetPolicyInformationDWORD", 3}, {"SLGetApplicationPolicy", 5}, {"SLLoadApplicationPolicies", 4}};
+	for (const auto &[name, words] : lookups)
+		registry.add(name, words, answer(0xc004f012U));
+	registry.add("SLConsumeRight", 5, answer(0xc004f013U));
+	registry.add("SLGetLicense", 4, answer(0xc004f011U));
+	registry.add("SLGetLicenseFileId", 4, answer(0xc004f011U));
+	registry.add("SLUninstallLicense", 2, answer(0xc004f011U));
+	registry.add("SLUninstallProofOfPurchase", 2, answer(0xc004f012U));
+	registry.add("SLInstallLicense", 4, answer(0xc004f016U));
+	registry.add("SLInstallProofOfPurchase", 6, answer(0xc004f016U));
+	registry.add("SLGetAuthenticationResult", 2, answer(0xc004f016U));
+	registry.add("SLPersistApplicationPolicies", 3, answer(0));
+	registry.add("SLUnloadApplicationPolicies", 2, answer(0));
+	// Undocumented: present because programs look for it, and it refuses every deposit.
+	registry.add("SLDepositMigrationBlob", 4, [](ApiCall &call) { call.ret(0xc004f016U); });
 	// All logical processors form one group of at most 64: the masks of the process and the system are the same.
 	const auto processor_mask = [] {
 		const long count = std::max<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1);
