@@ -1048,15 +1048,6 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 			native_single_byte_page(page) != nullptr);
 	});
 	registry.add("GetOEMCP", 0, [](ApiCall &call) { call.ret(437); });
-	registry.add("GetConsoleOutputCP", 0, [](ApiCall &call) { call.ret(437); });
-	registry.add("GetConsoleCP", 0, [](ApiCall &call) { call.ret(437); });
-	registry.add("GetConsoleMode", 2, [](ApiCall &call) { call.fail(6); });
-	registry.add("GetConsoleScreenBufferInfo", 2, [](ApiCall &call) { call.fail(6); });
-	registry.add("SetConsoleMode", 2, [](ApiCall &call) { call.fail(6); });
-	registry.add("WriteConsoleW", 5, [](ApiCall &call) { call.fail(6); });
-	registry.add("ReadConsoleW", 5, [](ApiCall &call) { call.fail(6); });
-	// No console has a window of its own, as for a process without a console.
-	registry.add("GetConsoleWindow", 0, [](ApiCall &call) { call.ret(0); });
 
 	registry.add("GetUserDefaultLCID", 0, [](ApiCall &call) { call.ret(0x409); });
 	registry.add("GetSystemDefaultLCID", 0, [](ApiCall &call) { call.ret(0x409); });

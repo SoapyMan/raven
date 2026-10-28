@@ -178,10 +178,6 @@ void register_process_api(ApiRegistry &registry, KernelContext &context)
 	// No kernel debugger answers a prompt: nothing is read.
 	registry.add("DbgPrompt", 3, [](ApiCall &call) { call.ret(0); });
 	registry.add("DisableThreadLibraryCalls", 1, [](ApiCall &call) { call.ret(1); });
-	// No console control events are delivered, so handlers are accepted and never called.
-	registry.add("SetConsoleCtrlHandler", 2, [](ApiCall &call) { call.ret(1); });
-	// No process has a console window to share: the parent's, or any other, is reported as missing, as for a program started without one.
-	registry.add("AttachConsole", 1, [](ApiCall &call) { call.fail(6); });
 	registry.add("AreFileApisANSI", 0, [](ApiCall &call) { call.ret(1); });
 	registry.add("FreeLibraryWhenCallbackReturns", 2, [](ApiCall &call) { call.ret(0); });
 	registry.add("GetProcessVersion", 1, [](ApiCall &call) { call.ret(0x0006000a); });

@@ -81,6 +81,12 @@ void register_sync_api(ApiRegistry &registry, KernelContext &context);
 void register_thread_api(ApiRegistry &registry, KernelContext &context);
 void register_memory_api(ApiRegistry &registry, KernelContext &context);
 void register_text_api(ApiRegistry &registry, KernelContext &context);
+// The console functions over the host terminal.
+void register_console_api(ApiRegistry &registry, KernelContext &context);
+// ReadFile on the console's input: a line, or typed characters, as ReadConsoleA reads them. False for any other handle.
+bool read_console_file(KernelContext &context, ApiCall &call);
+// CreateFile of CONIN$, CONOUT$ or CON: the host terminal. False when the name is another device or no terminal is there.
+bool open_console_device(KernelContext &context, ApiCall &call, std::u16string_view name, uint32_t access, bool inheritable);
 void register_process_api(ApiRegistry &registry, KernelContext &context);
 void register_security_api(ApiRegistry &registry, KernelContext &context);
 // The Schannel TLS client of SSPI over the host's OpenSSL.

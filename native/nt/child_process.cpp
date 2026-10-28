@@ -1,4 +1,5 @@
 #include "child_process.h"
+#include "console.h"
 
 #include "elevation.h"
 #include "text.h"
@@ -123,6 +124,8 @@ void ProcessObject::terminate(uint32_t exit)
 
 std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &error)
 {
+	// The child may write to the terminal too, moving the cursor where this process cannot follow it.
+	TerminalConsole::instance().mark_stale();
 	char self[4096];
 	const auto length = ::readlink("/proc/self/exe", self, sizeof(self) - 1);
 	if (length <= 0) {

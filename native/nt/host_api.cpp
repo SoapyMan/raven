@@ -1104,9 +1104,6 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("SetDllDirectoryW", 1, [set_dll_directory](ApiCall &call) { set_dll_directory(call, true); });
 	registry.add("SetDllDirectoryA", 1, [set_dll_directory](ApiCall &call) { set_dll_directory(call, false); });
-	// A program without a console window has no title to set.
-	registry.add("SetConsoleTitleW", 1, [](ApiCall &call) { call.ret(1); });
-	registry.add("SetConsoleTitleA", 1, [](ApiCall &call) { call.ret(1); });
 	// The interface a packet to an address would leave by: the first adapter that is up and is not the loopback one, else the loopback.
 	const auto best_interface = [](ApiCall &call) {
 		if (!call[1]) {
