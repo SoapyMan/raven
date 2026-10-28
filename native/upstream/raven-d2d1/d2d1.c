@@ -1337,6 +1337,10 @@ struct bitmap {
 	UINT32 mapped_pitch;
 	D2D1_MAP_OPTIONS map_options;
 	ID2D1ColorContext *color_context;
+	/* For a bitmap over a Direct3D texture: whether Direct2D draws into it, so that its own pixels are the newer ones, and the frame
+	 * in which the texture's pixels were last read. */
+	BOOL targeted;
+	LONG read_frame;
 };
 
 static void bitmap_destroy(struct object *base)
@@ -2171,12 +2175,87 @@ static void STDMETHODCALLTYPE context_DrawGeometryRealization(void *iface, ID2D1
 }
 
 /* A bitmap into a destination rectangle (by default its size in device-independent pixels) from a part of it (by default all). */
+/* Drawing begins a new frame; a texture is read at most once in each. */
+static LONG frame_number;
+
+/* A bitmap over a Direct3D texture that the program fills itself, with its device or with a copy, is drawn with the texture's pixels:
+ * they come through a staging copy into the bitmap's host surface. Formats without four bytes a pixel other than A8 are left as they
+ * are. */
+static void read_texture(struct bitmap *bitmap)
+{
+	ID3D11Texture2D *texture = NULL, *staging = NULL;
+	ID3D11Device *device = NULL;
+	ID3D11DeviceContext *context = NULL;
+	D3D11_TEXTURE2D_DESC desc;
+	D3D11_MAPPED_SUBRESOURCE mapped;
+	BYTE *pixels = NULL;
+	UINT32 row, column;
+	const LONG frame = frame_number;
+	if (bitmap->targeted || bitmap->read_frame == frame)
+		return;
+	bitmap->read_frame = frame;
+	if (FAILED(IDXGISurface_QueryInterface(bitmap->dxgi, &IID_ID3D11Texture2D, (void **)&texture)))
+		return;
+	ID3D11Texture2D_GetDesc(texture, &desc);
+	if (desc.SampleDesc.Count != 1 || desc.Width != bitmap->pixels.width || desc.Height != bitmap->pixels.height
+		|| (desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM && desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM_SRGB && desc.Format != DXGI_FORMAT_B8G8R8X8_UNORM
+			&& desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB && desc.Format != DXGI_FORMAT_A8_UNORM))
+		goto done;
+	ID3D11Texture2D_GetDevice(texture, &device);
+	if (!device)
+		goto done;
+	ID3D11Device_GetImmediateContext(device, &context);
+	desc.MipLevels = 1;
+	desc.ArraySize = 1;
+	desc.Usage = D3D11_USAGE_STAGING;
+	desc.BindFlags = 0;
+	desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	desc.MiscFlags = 0;
+	if (!context || FAILED(ID3D11Device_CreateTexture2D(device, &desc, NULL, &staging)))
+		goto done;
+	ID3D11DeviceContext_CopySubresourceRegion(context, (ID3D11Resource *)staging, 0, 0, 0, 0, (ID3D11Resource *)texture, 0, NULL);
+	if (FAILED(ID3D11DeviceContext_Map(context, (ID3D11Resource *)staging, 0, D3D11_MAP_READ, 0, &mapped)))
+		goto done;
+	if ((pixels = ALLOC((size_t)desc.Width * desc.Height * 4))) {
+		for (row = 0; row < desc.Height; ++row) {
+			const BYTE *from = (const BYTE *)mapped.pData + (size_t)row * mapped.RowPitch;
+			BYTE *to = pixels + (size_t)row * desc.Width * 4;
+			if (desc.Format == DXGI_FORMAT_A8_UNORM)
+				/* An alpha-only bitmap draws as black of that coverage. */
+				for (column = 0; column < desc.Width; ++column)
+					to[column * 4 + 3] = from[column];
+			else if (desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM || desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)
+				for (column = 0; column < desc.Width; ++column) {
+					to[column * 4] = from[column * 4 + 2];
+					to[column * 4 + 1] = from[column * 4 + 1];
+					to[column * 4 + 2] = from[column * 4];
+					to[column * 4 + 3] = from[column * 4 + 3];
+				}
+			else
+				memcpy(to, from, (size_t)desc.Width * 4);
+		}
+		RavenCanvasPixels(bitmap->surface, 0, 0, desc.Width, desc.Height, pixels, desc.Width * 4, 1);
+		FREE(pixels);
+	}
+	ID3D11DeviceContext_Unmap(context, (ID3D11Resource *)staging, 0);
+done:
+	if (staging)
+		ID3D11Texture2D_Release(staging);
+	if (context)
+		ID3D11DeviceContext_Release(context);
+	if (device)
+		ID3D11Device_Release(device);
+	ID3D11Texture2D_Release(texture);
+}
+
 static void draw_bitmap(struct target *self, struct bitmap *bitmap, const D2D1_RECT_F *destination, float opacity, UINT32 interpolation,
 	const D2D1_RECT_F *source)
 {
 	struct command command;
 	if (!bitmap)
 		return;
+	if (bitmap->dxgi)
+		read_texture(bitmap);
 	command_start(self, &command, OP_DRAW_BITMAP);
 	command.bitmap = bitmap->surface;
 	command.opacity = opacity;
@@ -2615,6 +2694,7 @@ static void STDMETHODCALLTYPE target_BeginDraw(void *iface)
 	struct target *self = target_of(iface);
 	self->drawing = TRUE;
 	self->error = S_OK;
+	InterlockedIncrement(&frame_number);
 	if (self->kind == TARGET_DC && self->dc && self->bitmap)
 		read_bound_dc(self);
 	if (self->kind == TARGET_WIC && self->wic)
@@ -3311,6 +3391,7 @@ static void STDMETHODCALLTYPE context_SetTarget(void *iface, ID2D1Image *image)
 		object_Release(self->bitmap);
 	self->bitmap = (struct bitmap *)bitmap;
 	if (bitmap) {
+		self->bitmap->targeted = TRUE;
 		self->format = self->bitmap->format;
 		self->dpi_x = self->bitmap->dpi_x;
 		self->dpi_y = self->bitmap->dpi_y;
@@ -4271,6 +4352,7 @@ static HRESULT STDMETHODCALLTYPE factory_CreateDxgiSurfaceRenderTarget(void *ifa
 		target_Release(target);
 		return hr;
 	}
+	bitmap->targeted = TRUE;
 	target->bitmap = bitmap;
 	*out = (ID2D1RenderTarget *)target;
 	return S_OK;
