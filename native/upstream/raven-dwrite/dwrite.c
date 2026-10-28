@@ -364,6 +364,31 @@ static const WCHAR *aliases[][2] = {
 	{L"Palatino Linotype", L"DejaVu Serif"}, {L"Symbol", L"DejaVu Sans"}, {L"MS Gothic", L"DejaVu Sans Mono"},
 };
 
+/* The free families that stand for one another when the host lacks one, so an alias still lands on a font of the same kind. */
+static const WCHAR *stand_ins[][2] = {
+	{L"Noto Sans", L"Liberation Sans"}, {L"Liberation Sans", L"DejaVu Sans"}, {L"DejaVu Sans", L"Liberation Sans"},
+	{L"Liberation Serif", L"DejaVu Serif"}, {L"DejaVu Serif", L"Liberation Serif"},
+	{L"Liberation Mono", L"DejaVu Sans Mono"}, {L"DejaVu Sans Mono", L"Liberation Mono"},
+};
+
+/* The family an alias names, or the first stand-in for it the host has. */
+static FamilyEntry *alias_target(const WCHAR *name)
+{
+	int hop;
+	for (hop = 0; hop < 3 && name; ++hop) {
+		FamilyEntry *found = find_family(name);
+		size_t index;
+		const WCHAR *next = NULL;
+		if (found)
+			return found;
+		for (index = 0; index < sizeof(stand_ins) / sizeof(stand_ins[0]); ++index)
+			if (wequal_fold(stand_ins[index][0], name))
+				next = stand_ins[index][1];
+		name = next;
+	}
+	return NULL;
+}
+
 static BOOL CALLBACK build_system(PINIT_ONCE once, PVOID parameter, PVOID *context)
 {
 	DWORD size = RavenFontScan(NULL, 0), at = 0;
@@ -451,10 +476,10 @@ static BOOL CALLBACK build_system(PINIT_ONCE once, PVOID parameter, PVOID *conte
 			}
 	}
 	for (index = 0; index < sizeof(aliases) / sizeof(aliases[0]); ++index) {
-		if (find_family(aliases[index][1]) && !find_family(aliases[index][0])) {
+		if (alias_target(aliases[index][1]) && !find_family(aliases[index][0])) {
 			/* Adding a family can move the list, so the target is looked up again afterwards. */
 			FamilyEntry *alias = add_family(aliases[index][0]);
-			FamilyEntry *target = find_family(aliases[index][1]);
+			FamilyEntry *target = alias_target(aliases[index][1]);
 			UINT32 entry;
 			if (alias && target)
 				for (entry = 0; entry < target->count; ++entry)
