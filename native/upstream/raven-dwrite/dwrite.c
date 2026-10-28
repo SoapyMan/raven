@@ -1901,6 +1901,21 @@ static HRESULT STDMETHODCALLTYPE custom_from_face(IDWriteFontCollection *self, I
 
 static void *Custom_table_[IDWriteFontCollection_methods];
 
+static const IDWriteFontCollectionVtbl *custom_vtbl(void)
+{
+	if (!Custom_table_[0]) {
+		memcpy(Custom_table_, IDWriteFontCollection_table, sizeof(Custom_table_));
+		Custom_table_[IDWriteFontCollection_QueryInterface] = (void *)custom_query;
+		Custom_table_[IDWriteFontCollection_AddRef] = (void *)custom_add_ref;
+		Custom_table_[IDWriteFontCollection_Release] = (void *)custom_release;
+		Custom_table_[IDWriteFontCollection_GetFontFamilyCount] = (void *)custom_family_count;
+		Custom_table_[IDWriteFontCollection_GetFontFamily] = (void *)custom_family;
+		Custom_table_[IDWriteFontCollection_FindFamilyName] = (void *)custom_find;
+		Custom_table_[IDWriteFontCollection_GetFontFromFontFace] = (void *)custom_from_face;
+	}
+	return (const IDWriteFontCollectionVtbl *)Custom_table_;
+}
+
 /* Files the entry under the family of its name, which is made when the collection does not hold it yet. */
 static void custom_add_entry(CustomCollection *collection, FontEntry *entry)
 {
@@ -2028,17 +2043,7 @@ static HRESULT STDMETHODCALLTYPE factory_custom_collection(IDWriteFactory2 *self
 		IDWriteFontFileEnumerator_Release(enumerator);
 		return E_OUTOFMEMORY;
 	}
-	if (!Custom_table_[0]) {
-		memcpy(Custom_table_, IDWriteFontCollection_table, sizeof(Custom_table_));
-		Custom_table_[IDWriteFontCollection_QueryInterface] = (void *)custom_query;
-		Custom_table_[IDWriteFontCollection_AddRef] = (void *)custom_add_ref;
-		Custom_table_[IDWriteFontCollection_Release] = (void *)custom_release;
-		Custom_table_[IDWriteFontCollection_GetFontFamilyCount] = (void *)custom_family_count;
-		Custom_table_[IDWriteFontCollection_GetFontFamily] = (void *)custom_family;
-		Custom_table_[IDWriteFontCollection_FindFamilyName] = (void *)custom_find;
-		Custom_table_[IDWriteFontCollection_GetFontFromFontFace] = (void *)custom_from_face;
-	}
-	collection->vtbl = (const IDWriteFontCollectionVtbl *)Custom_table_;
+	collection->vtbl = custom_vtbl();
 	collection->loader = loader;
 	IDWriteFontCollectionLoader_AddRef(loader);
 	collection->key_size = key_size;
@@ -2759,10 +2764,16 @@ static HRESULT STDMETHODCALLTYPE factory_glyph_analysis(IDWriteFactory2 *self, c
 {
 	return create_analysis(run, transform, mode, origin_x, origin_y, analysis);
 }
+/* No end-user defined characters are installed; the collection of them is there and holds no family. */
 static HRESULT STDMETHODCALLTYPE factory1_eudc(IDWriteFactory2 *self, IDWriteFontCollection **collection, WINBOOL update)
 {
-	*collection = NULL;
-	return DWRITE_E_NOFONT;
+	static CustomCollection empty;
+	if (!collection)
+		return E_POINTER;
+	if (!empty.vtbl)
+		empty.vtbl = custom_vtbl();
+	*collection = (IDWriteFontCollection *)&empty;
+	return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE factory1_custom_params(IDWriteFactory2 *self, FLOAT gamma, FLOAT contrast, FLOAT grayscale, FLOAT cleartype, DWRITE_PIXEL_GEOMETRY geometry,
 	DWRITE_RENDERING_MODE mode, IDWriteRenderingParams1 **params)
