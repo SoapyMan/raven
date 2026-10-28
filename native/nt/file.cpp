@@ -71,9 +71,11 @@ NativeObjectResult NativeObjects::write_file(uint64_t handle,std::span<const uin
 	if (!object) return {0,0xc0000008U};
 	if (bytes.size()>1024*1024) return {0,0xc00000bbU};
 	ssize_t written;
-	do { written=::write(object->descriptor,bytes.data(),bytes.size()); } while (written<0 && errno==EINTR);
-	if (written>0 && ::isatty(object->descriptor))
-		TerminalConsole::instance().note_output(object->descriptor,std::string_view(reinterpret_cast<const char *>(bytes.data()),size_t(written)));
+	if (::isatty(object->descriptor))
+		written=TerminalConsole::instance().write_text(object->descriptor,std::string_view(reinterpret_cast<const char *>(bytes.data()),bytes.size())) ?
+			ssize_t(bytes.size()) : -1;
+	else
+		do { written=::write(object->descriptor,bytes.data(),bytes.size()); } while (written<0 && errno==EINTR);
 	if (written>=0) return {uint64_t(written)};
 	if (errno==EBADF || errno==EACCES || errno==EISDIR) return {0,0xc0000022U};
 	if (errno==ENOSPC || errno==EDQUOT) return {0,0xc000007fU};

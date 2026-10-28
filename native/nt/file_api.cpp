@@ -385,6 +385,9 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 				: ::pwrite(file->descriptor, bytes.data(), bytes.size(), off_t(offset));
 			if (count >= 0 && offset != UINT64_MAX && !(file->flags & 0x40000000U))
 				::lseek(file->descriptor, off_t(offset + uint64_t(count)), SEEK_SET);
+		} else if (::isatty(file->descriptor)) {
+			count = TerminalConsole::instance().write_text(file->descriptor, std::string_view(reinterpret_cast<const char *>(bytes.data()), bytes.size())) ?
+				ssize_t(bytes.size()) : -1;
 		} else {
 			do count = ::write(file->descriptor, bytes.data(), bytes.size()); while (count < 0 && errno == EINTR);
 		}
@@ -392,8 +395,6 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(error_of(errno));
 			return;
 		}
-		if (count > 0 && ::isatty(file->descriptor))
-			TerminalConsole::instance().note_output(file->descriptor, std::string_view(reinterpret_cast<const char *>(bytes.data()), size_t(count)));
 		if (call[3]) call.store<uint32_t>(call[3], uint32_t(count));
 		if (call[4] && (file->flags & 0x40000000U)) {
 			complete_file_io(context, *file, call[4], call.pointer_width(), 0, uint64_t(count));

@@ -615,6 +615,11 @@ bool TerminalConsole::write(int descriptor, std::string_view bytes)
 	return written;
 }
 
+bool TerminalConsole::write_text(int descriptor, std::string_view bytes)
+{
+	return write(descriptor, output_code_page == 65001 ? std::string(bytes) : to_utf8(from_ansi(bytes, output_code_page)));
+}
+
 void TerminalConsole::follow_size(int descriptor)
 {
 	const auto window = size(descriptor);
