@@ -259,6 +259,8 @@ static const char tools[] = "@echo off\r\n"
 	"whoami | find /v \"\" >nul && echo whoami\r\n"
 	"tasklist /nh /fo csv | find /i \"tasklist.exe\" >nul && echo tasklist\r\n"
 	"taskkill /pid 999999 2>nul || echo taskkill none\r\n"
+	"taskkill /im cmd.exe >nul 2>nul\r\n"
+	"if errorlevel 1 echo taskkill windowless\r\n"
 	"exit /b 0\r\n";
 
 static const char tools_output[] = "\r\n"
@@ -327,7 +329,8 @@ static const char tools_output[] = "\r\n"
 	"hostname\r\n"
 	"whoami\r\n"
 	"tasklist\r\n"
-	"taskkill none\r\n";
+	"taskkill none\r\n"
+	"taskkill windowless\r\n";
 
 int raven_entry(void)
 {

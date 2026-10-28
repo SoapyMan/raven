@@ -24,6 +24,7 @@ What each does:
 - `choice`: `/C /N /CS /T /D /M`, ERRORLEVEL the choice's position;
 - `whoami` (`/USER`, `/FO`, `/NH`) and `hostname`;
 - `tasklist` (`/FI` on IMAGENAME, PID, MEMUSAGE and SESSION; `/FO TABLE | LIST | CSV`; `/NH`) and `taskkill` (`/PID`, `/IM` with
-  wildcards, `/FI`, `/T`; a process always ends as with `/F`);
+  wildcards, `/FI`, `/T`, `/F`; without `/F` a process's windows are asked to close, and one with no window can only be ended with
+  `/F`. Raven's windows belong to the process that made them, so for now `taskkill` sees only its own and another process needs `/F`);
 - `reg`: `QUERY` (`/V /VE /S /F /K /D /C /E /T /SE`), `ADD` (`/V /VE /T /S /D /F`), `DELETE` (`/V /VE /VA /F`), `COPY`, `EXPORT` and
   `IMPORT` of `.reg` files, and `/reg:32` and `/reg:64`.
