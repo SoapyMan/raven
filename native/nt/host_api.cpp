@@ -1204,7 +1204,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	// out of them; no report is ever sent, so each registration succeeds with S_OK and keeps nothing.
 	for (const auto name : {"WerRegisterRuntimeExceptionModule", "WerUnregisterRuntimeExceptionModule", "WerRegisterMemoryBlock",
 			"WerUnregisterMemoryBlock", "WerRegisterFile", "WerUnregisterFile", "WerSetFlags", "WerAddExcludedApplication",
-			"WerRemoveExcludedApplication"})
+			"WerRemoveExcludedApplication", "WerRegisterCustomMetadata", "WerUnregisterCustomMetadata"})
 		registry.add(name, 2, [](ApiCall &call) { call.ret(0); });
 	// Binding writes the addresses of a program's imports into its file ahead of time, which only spares the loader work; the loader here
 	// resolves every import when it loads the image, so an image left unbound is as good as a bound one (Windows Installer binds the

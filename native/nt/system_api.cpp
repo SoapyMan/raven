@@ -989,6 +989,9 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("GetApplicationRestartSettings", 4, [](ApiCall &call) { call.fail(0x80070490U, 0x80070490U); });
 	registry.add("RegisterApplicationRestart", 2, [](ApiCall &call) { call.ret(0); });
 	registry.add("UnregisterApplicationRestart", 0, [](ApiCall &call) { call.ret(0); });
+	// Recovery callbacks run only when Windows Error Reporting catches a hang or crash, which never happens here.
+	registry.add("RegisterApplicationRecoveryCallback", 4, [](ApiCall &call) { call.ret(call[0] ? 0 : 0x80070057U); });
+	registry.add("UnregisterApplicationRecoveryCallback", 0, [](ApiCall &call) { call.ret(0); });
 
 	registry.add("GetModuleFileNameW", 3, [&](ApiCall &call) {
 		std::u16string text;
