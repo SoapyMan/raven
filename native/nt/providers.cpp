@@ -2103,6 +2103,19 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 					} catch (...) {}
 					std::cerr << " name=" << text;
 				}
+				// A failed lookup says which export of which library was missing.
+				if (api_name == "GetProcAddress" && failure_arguments.size() > 1) {
+					for (const auto &[module_name, module] : modules.all())
+						if (module->loaded.base() == failure_arguments[0]) std::cerr << " module=" << module_name;
+					if (failure_arguments[1] > 0xffff) {
+						std::string text;
+						try {
+							const auto raw = process.read_memory(failure_arguments[1], 96);
+							for (size_t i = 0; i < raw.size() && raw[i]; ++i) text.push_back(char(raw[i]));
+						} catch (...) {}
+						std::cerr << " name=" << text;
+					}
+				}
 
 				for (const auto &[module_name, module] : modules.all()) {
 					const auto stack = process.read_memory(process.context().registers.rsp, 8);
