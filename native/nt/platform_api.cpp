@@ -1220,6 +1220,17 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(uint64_t(previous));
 	});
 	registry.add("GetThreadDpiAwarenessContext", 0, [dpi_context](ApiCall &call) { call.ret(uint64_t(*dpi_context)); });
+	// Windows of another scale are never hosted, so the hosting behavior is only remembered: 0 is DPI_HOSTING_BEHAVIOR_DEFAULT.
+	auto hosting = std::make_shared<int32_t>(0);
+	registry.add("SetThreadDpiHostingBehavior", 1, [hosting](ApiCall &call) {
+		const auto value = int32_t(call.u32(0));
+		if (value < 0 || value > 1) {
+			call.ret(uint64_t(-1));
+			return;
+		}
+		call.ret(uint64_t(int64_t(std::exchange(*hosting, value))));
+	});
+	registry.add("GetThreadDpiHostingBehavior", 0, [hosting](ApiCall &call) { call.ret(uint64_t(int64_t(*hosting))); });
 	// advapi32 security helpers that need no token or policy database.
 	registry.add("AllocateAndInitializeSid", 11, [&context](ApiCall &call) {
 		const uint8_t count = uint8_t(call[1]);
