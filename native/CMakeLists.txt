@@ -96,6 +96,17 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         endif()
         list(APPEND NLS_SINGLE_BYTE_TEXTS ${NLS_SOURCE}/c_${PAGE}.txt)
     endforeach()
+    # The OEM pages of a console: Unicode's tables as published.
+    set(NLS_OEM_PAGES 437 850)
+    set(NLS_OEM_HASHES 6bad4dabcdf5940227c7d81fab130dcb18a77850b5d79de28b5dc4e047b0aaac ffdcc3c1c72f1aef600a63547100ef3dc452a09ad84923d382085519751c7479)
+    foreach(PAGE HASH IN ZIP_LISTS NLS_OEM_PAGES NLS_OEM_HASHES)
+        file(SHA256 ${NLS_SOURCE}/CP${PAGE}.TXT PAGE_HASH)
+        if(NOT PAGE_HASH STREQUAL HASH)
+            message(FATAL_ERROR "Pinned Unicode code page ${PAGE} differs")
+        endif()
+        list(APPEND NLS_SINGLE_BYTE_TEXTS ${NLS_SOURCE}/CP${PAGE}.TXT)
+    endforeach()
+    list(APPEND NLS_SINGLE_BYTE_PAGES ${NLS_OEM_PAGES})
     list(JOIN NLS_SINGLE_BYTE_PAGES "," NLS_SINGLE_BYTE_ARGUMENT)
     add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/nls-generated/nls-sbcs.h
         COMMAND ${CMAKE_COMMAND} -DSOURCE=${NLS_SOURCE} -DPAGES=${NLS_SINGLE_BYTE_ARGUMENT}

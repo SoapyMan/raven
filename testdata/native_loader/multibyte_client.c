@@ -74,7 +74,8 @@ int raven_entry(void)
 	WCHAR same[8]={0x6261,0};
 	SetLastError(71);if(MultiByteToWideChar(1252,0,(const char *)same,-1,same,8) || GetLastError()!=ERROR_INVALID_PARAMETER || same[0]!=0x6261)return 4;
 	WCHAR output=0x7777;
-	SetLastError(71);if(MultiByteToWideChar(1,0,"a",1,&output,1) || GetLastError()!=ERROR_CALL_NOT_IMPLEMENTED || output!=0x7777)return 2;
+	if(MultiByteToWideChar(1,0,"a",1,&output,1)!=1 || output!=L'a')return 2;
+	output=0x7777;
 	SetLastError(71);if(MultiByteToWideChar(1252,0,"a",0x100001,&output,1) || GetLastError()!=ERROR_CALL_NOT_IMPLEMENTED || output!=0x7777)return 3;
 #endif
 	return 0;

@@ -59,6 +59,7 @@ bool NativeEnvironment::multibyte_information(std::string_view name)
 		if (!args[2] || !length || capacity<0 || (capacity && (!args[4] || args[2]==args[4]))) throw uint32_t(87);
 		uint32_t code_page=uint32_t(args[0]),flags=uint32_t(args[1]);
 		if (!code_page || code_page==3) code_page=ansi_code_page;
+		else if (code_page==1) code_page=437;
 		if (flags & ~15U) throw uint32_t(1004);
 		const auto *single=native_single_byte_page(code_page);
 		if (code_page!=1252 && code_page!=65001 && !single) throw uint32_t(120);

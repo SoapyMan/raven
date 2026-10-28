@@ -139,7 +139,9 @@
         "native/upstream/reactos-nls/c_1255.txt",
         "native/upstream/reactos-nls/c_1256.txt",
         "native/upstream/reactos-nls/c_1257.txt",
-        "native/upstream/reactos-nls/c_1258.txt"
+        "native/upstream/reactos-nls/c_1258.txt",
+        "native/upstream/reactos-nls/CP437.TXT",
+        "native/upstream/reactos-nls/CP850.TXT"
       ],
       "license": "Unicode-3.0",
       "review": "reviewed",
