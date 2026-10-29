@@ -7,6 +7,7 @@
 #include "kernel_context.h"
 #include "system_exports.h"
 
+#include <openssl/evp.h>
 #include <sys/random.h>
 #include <sys/sysinfo.h>
 #include "text.h"
@@ -16,6 +17,9 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <span>
+#include <string>
 #include <unistd.h>
 
 namespace raven {
@@ -32,6 +36,12 @@ struct CryptState {
 		uint32_t exponent;
 		size_t length;
 		std::vector<uint8_t> blob;
+		// A session key: its ALG_ID and secret, the IV and mode CryptSetKeyParam set (CBC with a zero IV and PKCS #5 padding until
+		// then), and the IV a message reached between calls that are not final. A stream cipher keeps its state between calls.
+		uint32_t algorithm = 0;
+		std::vector<uint8_t> secret, iv, chained;
+		uint32_t mode = 1, mode_bits = 8;
+		std::shared_ptr<EVP_CIPHER_CTX> stream;
 	};
 	std::map<uint64_t, bool> providers;
 	std::map<uint64_t, std::unique_ptr<Digest>> hashes;
@@ -40,6 +50,93 @@ struct CryptState {
 	std::map<uint64_t, size_t> enumeration;
 	uint64_t next = 0x1000;
 };
+
+// The session key algorithms the AES provider has: the length of their secret in bytes when it is fixed (zero takes it from the flags or
+// the default), the default, and their block in bytes (zero for a stream cipher).
+struct SessionAlgorithm {
+	uint32_t id;
+	size_t fixed, fallback, block;
+};
+
+const SessionAlgorithm *session_algorithm(uint32_t id)
+{
+	static constexpr SessionAlgorithm algorithms[] = {{0x660e, 16, 16, 16}, {0x660f, 24, 24, 16}, {0x6610, 32, 32, 16}, {0x6611, 0, 16, 16},
+		{0x6603, 24, 24, 8}, {0x6609, 16, 16, 8}, {0x6601, 8, 8, 8}, {0x6801, 0, 16, 0}};
+	for (const auto &algorithm : algorithms)
+		if (algorithm.id == id)
+			return &algorithm;
+	return nullptr;
+}
+
+// The OpenSSL cipher for a session key in its mode: CBC, ECB or CFB with the feedback width KP_MODE_BITS gives; OFB is not offered.
+const EVP_CIPHER *session_cipher(const CryptState::Key &key)
+{
+	const auto *algorithm = session_algorithm(key.algorithm);
+	if (!algorithm)
+		return nullptr;
+	if (!algorithm->block)
+		return EVP_rc4();
+	const char *mode = key.mode == 2 ? "ECB" : key.mode == 4 ? (key.mode_bits == 8 ? "CFB8" : "CFB") : key.mode == 1 ? "CBC" : nullptr;
+	if (!mode)
+		return nullptr;
+	std::string name;
+	if (algorithm->block == 16)
+		name = "AES-" + std::to_string(key.secret.size() * 8) + "-" + mode;
+	else if (key.secret.size() == 8)
+		name = std::string("DES-") + mode;
+	else
+		name = std::string(key.secret.size() == 16 ? "DES-EDE-" : "DES-EDE3-") + mode;
+	return EVP_get_cipherbyname(name.c_str());
+}
+
+// Runs data through a session key in one direction. A block mode starts from the IV the last call that was not final left, and a final
+// call pads (or strips the padding) as PKCS #5 says and goes back to the key's own IV; a stream cipher carries on where it was.
+std::optional<std::vector<uint8_t>> session_crypt(CryptState::Key &key, std::span<const uint8_t> data, bool final, bool encrypt)
+{
+	const auto *cipher = session_cipher(key);
+	if (!cipher)
+		return std::nullopt;
+	const size_t block = session_algorithm(key.algorithm)->block;
+	if (!block) {
+		if (!key.stream) {
+			key.stream.reset(EVP_CIPHER_CTX_new(), EVP_CIPHER_CTX_free);
+			EVP_CIPHER_CTX_set_key_length(key.stream.get(), 0);
+			if (!EVP_CipherInit_ex(key.stream.get(), cipher, nullptr, nullptr, nullptr, encrypt) ||
+				!EVP_CIPHER_CTX_set_key_length(key.stream.get(), int(key.secret.size())) ||
+				!EVP_CipherInit_ex(key.stream.get(), nullptr, nullptr, key.secret.data(), nullptr, encrypt))
+				return std::nullopt;
+		}
+		std::vector<uint8_t> out(data.size());
+		int written = 0;
+		if (!EVP_CipherUpdate(key.stream.get(), out.data(), &written, data.data(), int(data.size())))
+			return std::nullopt;
+		if (final)
+			key.stream.reset();
+		return out;
+	}
+	const bool padded = final && key.mode != 4;
+	if (!padded && key.mode != 4 && data.size() % block)
+		return std::nullopt;
+	std::unique_ptr<EVP_CIPHER_CTX, decltype(&EVP_CIPHER_CTX_free)> context(EVP_CIPHER_CTX_new(), EVP_CIPHER_CTX_free);
+	auto iv = key.chained.empty() ? key.iv : key.chained;
+	iv.resize(block);
+	if (!EVP_CipherInit_ex(context.get(), cipher, nullptr, key.secret.data(), key.mode == 2 ? nullptr : iv.data(), encrypt))
+		return std::nullopt;
+	EVP_CIPHER_CTX_set_padding(context.get(), padded);
+	std::vector<uint8_t> out(data.size() + block);
+	int written = 0, last = 0;
+	if (!EVP_CipherUpdate(context.get(), out.data(), &written, data.data(), int(data.size())) ||
+		!EVP_CipherFinal_ex(context.get(), out.data() + written, &last))
+		return std::nullopt;
+	out.resize(size_t(written + last));
+	if (final) {
+		key.chained.clear();
+	} else if (key.mode == 1 && data.size() >= block) {
+		const auto &cipher_text = encrypt ? std::span<const uint8_t>(out) : data;
+		key.chained.assign(cipher_text.end() - std::ptrdiff_t(block), cipher_text.end());
+	}
+	return out;
+}
 
 // RSA public keys and signature checks for CryptImportKey and CryptVerifySignature. Numbers are little-endian 32-bit words; the only
 // operation needed is s^e mod n with the public exponent, so multiplication and a shift-and-subtract remainder are enough.
@@ -1473,6 +1570,25 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		const auto blob = call.read(call[1], call.u32(2));
+		// PLAINTEXTKEYBLOB of a session key: BLOBHEADER (type 8, version, algorithm), the secret's length and the secret.
+		if (blob.size() >= 12 && blob[0] == 8) {
+			uint32_t algorithm = 0, length = 0;
+			std::memcpy(&algorithm, blob.data() + 4, 4);
+			std::memcpy(&length, blob.data() + 8, 4);
+			const auto *known = session_algorithm(algorithm);
+			if (!known || blob.size() < 12 + size_t(length) || !length || (known->fixed && length != known->fixed) || call[3]) {
+				call.fail(known ? 0x80090005U : 0x80090008U);
+				return;
+			}
+			CryptState::Key key{};
+			key.algorithm = algorithm;
+			key.secret.assign(blob.begin() + 12, blob.begin() + 12 + length);
+			const auto handle = crypt->next++;
+			crypt->keys[handle] = std::move(key);
+			call.store_pointer(call[5], handle);
+			call.ret(1);
+			return;
+		}
 		uint32_t magic = 0, bits = 0, exponent = 0;
 		if (blob.size() >= 20) {
 			std::memcpy(&magic, blob.data() + 8, 4);
@@ -1484,23 +1600,72 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		const auto handle = crypt->next++;
-		crypt->keys[handle] = {words_from_bytes(std::span(blob).subspan(20, bits / 8)), exponent, bits / 8,
-			std::vector<uint8_t>(blob.begin(), blob.begin() + 20 + bits / 8)};
+		CryptState::Key key{};
+		key.modulus = words_from_bytes(std::span(blob).subspan(20, bits / 8));
+		key.exponent = exponent;
+		key.length = bits / 8;
+		key.blob.assign(blob.begin(), blob.begin() + 20 + bits / 8);
+		crypt->keys[handle] = std::move(key);
 		call.store_pointer(call[5], handle);
 		call.ret(1);
 	});
-	// A public key goes out as the PUBLICKEYBLOB it came in as; a null buffer asks for the length.
+	// A public key goes out as the PUBLICKEYBLOB it came in as, a session key as a PLAINTEXTKEYBLOB or sealed for an exchange key as a
+	// SIMPLEBLOB; a null buffer asks for the length.
 	registry.add("CryptExportKey", 6, [crypt](ApiCall &call) {
 		const auto key = crypt->keys.find(call[0]);
 		if (key == crypt->keys.end()) {
 			call.fail(6);
 			return;
 		}
-		if (call.u32(2) != 6 || call[1]) {
+		std::vector<uint8_t> blob = key->second.blob;
+		if (key->second.algorithm && call.u32(2) == 8 && !call[1]) {
+			const auto &secret = key->second.secret;
+			blob.assign(12, 0);
+			blob[0] = 8;
+			blob[1] = 2;
+			const uint32_t algorithm = key->second.algorithm, length = uint32_t(secret.size());
+			std::memcpy(blob.data() + 4, &algorithm, 4);
+			std::memcpy(blob.data() + 8, &length, 4);
+			blob.insert(blob.end(), secret.begin(), secret.end());
+		} else if (key->second.algorithm && call.u32(2) == 1 && call[1]) {
+			// SIMPLEBLOB: BLOBHEADER (type 1, version, algorithm), CALG_RSA_KEYX, then the secret in a PKCS #1 v1.5 encryption block
+			// (00 02, nonzero random bytes, 00, the secret) raised to the exchange key's exponent, least significant byte first.
+			const auto exchange = crypt->keys.find(call[1]);
+			if (exchange == crypt->keys.end() || exchange->second.algorithm || exchange->second.modulus.empty()) {
+				call.fail(exchange == crypt->keys.end() ? 6 : 0x80090003U);
+				return;
+			}
+			const auto &secret = key->second.secret;
+			const size_t length = exchange->second.length;
+			if (secret.size() + 11 > length) {
+				call.fail(0x80090004U);
+				return;
+			}
+			std::vector<uint8_t> encoded(length, 0);
+			encoded[1] = 2;
+			const size_t separator = length - secret.size() - 1;
+			for (size_t at = 2; at < separator; ++at)
+				do {
+					if (::getrandom(&encoded[at], 1, 0) != 1) {
+						call.fail(0x80090020U);
+						return;
+					}
+				} while (!encoded[at]);
+			std::copy(secret.begin(), secret.end(), encoded.begin() + std::ptrdiff_t(separator + 1));
+			std::reverse(encoded.begin(), encoded.end());
+			const auto sealed = power_mod(words_from_bytes(encoded), exchange->second.exponent, exchange->second.modulus);
+			blob.assign(12 + length, 0);
+			blob[0] = 1;
+			blob[1] = 2;
+			const uint32_t algorithm = key->second.algorithm, sealing = 0xa400;
+			std::memcpy(blob.data() + 4, &algorithm, 4);
+			std::memcpy(blob.data() + 8, &sealing, 4);
+			for (size_t at = 0; at < length; ++at)
+				blob[12 + at] = uint8_t(sealed[at / 4] >> (at % 4 * 8));
+		} else if (key->second.algorithm || call.u32(2) != 6 || call[1]) {
 			call.fail(0x8009000aU);
 			return;
 		}
-		const auto &blob = key->second.blob;
 		const uint32_t capacity = call.load<uint32_t>(call[5]);
 		call.store<uint32_t>(call[5], uint32_t(blob.size()));
 		if (!call[4]) {
@@ -1512,6 +1677,195 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		call.write(call[4], blob);
+		call.ret(1);
+	});
+	// CryptGenKey(provider, algorithm, flags, key): a random session key, as long as the high word of the flags says in bits or as the
+	// algorithm's default; key pairs are not generated.
+	registry.add("CryptGenKey", 4, [crypt](ApiCall &call) {
+		const auto *algorithm = session_algorithm(call.u32(1));
+		if (!crypt->providers.contains(call[0]) || !algorithm) {
+			call.fail(crypt->providers.contains(call[0]) ? 0x80090008U : 6);
+			return;
+		}
+		const size_t bits = call.u32(2) >> 16, length = algorithm->fixed ? algorithm->fixed : bits ? bits / 8 : algorithm->fallback;
+		if ((algorithm->fixed && bits && bits / 8 != algorithm->fixed) || (algorithm->block == 16 && length != 16 && length != 24 && length != 32) ||
+			length < 5 || length > 256 || bits % 8) {
+			call.fail(0x80090009U);
+			return;
+		}
+		CryptState::Key key{};
+		key.algorithm = algorithm->id == 0x6611 ? (length == 16 ? 0x660e : length == 24 ? 0x660f : 0x6610) : algorithm->id;
+		key.secret.resize(length);
+		for (size_t done = 0; done < length;) {
+			const auto got = ::getrandom(key.secret.data() + done, length - done, 0);
+			if (got <= 0) {
+				call.fail(0x80090020U);
+				return;
+			}
+			done += size_t(got);
+		}
+		const auto handle = crypt->next++;
+		crypt->keys[handle] = std::move(key);
+		call.store_pointer(call[3], handle);
+		call.ret(1);
+	});
+	registry.add("CryptDuplicateKey", 4, [crypt](ApiCall &call) {
+		const auto key = crypt->keys.find(call[0]);
+		if (key == crypt->keys.end() || call[1] || call.u32(2)) {
+			call.fail(key == crypt->keys.end() ? 6 : 87);
+			return;
+		}
+		auto copy = key->second;
+		copy.stream.reset();
+		const auto handle = crypt->next++;
+		crypt->keys[handle] = std::move(copy);
+		call.store_pointer(call[3], handle);
+		call.ret(1);
+	});
+	// CryptEncrypt(key, hash, final, flags, data, length, capacity) works in place; without data it reports the length the output needs,
+	// and a buffer too small for it fails with ERROR_MORE_DATA and that length. Hashing the plain text alongside is not offered.
+	registry.add("CryptEncrypt", 7, [crypt](ApiCall &call) {
+		const auto key = crypt->keys.find(call[0]);
+		if (key == crypt->keys.end() || !key->second.algorithm || !call[5]) {
+			call.fail(key == crypt->keys.end() ? 6 : 87);
+			return;
+		}
+		if (call[1]) {
+			call.fail(0x80090008U);
+			return;
+		}
+		const bool final = call.u32(2) != 0;
+		const uint32_t length = call.load<uint32_t>(call[5]);
+		const size_t block = session_algorithm(key->second.algorithm)->block;
+		const size_t needed = final && block && key->second.mode != 4 ? (length / block + 1) * block : length;
+		if (!call[4]) {
+			call.store<uint32_t>(call[5], uint32_t(needed));
+			call.ret(1);
+			return;
+		}
+		if (call.u32(6) < needed) {
+			call.store<uint32_t>(call[5], uint32_t(needed));
+			call.fail(234);
+			return;
+		}
+		const auto out = session_crypt(key->second, call.read(call[4], length), final, true);
+		if (!out) {
+			call.fail(0x80090005U);
+			return;
+		}
+		call.write(call[4], *out);
+		call.store<uint32_t>(call[5], uint32_t(out->size()));
+		call.ret(1);
+	});
+	// CryptDecrypt(key, hash, final, flags, data, length) works in place and leaves the length of the plain text; bad padding is NTE_BAD_DATA.
+	registry.add("CryptDecrypt", 6, [crypt](ApiCall &call) {
+		const auto key = crypt->keys.find(call[0]);
+		if (key == crypt->keys.end() || !key->second.algorithm || !call[5]) {
+			call.fail(key == crypt->keys.end() ? 6 : 87);
+			return;
+		}
+		if (call[1]) {
+			call.fail(0x80090008U);
+			return;
+		}
+		const auto out = session_crypt(key->second, call.read(call[4], call.load<uint32_t>(call[5])), call.u32(2) != 0, false);
+		if (!out) {
+			call.fail(0x80090005U);
+			return;
+		}
+		call.write(call[4], *out);
+		call.store<uint32_t>(call[5], uint32_t(out->size()));
+		call.ret(1);
+	});
+	// The parameters of a session key: KP_IV, KP_MODE and KP_MODE_BITS can be set; those and KP_PADDING (PKCS #5), KP_ALGID, KP_BLOCKLEN
+	// and KP_KEYLEN (in bits) and KP_PERMISSIONS (all granted) can be read.
+	registry.add("CryptSetKeyParam", 4, [crypt](ApiCall &call) {
+		const auto key = crypt->keys.find(call[0]);
+		if (key == crypt->keys.end() || !key->second.algorithm || !call[2]) {
+			call.fail(key == crypt->keys.end() ? 6 : 87);
+			return;
+		}
+		auto &state = key->second;
+		const size_t block = session_algorithm(state.algorithm)->block;
+		switch (call.u32(1)) {
+		case 1:
+			state.iv = call.read(call[2], block);
+			state.chained.clear();
+			break;
+		case 3:
+			if (call.load<uint32_t>(call[2]) != 1) {
+				call.fail(0x80090009U);
+				return;
+			}
+			break;
+		case 4: {
+			const uint32_t mode = call.load<uint32_t>(call[2]);
+			if (!block || (mode != 1 && mode != 2 && mode != 4)) {
+				call.fail(0x80090009U);
+				return;
+			}
+			state.mode = mode;
+			state.chained.clear();
+			break;
+		}
+		case 5:
+			state.mode_bits = call.load<uint32_t>(call[2]);
+			if (state.mode_bits != 8 && state.mode_bits != block * 8) {
+				state.mode_bits = 8;
+				call.fail(0x80090009U);
+				return;
+			}
+			break;
+		default:
+			call.fail(0x80090009U);
+			return;
+		}
+		call.ret(1);
+	});
+	registry.add("CryptGetKeyParam", 5, [crypt](ApiCall &call) {
+		const auto key = crypt->keys.find(call[0]);
+		if (key == crypt->keys.end() || !call[3]) {
+			call.fail(key == crypt->keys.end() ? 6 : 87);
+			return;
+		}
+		const auto &state = key->second;
+		const size_t block = state.algorithm ? session_algorithm(state.algorithm)->block : 0;
+		std::vector<uint8_t> value;
+		const auto dword = [&](uint32_t number) {
+			value.resize(4);
+			std::memcpy(value.data(), &number, 4);
+		};
+		switch (call.u32(1)) {
+		case 1:
+			value = state.iv;
+			value.resize(block);
+			break;
+		case 3: dword(1); break;
+		case 4: dword(state.mode); break;
+		case 5: dword(state.mode_bits); break;
+		case 6: dword(0x3f); break;
+		case 7: dword(state.algorithm ? state.algorithm : 0xa400); break;
+		case 8: dword(uint32_t(block * 8)); break;
+		case 9: dword(uint32_t(state.algorithm ? state.secret.size() * 8 : state.length * 8)); break;
+		default:
+			call.fail(0x80090009U);
+			return;
+		}
+		if (!state.algorithm && call.u32(1) != 7 && call.u32(1) != 9) {
+			call.fail(0x80090009U);
+			return;
+		}
+		const uint32_t capacity = call.load<uint32_t>(call[3]);
+		call.store<uint32_t>(call[3], uint32_t(value.size()));
+		if (!call[2]) {
+			call.ret(1);
+			return;
+		}
+		if (capacity < value.size()) {
+			call.fail(234);
+			return;
+		}
+		call.write(call[2], value);
 		call.ret(1);
 	});
 	registry.add("CryptDestroyKey", 1, [crypt](ApiCall &call) {
