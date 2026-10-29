@@ -1002,50 +1002,67 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 	registry.add("RegisterHotKey", 4, [](ApiCall &call) { call.ret(1); });
 	registry.add("UnregisterHotKey", 2, [](ApiCall &call) { call.ret(1); });
 	registry.add("SystemParametersInfoA", 4, [](ApiCall &call) { call.ret(1); });
-	registry.add("SystemParametersInfoW", 4, [this](ApiCall &call) {
-		const uint32_t action = call.u32(0), parameter = call.u32(1);
-		const uint64_t pointer = call[2];
-		const auto &screen = objects.nonclient_metrics();
+	// The metrics that carry fonts, laid out for a DPI: NONCLIENTMETRICSW (sizes, then the caption, small caption, menu, status and
+	// message fonts), the icon title LOGFONTW and ICONMETRICSW (size, horizontal and vertical spacing, wrap flag, font). False for any
+	// other action.
+	const auto font_metrics = [](ApiCall &call, uint32_t action, uint32_t parameter, uint64_t pointer, uint32_t dpi) {
+		const auto scale = [dpi](int32_t value) { return int32_t((int64_t(value) * dpi + 48) / 96); };
 		switch (action) {
 		case 0x29: {
-			// NONCLIENTMETRICSW: sizes, then caption, small caption, menu, status and message fonts.
 			const uint32_t size = parameter ? parameter : call.load<uint32_t>(pointer);
 			std::vector<uint8_t> bytes(std::max<size_t>(size, 504), 0);
 			const auto put32 = [&](size_t at, int32_t value) { std::memcpy(bytes.data() + at, &value, 4); };
 			put32(0, int32_t(size));
-			put32(4, 1);
-			put32(8, 17); put32(12, 17);
-			put32(16, 18); put32(20, 19);
-			write_logfont(bytes, 24, -12, 400);
-			put32(116, 17); put32(120, 19);
-			write_logfont(bytes, 124, -12, 400);
-			put32(216, 18); put32(220, 19);
-			write_logfont(bytes, 224, -12, 400);
-			write_logfont(bytes, 316, -12, 400);
-			write_logfont(bytes, 408, -12, 400);
+			put32(4, scale(1));
+			put32(8, scale(17)); put32(12, scale(17));
+			put32(16, scale(18)); put32(20, scale(19));
+			write_logfont(bytes, 24, scale(-12), 400);
+			put32(116, scale(17)); put32(120, scale(19));
+			write_logfont(bytes, 124, scale(-12), 400);
+			put32(216, scale(18)); put32(220, scale(19));
+			write_logfont(bytes, 224, scale(-12), 400);
+			write_logfont(bytes, 316, scale(-12), 400);
+			write_logfont(bytes, 408, scale(-12), 400);
 			if (size > 500)
-				put32(500, 4);
+				put32(500, scale(4));
 			call.write(pointer, std::span<const uint8_t>(bytes.data(), std::min<size_t>(size, bytes.size())));
-			call.ret(1);
-			return;
+			return true;
 		}
 		case 0x1f: {
 			std::vector<uint8_t> bytes(92, 0);
-			write_logfont(bytes, 0, -12, 400);
+			write_logfont(bytes, 0, scale(-12), 400);
 			call.write(pointer, bytes);
-			call.ret(1);
-			return;
+			return true;
 		}
 		case 0x2d: {
-			// ICONMETRICS: size, horizontal and vertical spacing, wrap flag, font.
 			std::vector<uint8_t> bytes(108, 0);
-			const int32_t values[] = {108, 75, 75, 1};
+			const int32_t values[] = {108, scale(75), scale(75), 1};
 			std::memcpy(bytes.data(), values, 16);
-			write_logfont(bytes, 16, -12, 400);
+			write_logfont(bytes, 16, scale(-12), 400);
 			call.write(pointer, bytes);
+			return true;
+		}
+		default:
+			return false;
+		}
+	};
+	// SystemParametersInfoForDpi(action, parameter, data, update, dpi) answers only the font metrics, scaled for the DPI it names.
+	registry.add("SystemParametersInfoForDpi", 5, [font_metrics](ApiCall &call) {
+		if (!call[2] || !call.u32(4) || !font_metrics(call, call.u32(0), call.u32(1), call[2], call.u32(4))) {
+			call.fail(87);
+			return;
+		}
+		call.ret(1);
+	});
+	registry.add("SystemParametersInfoW", 4, [this, font_metrics](ApiCall &call) {
+		const uint32_t action = call.u32(0), parameter = call.u32(1);
+		const uint64_t pointer = call[2];
+		const auto &screen = objects.nonclient_metrics();
+		if (font_metrics(call, action, parameter, pointer, 96)) {
 			call.ret(1);
 			return;
 		}
+		switch (action) {
 		case 0x30: {
 			const int32_t rect[] = {0, 0, screen.screen_x, screen.screen_y};
 			call.write(pointer, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(rect), 16));
