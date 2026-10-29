@@ -60,9 +60,9 @@ int raven_entry(void)
 	if (!clean || GetCurrentObject(clean, OBJ_FONT) == font || ReleaseDC(NULL, clean) != 1)
 		return 6;
 	DeleteObject(font);
-	/* A memory context still answers for its own bitmap. */
+	/* A memory context answers for the display it is compatible with, not for the monochrome bitmap selected into it. */
 	HDC memory = CreateCompatibleDC(NULL);
-	if (!memory || GetDeviceCaps(memory, TECHNOLOGY) == DT_RASDISPLAY || !DeleteDC(memory))
+	if (!memory || !screen_caps_hold(memory) || GetDeviceCaps(memory, NUMCOLORS) != -1 || !DeleteDC(memory))
 		return 7;
 	for (unsigned round = 0; round < 16; ++round) {
 		HANDLE workers[4];

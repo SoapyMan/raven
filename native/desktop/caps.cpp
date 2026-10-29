@@ -20,28 +20,34 @@ uint64_t le(std::span<const uint8_t> bytes, size_t at, size_t width)
 
 uint32_t device_caps(const DesktopObjects &objects, const DesktopDC &dc, int32_t index)
 {
-	const auto *bitmap = objects.bitmap(dc.bitmap);
-	if (!bitmap)
+	if (!objects.bitmap(dc.bitmap))
 		throw uint32_t(6);
 	const auto &screen = objects.nonclient_metrics();
-	// Screen DCs report the virtual display; memory DCs report the depth of their selected bitmap.
-	const bool screen_dc = dc.window != 0;
+	// Every context answers for the device it is compatible with, the display: a memory DC reports the screen, not the bitmap
+	// selected into it, as Windows memory DCs do.
 	switch (index) {
-	case 2: return screen_dc ? 1 : 0;                          // TECHNOLOGY: DT_RASDISPLAY or DT_RASPRINTER-free memory
+	case 2: return 1;                                             // TECHNOLOGY: DT_RASDISPLAY
 	case 4: return uint32_t(int64_t(screen.screen_x) * 254 / 960);  // HORZSIZE in mm at 96 dpi
 	case 6: return uint32_t(int64_t(screen.screen_y) * 254 / 960);  // VERTSIZE
-	case 8: return screen_dc ? uint32_t(screen.screen_x) : bitmap->width;
-	case 10: return screen_dc ? uint32_t(screen.screen_y) : bitmap->height;
-	case 12: return screen_dc ? 32 : bitmap->depth;                // BITSPIXEL
+	case 8: return uint32_t(screen.screen_x);                     // HORZRES
+	case 10: return uint32_t(screen.screen_y);                    // VERTRES
+	case 12: return 32;                                           // BITSPIXEL
 	case 14: return 1;                                            // PLANES
-	case 24: return bitmap->depth > 8 && screen_dc ? uint32_t(-1) : (1U << bitmap->depth); // NUMCOLORS
-	case 38: return 0x1 | 0x8 | 0x80 | 0x200;                      // RC_BITBLT | RC_BITMAP64 | RC_DI_BITMAP | RC_DIBTODEV
+	case 24: return uint32_t(-1);                                 // NUMCOLORS: more than 8 bits per pixel
+	case 28: return 0xff;                                         // CURVECAPS: every curve
+	case 30: return 0xfe;                                         // LINECAPS: every line
+	case 32: return 0xff;                                         // POLYGONALCAPS: every polygon
+	case 34: return 0x7807;                                       // TEXTCAPS: OP_CHARACTER | OP_STROKE | CP_STROKE | UA | SO | RA | VA
+	case 36: return 1;                                            // CLIPCAPS: CP_RECTANGLE
+	// RC_BITBLT | RC_BITMAP64 | RC_GDI20_OUTPUT | RC_DI_BITMAP | RC_DIBTODEV | RC_BIGFONT | RC_STRETCHBLT | RC_FLOODFILL | RC_STRETCHDIB
+	// | RC_DEVBITS, what a true-colour display reports.
+	case 38: return 0x7e99;
 	case 40: case 42: return 36;                                   // ASPECTX / ASPECTY
 	case 44: return 51;                                           // ASPECTXY
 	case 88: case 90: return 96;                                  // LOGPIXELSX / LOGPIXELSY
 	case 104: return 0;                                           // SIZEPALETTE: no palette device
 	case 106: return 0;                                           // NUMRESERVED
-	case 108: return screen_dc ? 24 : bitmap->depth;               // COLORRES
+	case 108: return 24;                                          // COLORRES
 	default: return 0;
 	}
 }
