@@ -73,14 +73,20 @@ std::vector<InstalledFamily> enumerable_families()
 
 // The LOGFONT of an enumerated family and the NEWTEXTMETRICEX that follows the ENUMLOGFONTEX at metrics: the ANSI forms keep characters
 // in bytes, so their fields after tmLastChar sit four bytes earlier. Sizes are those of a 12-pixel em.
-void describe_family(std::vector<uint8_t> &record, size_t metrics, const InstalledFamily &family, bool ansi)
+void describe_family(std::vector<uint8_t> &record, size_t metrics, const InstalledFamily &family, bool ansi, uint8_t charset)
 {
 	const auto put = [&](size_t at, int32_t value) { std::memcpy(record.data() + at, &value, 4); };
 	const int32_t weight = int32_t(family.weight);
-	put(0, -12);
+	// The LOGFONT of a TrueType face as the enumeration gives it: the cell height and average width of the metrics below, stroke
+	// output and clip precision and proof quality.
+	put(0, 16);
+	put(4, 7);
 	put(16, weight);
 	record[20] = family.italic;
-	record[23] = 0;
+	record[23] = charset;
+	record[24] = 3;
+	record[25] = 2;
+	record[26] = 1;
 	record[27] = family.fixed ? 0x31 : 0x22;
 	put(metrics, 16);
 	put(metrics + 4, 13);
@@ -106,7 +112,7 @@ void describe_family(std::vector<uint8_t> &record, size_t metrics, const Install
 	record[at] = family.italic;
 	// TMPF_TRUETYPE | TMPF_VECTOR, and the bit Windows sets for a variable pitch, under the family kind.
 	record[at + 3] = uint8_t((family.fixed ? 0x06 : 0x07) | (family.fixed ? 0x30 : 0x20));
-	record[at + 4] = 0;
+	record[at + 4] = charset;
 	at += 8;
 	put(at, (family.weight >= 600 ? 0x20 : 0) | (family.italic ? 0x01 : 0) | (family.weight < 600 && !family.italic ? 0x40 : 0));
 	put(at + 4, 2048);
@@ -123,6 +129,46 @@ std::u16string_view style_of(const InstalledFamily &family)
 	if (family.weight >= 600)
 		return family.italic ? u"Bold Italic" : u"Bold";
 	return family.italic ? u"Italic" : u"Regular";
+}
+
+// The character sets a face covers, from the code page bits of its OS/2 table in the order TranslateCharsetInfo gives them, each with
+// the script name EnumFontFamiliesEx reports. A symbol font has the symbol set alone; a face that claims none is Western.
+struct FontScript {
+	uint8_t charset;
+	const char16_t *script;
+};
+
+std::vector<FontScript> scripts_of(const InstalledFamily &family)
+{
+	static const struct { int bit; FontScript script; } bits[] = {
+		{0, {0, u"Western"}}, {1, {238, u"Central European"}}, {2, {204, u"Cyrillic"}}, {3, {161, u"Greek"}}, {4, {162, u"Turkish"}},
+		{5, {177, u"Hebrew"}}, {6, {178, u"Arabic"}}, {7, {186, u"Baltic"}}, {8, {163, u"Vietnamese"}}, {16, {222, u"Thai"}},
+		{17, {128, u"Japanese"}}, {18, {134, u"CHINESE_GB2312"}}, {19, {129, u"Hangul"}}, {20, {136, u"CHINESE_BIG5"}},
+		{21, {130, u"Hangul(Johab)"}}};
+	if (family.code_pages[0] & 0x80000000U)
+		return {{2, u"Symbol"}};
+	std::vector<FontScript> scripts;
+	for (const auto &entry : bits)
+		if (family.code_pages[0] & (1U << entry.bit))
+			scripts.push_back(entry.script);
+	if (scripts.empty())
+		scripts.push_back({0, u"Western"});
+	return scripts;
+}
+
+// The reserved last argument of EnumFontFamiliesEx, which callers pass as zero, carries this when EnumFontFamilies forwards to it.
+constexpr uint64_t once_marker = 0x52564e31;
+
+// The records EnumFontFamiliesEx hands out for a family: one per character set it covers when DEFAULT_CHARSET (or no LOGFONT) asks
+// for any, the one for the set asked for otherwise, and the first alone for the older EnumFontFamilies, which lists a family once.
+std::vector<FontScript> enumerated_scripts(const InstalledFamily &family, int charset, bool once)
+{
+	auto scripts = scripts_of(family);
+	if (once)
+		scripts.resize(1);
+	else if (charset != 1)
+		std::erase_if(scripts, [&](const FontScript &script) { return script.charset != charset; });
+	return scripts;
 }
 
 }
@@ -401,7 +447,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			bytes[at + 1] = font.definition[21];
 			bytes[at + 2] = font.definition[22];
 			bytes[at + 3] = info.pitch;
-			bytes[at + 4] = font.definition[23];
+			bytes[at + 4] = font.definition[23] == 1 ? 0 : font.definition[23];
 			call.write(call[1], bytes);
 			call.ret(1);
 		});
@@ -449,6 +495,36 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			face.resize(std::min(face.size(), size_t(count - 1)));
 			call.put_wide(call[2], face, face.size() + 1);
 			call.ret(face.size() + 1);
+		});
+	});
+	// GetTextCharsetInfo(dc, FONTSIGNATURE, flags): the character set of the selected font, and the scripts and code pages its OS/2 table
+	// claims; a face the system does not enumerate stands in for the default face, which covers Latin.
+	registry.add("GetTextCharsetInfo", 3, [=, this](ApiCall &call) {
+		guarded(call, 1, [&] {
+			auto &dc = require_dc(call, 0);
+			const auto &font = selected_font(dc);
+			std::u16string face;
+			for (size_t at = 28; at + 1 < font.definition.size() && at < 28 + 64; at += 2) {
+				const char16_t character = char16_t(font.definition[at] | font.definition[at + 1] << 8);
+				if (!character)
+					break;
+				face.push_back(character);
+			}
+			InstalledFamily family{face};
+			family.unicode_ranges[0] = 3;
+			family.code_pages[0] = 1;
+			const auto families = enumerable_families();
+			if (const auto found = std::find_if(families.begin(), families.end(), [&](const InstalledFamily &item) { return equal_fold(item.name, face); });
+				found != families.end())
+				family = *found;
+			if (call[1]) {
+				std::vector<uint8_t> signature(24, 0);
+				std::memcpy(signature.data(), family.unicode_ranges, 16);
+				std::memcpy(signature.data() + 16, family.code_pages, 8);
+				call.write(call[1], signature);
+			}
+			// DEFAULT_CHARSET is realized as the ANSI set; any other request comes back as asked.
+			call.ret(font.definition[23] == 1 ? 0 : font.definition[23]);
 		});
 	});
 	// GetGlyphOutlineW(dc, character, format, GLYPHMETRICS, size, buffer, MAT2): the metrics of a character of the selected font and its
@@ -579,7 +655,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			const uint16_t characters[4] = {info.first, info.last, info.default_character, info.break_character};
 			std::memcpy(bytes.data() + 48, characters, 8);
 			bytes[56] = font.definition[20]; bytes[57] = font.definition[21]; bytes[58] = font.definition[22]; bytes[59] = info.pitch;
-			bytes[60] = font.definition[23];
+			bytes[60] = font.definition[23] == 1 ? 0 : font.definition[23];
 			const int32_t em = std::max<int32_t>(info.height - info.internal_leading, 1);
 			put32(76, (weight >= 700 ? 0x20 : 0) | (font.definition[20] ? 1 : 0) | 0x40);
 			const uint32_t design_em = objects.text().logical_units_per_em(font.definition);
@@ -785,7 +861,9 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			require_dc(call, 0);
 			const auto families = enumerable_families();
 			std::u16string wanted;
+			int charset = 1;
 			if (call[1]) {
+				charset = call.read(call[1] + 23, 1)[0];
 				const auto bytes = call.read(call[1] + 28, 64);
 				for (size_t i = 0; i < 32; ++i) {
 					const char16_t c = char16_t(bytes[i * 2] | (bytes[i * 2 + 1] << 8));
@@ -816,26 +894,30 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 				for (const auto &family : families) {
 					if (!wanted.empty() && lower(family.name) != lower(wanted))
 						continue;
-					// ENUMLOGFONTEXW (LOGFONTW, full name, style, script) followed by NEWTEXTMETRICEXW.
-					std::vector<uint8_t> record(512, 0);
-					describe_family(record, 348, family, false);
-					const auto put_text = [&](size_t at, std::u16string_view text, size_t limit) {
-						for (size_t i = 0; i < std::min(text.size(), limit); ++i) {
-							record[at + i * 2] = uint8_t(text[i]);
-							record[at + i * 2 + 1] = uint8_t(text[i] >> 8);
-						}
-					};
-					put_text(28, family.name, 31);
-					put_text(92, family.name, 63);
-					put_text(92 + 128, style_of(family), 31);
-					put_text(92 + 192, u"Western", 31);
-					call.write(scratch, record);
-					const uint64_t arguments[] = {scratch, scratch + 348, 4, call[3]};
-					const auto outcome = invoke(call[2], arguments);
-					if (outcome.stop != NativeStop::returned)
-						throw outcome;
-					result = outcome.value;
-					if (!uint32_t(outcome.value))
+					for (const auto &script : enumerated_scripts(family, charset, call[4] == once_marker)) {
+						// ENUMLOGFONTEXW (LOGFONTW, full name, style, script) followed by NEWTEXTMETRICEXW.
+						std::vector<uint8_t> record(512, 0);
+						describe_family(record, 348, family, false, script.charset);
+						const auto put_text = [&](size_t at, std::u16string_view text, size_t limit) {
+							for (size_t i = 0; i < std::min(text.size(), limit); ++i) {
+								record[at + i * 2] = uint8_t(text[i]);
+								record[at + i * 2 + 1] = uint8_t(text[i] >> 8);
+							}
+						};
+						put_text(28, family.name, 31);
+						put_text(92, family.name, 63);
+						put_text(92 + 128, style_of(family), 31);
+						put_text(92 + 192, script.script, 31);
+						call.write(scratch, record);
+						const uint64_t arguments[] = {scratch, scratch + 348, 4, call[3]};
+						const auto outcome = invoke(call[2], arguments);
+						if (outcome.stop != NativeStop::returned)
+							throw outcome;
+						result = outcome.value;
+						if (!uint32_t(outcome.value))
+							break;
+					}
+					if (!uint32_t(result))
 						break;
 				}
 			} catch (...) {
@@ -869,7 +951,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			const auto block = process.map_memory(4096, PROT_READ | PROT_WRITE);
 			try {
 				call.write(block, logical);
-				ApiCall inner(call.process, call.environment, {call[0], block, call[2], call[3], 0});
+				ApiCall inner(call.process, call.environment, {call[0], block, call[2], call[3], once_marker});
 				extended->second(inner);
 				process.unmap_memory(block);
 				call.ret(inner.result);
@@ -889,7 +971,9 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			require_dc(call, 0);
 			const auto families = enumerable_families();
 			std::string wanted;
+			int charset = 1;
 			if (call[1]) {
+				charset = call.read(call[1] + 23, 1)[0];
 				const auto bytes = call.read(call[1] + 28, 32);
 				for (size_t i = 0; i < 32 && bytes[i]; ++i)
 					wanted.push_back(char(bytes[i]));
@@ -911,21 +995,26 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 					const auto name = to_ansi(family.name, 1252);
 					if (!wanted.empty() && lower(name) != lower(wanted))
 						continue;
-					// ENUMLOGFONTEXA (LOGFONTA, full name, style, script) followed by NEWTEXTMETRICEXA.
-					std::vector<uint8_t> record(512, 0);
-					describe_family(record, 256, family, true);
-					const auto style = to_ansi(style_of(family), 1252);
-					std::memcpy(record.data() + 28, name.data(), std::min<size_t>(name.size(), 31));
-					std::memcpy(record.data() + 60, name.data(), std::min<size_t>(name.size(), 63));
-					std::memcpy(record.data() + 124, style.data(), std::min<size_t>(style.size(), 31));
-					std::memcpy(record.data() + 156, "Western", 7);
-					call.write(scratch, record);
-					const uint64_t arguments[] = {scratch, scratch + 256, 4, call[3]};
-					const auto outcome = invoke(call[2], arguments);
-					if (outcome.stop != NativeStop::returned)
-						throw outcome;
-					result = outcome.value;
-					if (!uint32_t(outcome.value))
+					for (const auto &script : enumerated_scripts(family, charset, call[4] == once_marker)) {
+						// ENUMLOGFONTEXA (LOGFONTA, full name, style, script) followed by NEWTEXTMETRICEXA.
+						std::vector<uint8_t> record(512, 0);
+						describe_family(record, 256, family, true, script.charset);
+						const auto style = to_ansi(style_of(family), 1252);
+						const auto script_name = to_ansi(script.script, 1252);
+						std::memcpy(record.data() + 28, name.data(), std::min<size_t>(name.size(), 31));
+						std::memcpy(record.data() + 60, name.data(), std::min<size_t>(name.size(), 63));
+						std::memcpy(record.data() + 124, style.data(), std::min<size_t>(style.size(), 31));
+						std::memcpy(record.data() + 156, script_name.data(), std::min<size_t>(script_name.size(), 31));
+						call.write(scratch, record);
+						const uint64_t arguments[] = {scratch, scratch + 256, 4, call[3]};
+						const auto outcome = invoke(call[2], arguments);
+						if (outcome.stop != NativeStop::returned)
+							throw outcome;
+						result = outcome.value;
+						if (!uint32_t(outcome.value))
+							break;
+					}
+					if (!uint32_t(result))
 						break;
 				}
 			} catch (...) {

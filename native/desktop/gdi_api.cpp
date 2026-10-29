@@ -1536,16 +1536,6 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 	for (const auto *name : {"StartDocW", "StartDocA", "EndDoc", "StartPage", "EndPage", "AbortDoc"})
 		registry.add(name, 2, [](ApiCall &call) { call.fail(120, 0); });
 	registry.add("GdiGetCodePage", 1, [](ApiCall &call) { call.ret(1252); });
-	registry.add("GetTextCharsetInfo", 3, [=, this](ApiCall &call) {
-		guarded(call, 0, [&] {
-			require_dc(call, 0);
-			if (call[1]) {
-				std::vector<uint8_t> signature(24, 0);
-				call.write(call[1], signature);
-			}
-			call.ret(0);
-		});
-	});
 }
 
 

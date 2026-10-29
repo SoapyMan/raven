@@ -62,7 +62,40 @@ void put_text(std::vector<uint8_t> &bytes, const char *text)
 	bytes.push_back(0);
 }
 
-// The system fonts, as records the guest reads: sizes, weight, style, width, flags, then path, family, face, full and PostScript names.
+// The English name a face's name table gives for an id, in UTF-8: Windows names are UTF-16 big endian, Macintosh names single byte.
+std::string sfnt_name(FT_Face face, uint32_t id)
+{
+	std::string result;
+	const FT_UInt count = FT_Get_Sfnt_Name_Count(face);
+	for (FT_UInt index = 0; index < count && result.empty(); ++index) {
+		FT_SfntName name;
+		if (FT_Get_Sfnt_Name(face, index, &name) || name.name_id != id)
+			continue;
+		if (name.platform_id == 3 && (name.language_id & 0x3ff) == 9) {
+			for (FT_UInt at = 0; at + 1 < name.string_len; at += 2) {
+				const uint32_t unit = uint32_t(name.string[at]) << 8 | name.string[at + 1];
+				if (unit < 0x80)
+					result.push_back(char(unit));
+				else if (unit < 0x800) {
+					result.push_back(char(0xc0 | unit >> 6));
+					result.push_back(char(0x80 | (unit & 0x3f)));
+				} else {
+					result.push_back(char(0xe0 | unit >> 12));
+					result.push_back(char(0x80 | ((unit >> 6) & 0x3f)));
+					result.push_back(char(0x80 | (unit & 0x3f)));
+				}
+			}
+		} else if (name.platform_id == 1 && name.language_id == 0) {
+			result.assign(reinterpret_cast<const char *>(name.string), name.string_len);
+		}
+	}
+	return result;
+}
+
+// The system fonts, as records the guest reads: sizes, weight, style, width, flags, then path, family, face, full and PostScript names,
+// then the Win32 family and the typographic family and face. The family and face are the weight-stretch-style ones DirectWrite groups
+// by (name ids 21 and 22, else 1 and 2); GDI names a family by its Win32 name (id 1), which keeps Calibri Light or Arial Narrow apart
+// from Calibri and Arial, where FreeType's family name is the typographic one (id 16).
 // They are the fonts installed in the Windows Fonts folder of the prefix, which links the host's fonts and keeps the ones programs
 // install; without a prefix, the host's own font folders.
 std::vector<uint8_t> scan_fonts()
@@ -112,7 +145,16 @@ std::vector<uint8_t> scan_fonts()
 					}
 					const uint32_t style = (face->style_flags & FT_STYLE_FLAG_ITALIC) ? 2 : 0;
 					const uint32_t flags = (FT_IS_FIXED_WIDTH(face) ? 2U : 0U);
-					InstalledFamily found{from_utf8(face->family_name), weight, style != 0, (flags & 2) != 0};
+					const auto named = [&](uint32_t id, uint32_t fallback, const char *last) {
+						auto text = sfnt_name(face, id);
+						if (text.empty())
+							text = sfnt_name(face, fallback);
+						return text.empty() ? std::string(last ? last : "") : text;
+					};
+					const auto win32_family = named(1, 1, face->family_name), win32_face = named(2, 2, face->style_name);
+					const auto family = named(21, 1, face->family_name), style_name = named(22, 2, face->style_name);
+					const auto typographic_family = named(16, 1, face->family_name), typographic_face = named(17, 2, face->style_name);
+					InstalledFamily found{from_utf8(win32_family), weight, style != 0, (flags & 2) != 0};
 					if (const auto *os2 = static_cast<TT_OS2 *>(FT_Get_Sfnt_Table(face, FT_SFNT_OS2))) {
 						found.unicode_ranges[0] = uint32_t(os2->ulUnicodeRange1);
 						found.unicode_ranges[1] = uint32_t(os2->ulUnicodeRange2);
@@ -135,11 +177,14 @@ std::vector<uint8_t> scan_fonts()
 					put32(record, stretch);
 					put32(record, flags);
 					put_text(record, walk->path().c_str());
-					put_text(record, face->family_name);
-					put_text(record, face->style_name);
-					std::string full = std::string(face->family_name) + (face->style_name ? std::string(" ") + face->style_name : std::string());
+					put_text(record, family.c_str());
+					put_text(record, style_name.c_str());
+					const auto full = named(4, 4, (win32_family + (win32_face.empty() ? "" : " " + win32_face)).c_str());
 					put_text(record, full.c_str());
 					put_text(record, FT_Get_Postscript_Name(face));
+					put_text(record, win32_family.c_str());
+					put_text(record, typographic_family.c_str());
+					put_text(record, typographic_face.c_str());
 					const uint32_t size = uint32_t(record.size());
 					std::memcpy(record.data(), &size, 4);
 					cache.insert(cache.end(), record.begin(), record.end());
@@ -448,31 +493,7 @@ void register_font_service(ApiRegistry &registry, KernelContext &)
 			call.ret(0);
 			return;
 		}
-		std::string result;
-		const FT_UInt count = FT_Get_Sfnt_Name_Count(font->face);
-		for (FT_UInt index = 0; index < count && result.empty(); ++index) {
-			FT_SfntName name;
-			if (FT_Get_Sfnt_Name(font->face, index, &name) || name.name_id != call.u32(1))
-				continue;
-			// Windows names are UTF-16 big endian; Macintosh names are single byte.
-			if (name.platform_id == 3 && (name.language_id & 0x3ff) == 9) {
-				for (FT_UInt at = 0; at + 1 < name.string_len; at += 2) {
-					const uint32_t unit = uint32_t(name.string[at]) << 8 | name.string[at + 1];
-					if (unit < 0x80)
-						result.push_back(char(unit));
-					else if (unit < 0x800) {
-						result.push_back(char(0xc0 | unit >> 6));
-						result.push_back(char(0x80 | (unit & 0x3f)));
-					} else {
-						result.push_back(char(0xe0 | unit >> 12));
-						result.push_back(char(0x80 | ((unit >> 6) & 0x3f)));
-						result.push_back(char(0x80 | (unit & 0x3f)));
-					}
-				}
-			} else if (name.platform_id == 1 && name.language_id == 0) {
-				result.assign(reinterpret_cast<const char *>(name.string), name.string_len);
-			}
-		}
+		std::string result = sfnt_name(font->face, call.u32(1));
 		if (call[2] && call.u32(3) > result.size()) {
 			result.push_back('\0');
 			call.write(call[2], std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(result.data()), result.size()));
