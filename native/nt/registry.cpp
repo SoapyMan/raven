@@ -184,9 +184,11 @@ void NativeRegistry::register_runtime_classes()
 		}
 	}
 	// The Windows Runtime classes the runtime brings, in-process (activation type 0) and callable from any apartment (threading 0):
-	// installers ask the package manager whether a packaged version of what they install is present.
+	// installers ask the package manager whether a packaged version of what they install is present, and Office asks the UI settings
+	// for the theme's colours and the text scale while it starts.
 	static constexpr std::pair<const char16_t *, const char16_t *> runtime_classes[] = {
-		{u"Windows.Management.Deployment.PackageManager", u"raven-deployment.dll"}};
+		{u"Windows.Management.Deployment.PackageManager", u"raven-deployment.dll"},
+		{u"Windows.UI.ViewManagement.UISettings", u"raven-uisettings.dll"}};
 	for (const bool wow : {false, true})
 		for (const auto &[name, library] : runtime_classes) {
 			const std::u16string path = std::u16string(wow ? u"SOFTWARE\\Wow6432Node" : u"SOFTWARE") +
