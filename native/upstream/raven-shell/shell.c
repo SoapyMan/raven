@@ -633,10 +633,77 @@ static HRESULT make_taskbar_list(REFIID iid, void **out)
 	return result;
 }
 
+/* Global options ---------------------------------------------------------------------------------------------- */
+
+static const CLSID global_options_class = {0x0000034b, 0x0000, 0x0000, {0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+static const IID global_options_iid = {0x0000015b, 0x0000, 0x0000, {0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+
+/* The process-wide COM settings a program sets once while it starts, such as whether calls into its objects swallow exceptions. Every
+ * object shares one table, as each one stands for the same process; nothing here acts on the values, which are only kept and read back. */
+static ULONG_PTR global_options[COMGLB_UNMARSHALING_POLICY + 1];
+
+typedef struct {
+	IGlobalOptions face;
+	LONG refs;
+} OptionsObject;
+
+static HRESULT STDMETHODCALLTYPE go_query(IGlobalOptions *self, REFIID iid, void **out)
+{
+	if (!out)
+		return E_POINTER;
+	if (same_iid(iid, &IID_IUnknown) || same_iid(iid, &global_options_iid)) {
+		*out = self;
+		InterlockedIncrement(&((OptionsObject *)self)->refs);
+		return S_OK;
+	}
+	*out = NULL;
+	return E_NOINTERFACE;
+}
+static ULONG STDMETHODCALLTYPE go_add_ref(IGlobalOptions *self) { return InterlockedIncrement(&((OptionsObject *)self)->refs); }
+static ULONG STDMETHODCALLTYPE go_release(IGlobalOptions *self)
+{
+	const LONG refs = InterlockedDecrement(&((OptionsObject *)self)->refs);
+	if (!refs)
+		HeapFree(GetProcessHeap(), 0, self);
+	return refs;
+}
+static HRESULT STDMETHODCALLTYPE go_set(IGlobalOptions *self, GLOBALOPT_PROPERTIES property, ULONG_PTR value)
+{
+	if (property < COMGLB_EXCEPTION_HANDLING || property > COMGLB_UNMARSHALING_POLICY)
+		return E_INVALIDARG;
+	global_options[property] = value;
+	return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE go_get(IGlobalOptions *self, GLOBALOPT_PROPERTIES property, ULONG_PTR *value)
+{
+	if (!value)
+		return E_POINTER;
+	if (property < COMGLB_EXCEPTION_HANDLING || property > COMGLB_UNMARSHALING_POLICY)
+		return E_INVALIDARG;
+	*value = global_options[property];
+	return S_OK;
+}
+
+static IGlobalOptionsVtbl options_vtbl = {go_query, go_add_ref, go_release, go_set, go_get};
+
+static HRESULT make_global_options(REFIID iid, void **out)
+{
+	OptionsObject *options = HeapAlloc(GetProcessHeap(), 0, sizeof *options);
+	if (!options)
+		return E_OUTOFMEMORY;
+	options->face.lpVtbl = &options_vtbl;
+	options->refs = 1;
+	const HRESULT result = go_query(&options->face, iid, out);
+	go_release(&options->face);
+	return result;
+}
+
 /* The classes this component serves itself, which CoCreateInstance makes directly and CoGetClassObject through a class factory. */
 static HRESULT make_builtin(REFCLSID clsid, REFIID iid, void **out, BOOL *served)
 {
 	*served = TRUE;
+	if (same_iid(clsid, &global_options_class))
+		return make_global_options(iid, out);
 	if (same_iid(clsid, &CLSID_FileOpenDialog))
 		return make_dialog(FALSE, iid, out);
 	if (same_iid(clsid, &CLSID_FileSaveDialog))
@@ -691,7 +758,7 @@ static IClassFactoryVtbl builtin_factory_vtbl = {bf_query, bf_add_ref, bf_releas
 static BOOL builtin_class(REFCLSID clsid)
 {
 	return same_iid(clsid, &CLSID_FileOpenDialog) || same_iid(clsid, &CLSID_FileSaveDialog) || same_iid(clsid, &CLSID_ShellLink) ||
-		same_iid(clsid, &CLSID_TaskbarList) || same_iid(clsid, &CLSID_KnownFolderManager);
+		same_iid(clsid, &CLSID_TaskbarList) || same_iid(clsid, &CLSID_KnownFolderManager) || same_iid(clsid, &global_options_class);
 }
 
 
