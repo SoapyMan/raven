@@ -670,6 +670,13 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         add_custom_target(bcrypt_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/bcrypt-client.exe)
         add_test(NAME native_bcrypt COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/bcrypt-client.exe)
         set_tests_properties(native_bcrypt PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/capi-session-client.exe
+            COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector -Wl,--entry,raven_entry,--no-insert-timestamp
+                -o ${CMAKE_CURRENT_BINARY_DIR}/capi-session-client.exe ${PROJECT_SOURCE_DIR}/testdata/native_loader/capi_session_client.c -ladvapi32 -lkernel32
+            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/capi_session_client.c VERBATIM)
+        add_custom_target(capi_session_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/capi-session-client.exe)
+        add_test(NAME native_capi_session_keys COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/capi-session-client.exe)
+        set_tests_properties(native_capi_session_keys PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
     endif()
     if(RAVEN_MINGW64)
         set(CLASS_MODULE ${CMAKE_CURRENT_BINARY_DIR}/class-module.dll)
@@ -2824,6 +2831,24 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                         ${deployment_source}/deployment.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c -lruntimeobject -lkernel32 -lgcc
                     DEPENDS ${deployment_source}/deployment.c VERBATIM)
                 add_custom_target(deployment_component ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/raven-deployment.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-deployment.dll)
+                # raven-uisettings.dll, the UISettings class of the Windows Runtime for each width: Raven code on the public headers.
+                set(uisettings_source ${PROJECT_SOURCE_DIR}/native/upstream/raven-uisettings)
+                add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/raven-uisettings.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-uisettings.dll
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/x86
+                    COMMAND ${RAVEN_MINGW64} ${accprop_flags} -Wl,--entry,DllMain,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/raven-uisettings.dll
+                        ${uisettings_source}/uisettings.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c -lruntimeobject -luser32 -lkernel32 -lgcc
+                    COMMAND ${RAVEN_MINGW32} ${accprop_flags} -Wl,--entry,_DllMain@12,--kill-at,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-uisettings.dll
+                        ${uisettings_source}/uisettings.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c -lruntimeobject -luser32 -lkernel32 -lgcc
+                    DEPENDS ${uisettings_source}/uisettings.c VERBATIM)
+                add_custom_target(uisettings_component ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/raven-uisettings.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-uisettings.dll)
+                set(uisettings_client ${CMAKE_CURRENT_BINARY_DIR}/uisettings-client64.exe)
+                add_custom_command(OUTPUT ${uisettings_client}
+                    COMMAND ${RAVEN_MINGW64} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,raven_entry,--no-insert-timestamp
+                        -o ${uisettings_client} ${LOADER_SOURCES}/uisettings_client.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c -luser32 -lkernel32 -lgcc
+                    DEPENDS ${LOADER_SOURCES}/uisettings_client.c VERBATIM)
+                add_custom_target(uisettings_fixture ALL DEPENDS ${uisettings_client} uisettings_component)
+                add_test(NAME native_uisettings_x64 COMMAND raven --run-process --execution=native ${uisettings_client})
+                set_tests_properties(native_uisettings_x64 PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                 foreach(width 64 32)
                     set(deployment_client ${CMAKE_CURRENT_BINARY_DIR}/deployment-client${width}.exe)
                     if(width EQUAL 64)

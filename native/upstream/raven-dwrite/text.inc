@@ -946,6 +946,7 @@ static void init_text_tables(void)
 	SET(HitTestTextPosition, tl_hit_position); SET(HitTestTextRange, tl_hit_range);
 #undef SET
 	/* A text format is the front of the same object: its table is the layout's methods that a format has. */
+	DEBUG_WRAP(Layout_table_); /* DEBUG-TEMP */
 	memcpy(Format_table_, Layout_table_, sizeof(Format_table_));
 	text_tables_ready = TRUE;
 }
@@ -1310,6 +1311,7 @@ static HRESULT STDMETHODCALLTYPE interop_create_target(IDWriteGdiInterop *self, 
 	target = ALLOC(sizeof(Target));
 	if (!target)
 		return E_OUTOFMEMORY;
+	DEBUG_WRAP(Target_table_); /* DEBUG-TEMP */
 	target->vtbl = (const IDWriteBitmapRenderTargetVtbl *)Target_table_;
 	target->refs = 1;
 	target->ppd = 1.0f;

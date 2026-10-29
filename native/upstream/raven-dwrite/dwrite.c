@@ -242,6 +242,98 @@ static HRESULT unimplemented(const char *interface_name, const char *method)
 	return E_NOTIMPL;
 }
 
+
+/* DEBUG-TEMP: every vtable slot goes through a thunk that names the interface, the slot and the calling module before the method runs. */
+#ifdef _WIN64
+static BYTE *debug_thunks, *debug_thunks_end;
+static void debug_call_trace(const char *table, UINT32 slot, UINT64 result, BYTE *caller)
+{
+	char line[220] = "dwrite-call ";
+	int at = 12, d;
+	char num[24];
+	UINT64 n;
+	HMODULE module = NULL;
+	char path[MAX_PATH];
+	const char *base;
+	DWORD saved = GetLastError();
+	if (slot == 1 || slot == 2)
+		return;
+	while (*table && at < 60)
+		line[at++] = *table++;
+	line[at++] = '#';
+	for (n = slot, d = 0; d == 0 || n; n /= 10) num[d++] = (char)('0' + n % 10);
+	while (d) line[at++] = num[--d];
+	line[at++] = ' ';
+	line[at++] = '=';
+	for (n = result & 0xffffffffu, d = 0; d == 0 || n; n >>= 4) num[d++] = "0123456789abcdef"[n & 15];
+	while (d) line[at++] = num[--d];
+	line[at++] = ' ';
+	if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)caller, &module) &&
+		GetModuleFileNameA(module, path, sizeof(path))) {
+		base = path;
+		for (d = 0; path[d]; ++d)
+			if (path[d] == '\\' || path[d] == '/')
+				base = path + d + 1;
+		while (*base && at < 170)
+			line[at++] = *base++;
+		line[at++] = '+';
+		n = (UINT64)(caller - (BYTE *)module);
+	} else {
+		n = (UINT64)caller;
+	}
+	for (d = 0; d == 0 || n; n >>= 4) num[d++] = "0123456789abcdef"[n & 15];
+	while (d) line[at++] = num[--d];
+	line[at] = 0;
+	RavenTrace(line);
+	SetLastError(saved);
+}
+/* The thunk calls the method in a frame of its own, with the caller's first twelve stack arguments copied, then logs what it returned. */
+static void debug_wrap(void **table, UINT32 count, const char *name)
+{
+	UINT32 slot;
+	if (!debug_thunks) {
+		debug_thunks = VirtualAlloc(NULL, 1 << 21, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+		if (!debug_thunks)
+			return;
+		debug_thunks_end = debug_thunks + (1 << 21);
+	}
+	for (slot = 0; slot < count; ++slot) {
+		BYTE *code = debug_thunks, *at;
+		UINT64 value;
+		UINT32 k, disp;
+		if (!table[slot] || ((BYTE *)table[slot] >= debug_thunks_end - (1 << 21) && (BYTE *)table[slot] < debug_thunks_end))
+			continue;
+		if (debug_thunks + 384 > debug_thunks_end)
+			return;
+		at = code;
+		*at++ = 0x48; *at++ = 0x81; *at++ = 0xec; disp = 0xb8; memcpy(at, &disp, 4); at += 4;
+		for (k = 0; k < 12; ++k) {
+			*at++ = 0x48; *at++ = 0x8b; *at++ = 0x84; *at++ = 0x24; disp = 0xe0 + 8 * k; memcpy(at, &disp, 4); at += 4;
+			*at++ = 0x48; *at++ = 0x89; *at++ = 0x84; *at++ = 0x24; disp = 0x20 + 8 * k; memcpy(at, &disp, 4); at += 4;
+		}
+		*at++ = 0x48; *at++ = 0xb8; value = (UINT64)table[slot]; memcpy(at, &value, 8); at += 8;
+		*at++ = 0xff; *at++ = 0xd0;
+		*at++ = 0x48; *at++ = 0x89; *at++ = 0x84; *at++ = 0x24; disp = 0x80; memcpy(at, &disp, 4); at += 4;
+		*at++ = 0xf3; *at++ = 0x0f; *at++ = 0x7f; *at++ = 0x84; *at++ = 0x24; disp = 0x90; memcpy(at, &disp, 4); at += 4;
+		*at++ = 0x48; *at++ = 0xb9; value = (UINT64)name; memcpy(at, &value, 8); at += 8;
+		*at++ = 0xba; memcpy(at, &slot, 4); at += 4;
+		*at++ = 0x4c; *at++ = 0x8b; *at++ = 0x84; *at++ = 0x24; disp = 0x80; memcpy(at, &disp, 4); at += 4;
+		*at++ = 0x4c; *at++ = 0x8b; *at++ = 0x8c; *at++ = 0x24; disp = 0xb8; memcpy(at, &disp, 4); at += 4;
+		*at++ = 0x48; *at++ = 0xb8; value = (UINT64)debug_call_trace; memcpy(at, &value, 8); at += 8;
+		*at++ = 0xff; *at++ = 0xd0;
+		*at++ = 0xf3; *at++ = 0x0f; *at++ = 0x6f; *at++ = 0x84; *at++ = 0x24; disp = 0x90; memcpy(at, &disp, 4); at += 4;
+		*at++ = 0x48; *at++ = 0x8b; *at++ = 0x84; *at++ = 0x24; disp = 0x80; memcpy(at, &disp, 4); at += 4;
+		*at++ = 0x48; *at++ = 0x81; *at++ = 0xc4; disp = 0xb8; memcpy(at, &disp, 4); at += 4;
+		*at++ = 0xc3;
+		debug_thunks = code + 384;
+		table[slot] = code;
+	}
+}
+#define DEBUG_WRAP(table) debug_wrap((void **)table, sizeof(table) / sizeof(table[0]), #table)
+#else
+#define DEBUG_WRAP(table) ((void)0)
+#endif
+
 #include "dwrite_tables.h"
 
 /* ---- small helpers ---- */
@@ -317,9 +409,11 @@ static WCHAR *wdup(const WCHAR *text)
 }
 
 /* ---- the fonts of the system ---- */
-/* A system font is named by its path; a font a program supplies through its own loader has no path and keeps its opened face and file. */
+/* A system font is named by its path; a font a program supplies through its own loader has no path and keeps its opened face and file.
+   The family and face are the weight-stretch-style names fonts are grouped by; win32 is the family GDI knows the font by, and the
+   typographic names group every weight and width of a design. */
 typedef struct {
-	WCHAR *path, *family, *face, *full, *postscript;
+	WCHAR *path, *family, *face, *full, *postscript, *win32, *typographic, *typographic_face;
 	DWORD index, weight, style, stretch, flags;
 	struct FaceData *data;
 	IDWriteFontFile *file;
@@ -438,10 +532,11 @@ static BOOL CALLBACK build_system(PINIT_ONCE once, PVOID parameter, PVOID *conte
 				entry->stretch = *(DWORD *)(records + walk + 16);
 				entry->flags = *(DWORD *)(records + walk + 20);
 				{
-					const char *text = strings;
-					WCHAR **fields[5] = {&entry->path, &entry->family, &entry->face, &entry->full, &entry->postscript};
+					const char *text = strings, *end = (const char *)records + walk + record;
+					WCHAR **fields[8] = {&entry->path, &entry->family, &entry->face, &entry->full, &entry->postscript, &entry->win32,
+						&entry->typographic, &entry->typographic_face};
 					int field;
-					for (field = 0; field < 5; ++field) {
+					for (field = 0; field < 8 && text < end; ++field) {
 						*fields[field] = widen(text);
 						while (*text)
 							++text;
@@ -628,7 +723,7 @@ typedef struct {
 } Strings;
 
 static HRESULT STDMETHODCALLTYPE strings_query(IDWriteLocalizedStrings *self, REFIID iid, void **out)
-{
+{ RavenTrace("dwrite-dbg qi"); /* DEBUG-TEMP */
 	if (!out)
 		return E_POINTER;
 	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteLocalizedStrings)) {
@@ -641,7 +736,7 @@ static HRESULT STDMETHODCALLTYPE strings_query(IDWriteLocalizedStrings *self, RE
 }
 static ULONG STDMETHODCALLTYPE strings_add_ref(IDWriteLocalizedStrings *self) { return (ULONG)InterlockedIncrement(&((Strings *)self)->refs); }
 static ULONG STDMETHODCALLTYPE strings_release(IDWriteLocalizedStrings *self)
-{
+{ RavenTrace("dwrite-dbg rel"); /* DEBUG-TEMP */
 	Strings *strings = (Strings *)self;
 	LONG left = InterlockedDecrement(&strings->refs);
 	if (!left) {
@@ -650,9 +745,9 @@ static ULONG STDMETHODCALLTYPE strings_release(IDWriteLocalizedStrings *self)
 	}
 	return (ULONG)left;
 }
-static UINT32 STDMETHODCALLTYPE strings_count(IDWriteLocalizedStrings *self) { return 1; }
+static UINT32 STDMETHODCALLTYPE strings_count(IDWriteLocalizedStrings *self) { RavenTrace("dwrite-dbg count"); /* DEBUG-TEMP */ return 1; }
 static HRESULT STDMETHODCALLTYPE strings_find(IDWriteLocalizedStrings *self, const WCHAR *locale, UINT32 *index, WINBOOL *exists)
-{
+{ RavenTrace("dwrite-dbg find"); /* DEBUG-TEMP */
 	BOOL found = locale && wequal_fold(locale, L"en-us");
 	if (index)
 		*index = found ? 0 : UINT32_MAX;
@@ -661,14 +756,14 @@ static HRESULT STDMETHODCALLTYPE strings_find(IDWriteLocalizedStrings *self, con
 	return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE strings_locale_length(IDWriteLocalizedStrings *self, UINT32 index, UINT32 *length)
-{
+{ RavenTrace("dwrite-dbg loclen"); /* DEBUG-TEMP */
 	if (index != 0)
 		return E_INVALIDARG;
 	*length = 5;
 	return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE strings_locale(IDWriteLocalizedStrings *self, UINT32 index, WCHAR *name, UINT32 size)
-{
+{ RavenTrace("dwrite-dbg loc"); /* DEBUG-TEMP */
 	if (index != 0)
 		return E_INVALIDARG;
 	if (size < 6)
@@ -677,14 +772,14 @@ static HRESULT STDMETHODCALLTYPE strings_locale(IDWriteLocalizedStrings *self, U
 	return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE strings_length(IDWriteLocalizedStrings *self, UINT32 index, UINT32 *length)
-{
+{ RavenTrace("dwrite-dbg len"); /* DEBUG-TEMP */
 	if (index != 0)
 		return E_INVALIDARG;
 	*length = (UINT32)wlen(((Strings *)self)->text);
 	return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE strings_get(IDWriteLocalizedStrings *self, UINT32 index, WCHAR *buffer, UINT32 size)
-{
+{ RavenTrace("dwrite-dbg get"); /* DEBUG-TEMP */
 	const WCHAR *text = ((Strings *)self)->text;
 	size_t length = wlen(text);
 	if (index != 0)
@@ -712,6 +807,7 @@ static IDWriteLocalizedStrings *make_strings(const WCHAR *text)
 		Strings_table_[IDWriteLocalizedStrings_GetLocaleName] = (void *)strings_locale;
 		Strings_table_[IDWriteLocalizedStrings_GetStringLength] = (void *)strings_length;
 		Strings_table_[IDWriteLocalizedStrings_GetString] = (void *)strings_get;
+		DEBUG_WRAP(Strings_table_); /* DEBUG-TEMP */
 		strings_vtbl = (const IDWriteLocalizedStringsVtbl *)Strings_table_;
 	}
 	strings = ALLOC(sizeof(Strings));
@@ -792,6 +888,7 @@ static IDWriteFontFileStream *make_stream(BYTE *bytes, UINT64 size)
 		Stream_table_[IDWriteFontFileStream_ReleaseFileFragment] = (void *)stream_release_fragment;
 		Stream_table_[IDWriteFontFileStream_GetFileSize] = (void *)stream_size;
 		Stream_table_[IDWriteFontFileStream_GetLastWriteTime] = (void *)stream_time;
+		DEBUG_WRAP(Stream_table_); /* DEBUG-TEMP */
 		vtbl = (const IDWriteFontFileStreamVtbl *)Stream_table_;
 	}
 	stream = ALLOC(sizeof(Stream));
@@ -905,6 +1002,7 @@ static IDWriteFontFileLoader *get_system_loader(void)
 		Loader_table_[4] = (void *)loader_path_length;
 		Loader_table_[5] = (void *)loader_path;
 		Loader_table_[6] = (void *)loader_write_time;
+		DEBUG_WRAP(Loader_table_); /* DEBUG-TEMP */
 		system_loader.vtbl = (const IDWriteFontFileLoaderVtbl *)Loader_table_;
 	}
 	return (IDWriteFontFileLoader *)&system_loader;
@@ -1026,6 +1124,7 @@ static IDWriteFontFile *make_file(const void *key, UINT32 key_size, IDWriteFontF
 		FontFile_table_[IDWriteFontFile_GetReferenceKey] = (void *)file_key;
 		FontFile_table_[IDWriteFontFile_GetLoader] = (void *)file_loader;
 		FontFile_table_[IDWriteFontFile_Analyze] = (void *)file_analyze;
+		DEBUG_WRAP(FontFile_table_); /* DEBUG-TEMP */
 		vtbl = (const IDWriteFontFileVtbl *)FontFile_table_;
 	}
 	file = ALLOC(sizeof(FontFile));
@@ -1420,6 +1519,7 @@ static void init_face_tables(void)
 	Face1_table_[IDWriteFontFace1_IDWriteFontFace1_GetRecommendedRenderingMode] = (void *)face1_recommended;
 	Face1_table_[IDWriteFontFace1_GetVerticalGlyphVariants] = (void *)face1_vertical_variants;
 	Face1_table_[IDWriteFontFace1_HasVerticalGlyphVariants] = (void *)face1_has_vertical;
+	DEBUG_WRAP(Face1_table_); /* DEBUG-TEMP */
 	face_vtbl = (const IDWriteFontFace1Vtbl *)Face1_table_;
 }
 
@@ -1514,10 +1614,8 @@ static HRESULT STDMETHODCALLTYPE font_info_strings(IDWriteFont *self, DWRITE_INF
 		text = entry->full;
 	else if (id == DWRITE_INFORMATIONAL_STRING_POSTSCRIPT_NAME)
 		text = entry->postscript;
-	else if (id == DWRITE_INFORMATIONAL_STRING_WIN32_FAMILY_NAMES || id == DWRITE_INFORMATIONAL_STRING_PREFERRED_FAMILY_NAMES)
-		text = entry->family;
-	else if (id == DWRITE_INFORMATIONAL_STRING_WIN32_SUBFAMILY_NAMES || id == DWRITE_INFORMATIONAL_STRING_PREFERRED_SUBFAMILY_NAMES)
-		text = entry->face;
+	else if (id == DWRITE_INFORMATIONAL_STRING_WIN32_FAMILY_NAMES)
+		text = entry->win32 && entry->win32[0] ? entry->win32 : entry->family;
 	if (!text && (int)id > 0 && (size_t)id < sizeof(name_ids) / sizeof(name_ids[0])) {
 		FaceData *data = face_data_for_entry(entry);
 		if (data) {
@@ -1645,6 +1743,7 @@ static IDWriteFont *make_font(FontEntry *entry, FamilyEntry *family)
 		Font1_table_[IDWriteFont3_GetFontFaceReference] = (void *)font3_reference;
 		Font1_table_[IDWriteFont3_IDWriteFont3_HasCharacter] = (void *)font3_has_character;
 		Font1_table_[IDWriteFont3_GetLocality] = (void *)font3_locality;
+		DEBUG_WRAP(Font1_table_); /* DEBUG-TEMP */
 		font_vtbl = (const IDWriteFont1Vtbl *)Font1_table_;
 	}
 	font = ALLOC(sizeof(Font));
@@ -1781,6 +1880,7 @@ static IDWriteFontFamily *make_family(FamilyEntry *entry)
 		Family_table_[IDWriteFontFamily1_GetFontLocality] = (void *)family1_locality;
 		Family_table_[IDWriteFontFamily1_IDWriteFontFamily1_GetFont] = (void *)family_font;
 		Family_table_[IDWriteFontFamily1_GetFontFaceReference] = (void *)family1_reference;
+		DEBUG_WRAP(Family_table_); /* DEBUG-TEMP */
 		family_vtbl = (const IDWriteFontFamilyVtbl *)Family_table_;
 	}
 	family = ALLOC(sizeof(Family));
@@ -1874,6 +1974,7 @@ static IDWriteFontCollection *get_collection(void)
 		Collection_table_[IDWriteFontCollection_GetFontFromFontFace] = (void *)collection_from_face;
 		Collection_table_[IDWriteFontCollection1_GetFontSet] = (void *)collection_set;
 		Collection_table_[IDWriteFontCollection1_IDWriteFontCollection1_GetFontFamily] = (void *)collection_family;
+		DEBUG_WRAP(Collection_table_); /* DEBUG-TEMP */
 		system_collection.vtbl = (const IDWriteFontCollectionVtbl *)Collection_table_;
 	}
 	return (IDWriteFontCollection *)&system_collection;
@@ -2001,6 +2102,7 @@ static StringList *make_list(void)
 	list = ALLOC(sizeof(StringList));
 	if (!list)
 		return NULL;
+	DEBUG_WRAP(List_table_); /* DEBUG-TEMP */
 	list->vtbl = (const IDWriteStringListVtbl *)List_table_;
 	list->refs = 1;
 	return list;
@@ -2121,6 +2223,7 @@ static IDWriteFontFaceReference *make_reference(FontEntry *entry)
 	reference = ALLOC(sizeof(Reference));
 	if (!reference)
 		return NULL;
+	DEBUG_WRAP(Reference_table_); /* DEBUG-TEMP */
 	reference->vtbl = (const IDWriteFontFaceReferenceVtbl *)Reference_table_;
 	reference->refs = 1;
 	reference->entry = entry;
@@ -2136,11 +2239,15 @@ static const WCHAR *property_text(const SetFont *font, DWRITE_FONT_PROPERTY_ID i
 	int at = 15;
 	switch (id) {
 	case DWRITE_FONT_PROPERTY_ID_WEIGHT_STRETCH_STYLE_FAMILY_NAME:
-	case DWRITE_FONT_PROPERTY_ID_TYPOGRAPHIC_FAMILY_NAME:
-	case DWRITE_FONT_PROPERTY_ID_WIN32_FAMILY_NAME:
 		return font->family ? font->family->name : entry->family;
+	case DWRITE_FONT_PROPERTY_ID_TYPOGRAPHIC_FAMILY_NAME:
+		return entry->typographic && entry->typographic[0] ? entry->typographic : entry->family;
+	case DWRITE_FONT_PROPERTY_ID_WIN32_FAMILY_NAME:
+		return entry->win32 && entry->win32[0] ? entry->win32 : entry->family;
 	case DWRITE_FONT_PROPERTY_ID_WEIGHT_STRETCH_STYLE_FACE_NAME:
 		return entry->face ? entry->face : L"Regular";
+	case DWRITE_FONT_PROPERTY_ID_TYPOGRAPHIC_FACE_NAME:
+		return entry->typographic_face && entry->typographic_face[0] ? entry->typographic_face : entry->face ? entry->face : L"Regular";
 	case DWRITE_FONT_PROPERTY_ID_FULL_NAME:
 		return entry->full;
 	case DWRITE_FONT_PROPERTY_ID_POSTSCRIPT_NAME:
@@ -2176,10 +2283,11 @@ static IDWriteFontSet *make_set(const SetFont *fonts, UINT32 count);
 
 static HRESULT STDMETHODCALLTYPE set_query(IDWriteFontSet *self, REFIID iid, void **out)
 {
+	no_interface(iid); /* DEBUG-TEMP */
 	if (!out)
 		return E_POINTER;
 	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFontSet) || same_guid(iid, &IID_IDWriteFontSet1) || same_guid(iid, &IID_IDWriteFontSet2) ||
-		same_guid(iid, &IID_IDWriteFontSet3)) {
+		(same_guid(iid, &IID_IDWriteFontSet3) && GetFileAttributesA("C:\\raven-no-set3") == INVALID_FILE_ATTRIBUTES)) { /* DEBUG-TEMP experiment */
 		InterlockedIncrement(&((FontSet *)self)->refs);
 		*out = self;
 		return S_OK;
@@ -2189,7 +2297,7 @@ static HRESULT STDMETHODCALLTYPE set_query(IDWriteFontSet *self, REFIID iid, voi
 }
 static ULONG STDMETHODCALLTYPE set_add_ref(IDWriteFontSet *self) { return (ULONG)InterlockedIncrement(&((FontSet *)self)->refs); }
 static ULONG STDMETHODCALLTYPE set_release(IDWriteFontSet *self)
-{
+{ RavenTrace("dwrite-dbg setrel"); /* DEBUG-TEMP */
 	FontSet *set = (FontSet *)self;
 	LONG left = InterlockedDecrement(&set->refs);
 	if (!left) {
@@ -2199,9 +2307,9 @@ static ULONG STDMETHODCALLTYPE set_release(IDWriteFontSet *self)
 	}
 	return (ULONG)left;
 }
-static UINT32 STDMETHODCALLTYPE set_count(IDWriteFontSet *self) { return ((FontSet *)self)->count; }
+static UINT32 STDMETHODCALLTYPE set_count(IDWriteFontSet *self) { RavenTrace("dwrite-dbg set_count"); /* DEBUG-TEMP */ return ((FontSet *)self)->count; }
 static HRESULT STDMETHODCALLTYPE set_reference(IDWriteFontSet *self, UINT32 index, IDWriteFontFaceReference **reference)
-{
+{ RavenTrace("dwrite-dbg ref"); /* DEBUG-TEMP */
 	FontSet *set = (FontSet *)self;
 	if (!reference)
 		return E_POINTER;
@@ -2212,7 +2320,7 @@ static HRESULT STDMETHODCALLTYPE set_reference(IDWriteFontSet *self, UINT32 inde
 	return *reference ? S_OK : E_OUTOFMEMORY;
 }
 static HRESULT STDMETHODCALLTYPE set_find_reference(IDWriteFontSet *self, IDWriteFontFaceReference *reference, UINT32 *index, WINBOOL *exists)
-{
+{ RavenTrace("dwrite-dbg findref"); /* DEBUG-TEMP */
 	FontSet *set = (FontSet *)self;
 	UINT32 position;
 	*index = UINT32_MAX;
@@ -2228,7 +2336,7 @@ static HRESULT STDMETHODCALLTYPE set_find_reference(IDWriteFontSet *self, IDWrit
 	return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE set_find_face(IDWriteFontSet *self, IDWriteFontFace *face, UINT32 *index, WINBOOL *exists)
-{
+{ RavenTrace("dwrite-dbg findface"); /* DEBUG-TEMP */
 	FontSet *set = (FontSet *)self;
 	Face *source = (Face *)face;
 	UINT32 position;
@@ -2249,7 +2357,7 @@ static HRESULT STDMETHODCALLTYPE set_find_face(IDWriteFontSet *self, IDWriteFont
 }
 /* The distinct values of a property over the set, in the order the fonts come. */
 static HRESULT STDMETHODCALLTYPE set_values(IDWriteFontSet *self, DWRITE_FONT_PROPERTY_ID id, IDWriteStringList **values)
-{
+{ RavenTrace("dwrite-dbg vals"); /* DEBUG-TEMP */
 	FontSet *set = (FontSet *)self;
 	StringList *list;
 	UINT32 position, seen;
@@ -2293,6 +2401,13 @@ static HRESULT STDMETHODCALLTYPE set_font_values(IDWriteFontSet *self, UINT32 in
 	if (index >= set->count)
 		return E_INVALIDARG;
 	text = property_text(&set->fonts[index], id, buffer);
+	{ char line[200] = "dwrite-dbg fv "; int at = 14, k; UINT32 n; char num[12]; int d; /* DEBUG-TEMP */
+	for (n = index, d = 0; d == 0 || n; n /= 10) num[d++] = (char)('0' + n % 10); while (d) line[at++] = num[--d];
+	line[at++] = ' '; line[at++] = 'i'; line[at++] = 'd'; line[at++] = '=';
+	for (n = (UINT32)id, d = 0; d == 0 || n; n /= 10) num[d++] = (char)('0' + n % 10); while (d) line[at++] = num[--d];
+	line[at++] = ' ';
+	for (k = 0; text && text[k] && at < 190; ++k) line[at++] = text[k] < 128 ? (char)text[k] : '?';
+	line[at] = 0; RavenTrace(line); } /* DEBUG-TEMP */
 	if (!text || !text[0])
 		return S_OK;
 	*values = make_strings(text);
@@ -2302,7 +2417,7 @@ static HRESULT STDMETHODCALLTYPE set_font_values(IDWriteFontSet *self, UINT32 in
 	return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE set_occurrences(IDWriteFontSet *self, const DWRITE_FONT_PROPERTY *property, UINT32 *count)
-{
+{ RavenTrace("dwrite-dbg occ"); /* DEBUG-TEMP */
 	FontSet *set = (FontSet *)self;
 	UINT32 position;
 	if (!property || !count)
@@ -2316,7 +2431,7 @@ static HRESULT STDMETHODCALLTYPE set_occurrences(IDWriteFontSet *self, const DWR
 /* The fonts of a family, nearest to the wanted weight, width and slant first. */
 static HRESULT STDMETHODCALLTYPE set_matching_family(IDWriteFontSet *self, const WCHAR *name, DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STRETCH stretch,
 	DWRITE_FONT_STYLE style, IDWriteFontSet **out)
-{
+{ RavenTrace("dwrite-dbg matchfam"); /* DEBUG-TEMP */
 	FontSet *set = (FontSet *)self;
 	SetFont *found;
 	UINT32 position, count = 0, sorted;
@@ -2327,10 +2442,18 @@ static HRESULT STDMETHODCALLTYPE set_matching_family(IDWriteFontSet *self, const
 	if (!found)
 		return E_OUTOFMEMORY;
 	for (position = 0; position < set->count; ++position) {
+		/* The name may be any of the font's family names or its full name. */
+		static const DWRITE_FONT_PROPERTY_ID names[] = {DWRITE_FONT_PROPERTY_ID_WIN32_FAMILY_NAME, DWRITE_FONT_PROPERTY_ID_WEIGHT_STRETCH_STYLE_FAMILY_NAME,
+			DWRITE_FONT_PROPERTY_ID_TYPOGRAPHIC_FAMILY_NAME, DWRITE_FONT_PROPERTY_ID_FULL_NAME};
 		WCHAR buffer[16];
-		const WCHAR *family = property_text(&set->fonts[position], DWRITE_FONT_PROPERTY_ID_WIN32_FAMILY_NAME, buffer);
-		if (family && wequal_fold(family, name))
-			found[count++] = set->fonts[position];
+		size_t which;
+		for (which = 0; which < sizeof(names) / sizeof(names[0]); ++which) {
+			const WCHAR *family = property_text(&set->fonts[position], names[which], buffer);
+			if (family && wequal_fold(family, name)) {
+				found[count++] = set->fonts[position];
+				break;
+			}
+		}
 	}
 	for (sorted = 1; sorted < count; ++sorted) {
 		SetFont font = found[sorted];
@@ -2347,7 +2470,7 @@ static HRESULT STDMETHODCALLTYPE set_matching_family(IDWriteFontSet *self, const
 	return *out ? S_OK : E_OUTOFMEMORY;
 }
 static HRESULT STDMETHODCALLTYPE set_matching(IDWriteFontSet *self, const DWRITE_FONT_PROPERTY *properties, UINT32 property_count, IDWriteFontSet **out)
-{
+{ RavenTrace("dwrite-dbg match"); /* DEBUG-TEMP */
 	FontSet *set = (FontSet *)self;
 	SetFont *found;
 	UINT32 position, property, count = 0;
@@ -2369,9 +2492,10 @@ static HRESULT STDMETHODCALLTYPE set_matching(IDWriteFontSet *self, const DWRITE
 }
 
 /* IDWriteFontSet1 to IDWriteFontSet3: the fonts are installed for the machine and stay valid while the program runs. */
-static DWRITE_LOCALITY STDMETHODCALLTYPE set1_locality(IDWriteFontSet *self, UINT32 index) { return DWRITE_LOCALITY_LOCAL; }
+static DWRITE_LOCALITY STDMETHODCALLTYPE set1_locality(IDWriteFontSet *self, UINT32 index) { RavenTrace("dwrite-dbg locality"); /* DEBUG-TEMP */ return DWRITE_LOCALITY_LOCAL; }
 static HANDLE STDMETHODCALLTYPE set2_expiration(IDWriteFontSet *self)
 {
+	RavenTrace("dwrite-dbg expiration"); /* DEBUG-TEMP */
 	static HANDLE never;
 	if (!never) {
 		HANDLE made = CreateEventW(NULL, TRUE, FALSE, NULL);
@@ -2382,11 +2506,13 @@ static HANDLE STDMETHODCALLTYPE set2_expiration(IDWriteFontSet *self)
 }
 static DWRITE_FONT_SOURCE_TYPE STDMETHODCALLTYPE set3_source_type(IDWriteFontSet *self, UINT32 index)
 {
+	RavenTrace("dwrite-dbg srctype"); /* DEBUG-TEMP */
 	return index < ((FontSet *)self)->count ? DWRITE_FONT_SOURCE_TYPE_PER_MACHINE : DWRITE_FONT_SOURCE_TYPE_UNKNOWN;
 }
-static UINT32 STDMETHODCALLTYPE set3_source_name_length(IDWriteFontSet *self, UINT32 index) { return 0; }
+static UINT32 STDMETHODCALLTYPE set3_source_name_length(IDWriteFontSet *self, UINT32 index) { RavenTrace("dwrite-dbg srcnamelen"); /* DEBUG-TEMP */ return 0; }
 static HRESULT STDMETHODCALLTYPE set3_source_name(IDWriteFontSet *self, UINT32 index, WCHAR *buffer, UINT32 size)
 {
+	RavenTrace("dwrite-dbg srcname"); /* DEBUG-TEMP */
 	if (!buffer || !size)
 		return E_NOT_SUFFICIENT_BUFFER;
 	buffer[0] = 0;
@@ -2422,6 +2548,7 @@ static IDWriteFontSet *make_set(const SetFont *fonts, UINT32 count)
 	set = ALLOC(sizeof(FontSet));
 	if (!set)
 		return NULL;
+	DEBUG_WRAP(Set_table_); /* DEBUG-TEMP */
 	set->vtbl = (const IDWriteFontSetVtbl *)Set_table_;
 	set->refs = 1;
 	set->fonts = ALLOC((count ? count : 1) * sizeof(SetFont));
@@ -2558,6 +2685,7 @@ static const IDWriteFontCollectionVtbl *custom_vtbl(void)
 		Custom_table_[IDWriteFontCollection_FindFamilyName] = (void *)custom_find;
 		Custom_table_[IDWriteFontCollection_GetFontFromFontFace] = (void *)custom_from_face;
 	}
+	DEBUG_WRAP(Custom_table_); /* DEBUG-TEMP */
 	return (const IDWriteFontCollectionVtbl *)Custom_table_;
 }
 
@@ -2635,10 +2763,13 @@ static void custom_add_file(CustomCollection *collection, IDWriteFontFile *file)
 			face_data_release(data);
 			continue;
 		}
-		entry->family = face_name(data, 16, 1);
-		entry->face = face_name(data, 17, 2);
+		entry->family = face_name(data, 21, 1);
+		entry->face = face_name(data, 22, 2);
 		entry->full = face_name(data, 4, 4);
 		entry->postscript = face_name(data, 6, 6);
+		entry->win32 = face_name(data, 1, 1);
+		entry->typographic = face_name(data, 16, 1);
+		entry->typographic_face = face_name(data, 17, 2);
 		entry->index = index;
 		entry->weight = (DWORD)(data->info[12] ? data->info[12] : 400);
 		entry->style = data->info[11] & 2 ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL;
@@ -2779,6 +2910,7 @@ static Params *make_params(FLOAT gamma, FLOAT contrast, FLOAT grayscale, FLOAT c
 		Params_table_[IDWriteRenderingParams_GetRenderingMode] = (void *)params_mode;
 		Params_table_[IDWriteRenderingParams1_GetGrayscaleEnhancedContrast] = (void *)params_grayscale;
 		Params_table_[IDWriteRenderingParams2_GetGridFitMode] = (void *)params_grid;
+		DEBUG_WRAP(Params_table_); /* DEBUG-TEMP */
 		params_vtbl = (const IDWriteRenderingParams2Vtbl *)Params_table_;
 	}
 	params = ALLOC(sizeof(Params));
@@ -2982,6 +3114,7 @@ static HRESULT create_analysis(const DWRITE_GLYPH_RUN *run, const DWRITE_MATRIX 
 		Analysis_table_[IDWriteGlyphRunAnalysis_GetAlphaTextureBounds] = (void *)analysis_bounds;
 		Analysis_table_[IDWriteGlyphRunAnalysis_CreateAlphaTexture] = (void *)analysis_texture;
 		Analysis_table_[IDWriteGlyphRunAnalysis_GetAlphaBlendParams] = (void *)analysis_blend;
+		DEBUG_WRAP(Analysis_table_); /* DEBUG-TEMP */
 		analysis_vtbl = (const IDWriteGlyphRunAnalysisVtbl *)Analysis_table_;
 	}
 	analysis = ALLOC(sizeof(Analysis));
@@ -3201,6 +3334,7 @@ static IDWriteGdiInterop *get_interop(void)
 		Interop_table_[Interop1_GetFontSignature_face] = (void *)interop_signature;
 		Interop_table_[Interop1_GetFontSignature] = (void *)interop_signature;
 		Interop_table_[Interop1_GetMatchingFontsByLOGFONT] = (void *)interop_matching_fonts;
+		DEBUG_WRAP(Interop_table_); /* DEBUG-TEMP */
 		interop_object.lpVtbl = (IDWriteGdiInteropVtbl *)Interop_table_;
 	}
 	return &interop_object;
@@ -3305,6 +3439,7 @@ static IDWriteFontFallback *get_fallback(void)
 		Fallback_table_[IDWriteFontFallback_AddRef] = (void *)fallback_add_ref;
 		Fallback_table_[IDWriteFontFallback_Release] = (void *)fallback_release;
 		Fallback_table_[IDWriteFontFallback_MapCharacters] = (void *)fallback_map;
+		DEBUG_WRAP(Fallback_table_); /* DEBUG-TEMP */
 		fallback_object.lpVtbl = (IDWriteFontFallbackVtbl *)Fallback_table_;
 	}
 	return &fallback_object;
@@ -3544,6 +3679,7 @@ static HRESULT STDMETHODCALLTYPE builder_create(IDWriteFontFallbackBuilder *self
 	fallback = ALLOC(sizeof(BuiltFallback));
 	if (!fallback)
 		return E_OUTOFMEMORY;
+	DEBUG_WRAP(Built_table_); /* DEBUG-TEMP */
 	fallback->vtbl = (const IDWriteFontFallbackVtbl *)Built_table_;
 	fallback->refs = 1;
 	/* The fallback keeps its own copy, so the builder can go on adding mappings for another one. */
@@ -3586,6 +3722,7 @@ static HRESULT STDMETHODCALLTYPE factory2_fallback_builder(IDWriteFactory2 *self
 	builder = ALLOC(sizeof(FallbackBuilder));
 	if (!builder)
 		return E_OUTOFMEMORY;
+	DEBUG_WRAP(Builder_table_); /* DEBUG-TEMP */
 	builder->vtbl = (const IDWriteFontFallbackBuilderVtbl *)Builder_table_;
 	builder->refs = 1;
 	*out = (IDWriteFontFallbackBuilder *)builder;
@@ -3608,7 +3745,7 @@ static HRESULT STDMETHODCALLTYPE factory_query(IDWriteFactory2 *self, REFIID iid
 	if (!out)
 		return E_POINTER;
 	if (same_guid(iid, &IID_IUnknown) || same_guid(iid, &IID_IDWriteFactory) || same_guid(iid, &IID_IDWriteFactory1) || same_guid(iid, &IID_IDWriteFactory2) ||
-		same_guid(iid, &IID_IDWriteFactory3)) {
+		(same_guid(iid, &IID_IDWriteFactory3) && GetFileAttributesA("C:\\raven-no-f3") == INVALID_FILE_ATTRIBUTES)) { /* DEBUG-TEMP experiment */
 		InterlockedIncrement(&factory_object.refs);
 		*out = self;
 		return S_OK;
@@ -3832,6 +3969,7 @@ static HRESULT create_factory(REFIID iid, IUnknown **out)
 		Factory_table_[IDWriteFactory2_TranslateColorGlyphRun] = (void *)factory2_color_run;
 		Factory_table_[IDWriteFactory2_IDWriteFactory2_CreateCustomRenderingParams] = (void *)factory2_custom_params;
 		Factory_table_[IDWriteFactory2_IDWriteFactory2_CreateGlyphRunAnalysis] = (void *)factory2_glyph_analysis;
+		DEBUG_WRAP(Factory_table_); /* DEBUG-TEMP */
 		factory_object.vtbl = (const IDWriteFactory2Vtbl *)Factory_table_;
 	}
 	return factory_query((IDWriteFactory2 *)&factory_object, iid, (void **)out);
